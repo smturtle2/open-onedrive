@@ -1,0 +1,40 @@
+[workspace]
+members = [
+  "crates/auth",
+  "crates/config",
+  "crates/graph",
+  "crates/ipc-types",
+  "crates/openonedrived",
+  "crates/openonedrivectl",
+  "crates/state",
+  "crates/vfs",
+  "xtask",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/smturtle2/open-onedrive"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
+directories = "6.0.0"
+fuser = "0.16.0"
+libc = "0.2.177"
+oauth2 = "5.0.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.9.8"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+url = "2.5.7"
+zbus = { version = "4.4.0", features = ["tokio"] }
+zvariant = "4.2.0"

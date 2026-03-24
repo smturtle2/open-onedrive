@@ -1,0 +1,9 @@
+{
+    "KPlugin": {
+        "Id": "open_onedrive_overlayicon",
+        "Name": "open-onedrive Overlay Icons",
+        "Description": "Placeholder overlay icons for open-onedrive item states",
+        "Version": "0.1.0",
+        "License": "MIT"
+    }
+}

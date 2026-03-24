@@ -1,0 +1,15 @@
+[package]
+name = "openonedrivectl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+openonedrive-ipc-types = { path = "../ipc-types" }
+serde_json.workspace = true
+tokio.workspace = true
+zbus.workspace = true
+

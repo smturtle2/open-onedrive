@@ -1,0 +1,12 @@
+[package]
+name = "openonedrive-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+oauth2.workspace = true
+url.workspace = true
+

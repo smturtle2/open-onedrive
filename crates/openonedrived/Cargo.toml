@@ -1,0 +1,23 @@
+[package]
+name = "openonedrived"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+fuser.workspace = true
+openonedrive-auth = { path = "../auth" }
+openonedrive-config = { path = "../config" }
+openonedrive-graph = { path = "../graph" }
+openonedrive-ipc-types = { path = "../ipc-types" }
+openonedrive-state = { path = "../state" }
+openonedrive-vfs = { path = "../vfs" }
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zbus.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "openonedrive-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+openonedrive-ipc-types = { path = "../ipc-types" }
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+

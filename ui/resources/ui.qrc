@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="qml/Main.qml">../qml/Main.qml</file>
+        <file alias="qml/pages/SetupPage.qml">../qml/pages/SetupPage.qml</file>
+        <file alias="qml/pages/DashboardPage.qml">../qml/pages/DashboardPage.qml</file>
+        <file alias="qml/components/StatusCard.qml">../qml/components/StatusCard.qml</file>
+    </qresource>
+</RCC>
+

@@ -1,0 +1,7 @@
+/target
+/build
+/.qtc_clangd
+/.cache
+*.db
+*.sqlite3
+
