@@ -135,6 +135,7 @@ impl RcloneBackend {
     }
 
     pub async fn begin_connect(self: &Arc<Self>) -> Result<()> {
+        self.reconcile_remote_state_from_disk().await?;
         if self.runtime.read().await.remote_configured {
             return Ok(());
         }
@@ -211,39 +212,21 @@ impl RcloneBackend {
                 match exit {
                     Ok(status) if status.success() => {
                         let config = backend.current_config().await;
-                        match has_remote_config(
-                            &backend.paths.rclone_config_file,
-                            &config.remote_name,
-                        ) {
-                            Ok(true) => {
-                                backend.set_remote_configured(true).await;
-                                if config.auto_mount {
-                                    if let Err(error) = backend.mount().await {
-                                        backend.record_error(error.to_string()).await;
-                                    }
-                                } else {
-                                    backend.set_mount_state(MountState::Unmounted).await;
-                                }
-                            }
-                            Ok(false) => {
-                                backend
-                                    .record_error(
-                                        "rclone finished without writing the app-owned remote"
-                                            .to_string(),
-                                    )
-                                    .await;
-                            }
-                            Err(error) => {
-                                backend.record_error(error.to_string()).await;
-                            }
+                        if let Err(error) = backend.complete_connect(config, None).await {
+                            backend.record_error(error.to_string()).await;
                         }
                     }
                     Ok(status) => {
-                        backend
-                            .record_error(format!(
-                                "rclone config create exited with status {status}"
-                            ))
-                            .await;
+                        let config = backend.current_config().await;
+                        if let Err(error) = backend
+                            .complete_connect(
+                                config,
+                                Some(format!("rclone config create exited with status {status}")),
+                            )
+                            .await
+                        {
+                            backend.record_error(error.to_string()).await;
+                        }
                     }
                     Err(error) => {
                         backend
@@ -444,6 +427,8 @@ impl RcloneBackend {
             self.refresh_rclone_version().await;
         }
 
+        self.reconcile_remote_state_from_disk().await?;
+
         let runtime = self.runtime.read().await.clone();
         let config = self.current_config().await;
         Ok(StatusSnapshot {
@@ -510,6 +495,51 @@ impl RcloneBackend {
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
+    }
+
+    async fn complete_connect(self: &Arc<Self>, config: AppConfig, warning: Option<String>) -> Result<()> {
+        match has_remote_config(&self.paths.rclone_config_file, &config.remote_name)? {
+            true => {
+                if let Some(warning) = warning {
+                    self.append_log(format!(
+                        "{warning}; the app-owned remote was written and will be reused"
+                    ))
+                    .await;
+                }
+                self.set_remote_configured(true).await;
+                if config.auto_mount {
+                    self.mount().await?;
+                } else {
+                    self.set_mount_state(MountState::Unmounted).await;
+                }
+                Ok(())
+            }
+            false => match warning {
+                Some(message) => Err(anyhow::anyhow!(message)),
+                None => Err(anyhow::anyhow!(
+                    "rclone finished without writing the app-owned remote"
+                )),
+            },
+        }
+    }
+
+    async fn reconcile_remote_state_from_disk(&self) -> Result<()> {
+        let config = self.current_config().await;
+        let remote_exists = has_remote_config(&self.paths.rclone_config_file, &config.remote_name)?;
+        let runtime_remote_configured = self.runtime.read().await.remote_configured;
+        if remote_exists != runtime_remote_configured {
+            self.set_remote_configured(remote_exists).await;
+            if remote_exists {
+                let mount_state = self.runtime.read().await.mount_state;
+                if matches!(
+                    mount_state,
+                    MountState::Disconnected | MountState::Connecting | MountState::Error
+                ) {
+                    self.set_mount_state(MountState::Unmounted).await;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn set_mount_state(&self, mount_state: MountState) {
@@ -818,7 +848,7 @@ mod tests {
         let fake_rclone = dir.path().join("fake-rclone");
         let mount_path = dir.path().join("mount");
         fs::create_dir_all(&mount_path).expect("mount dir");
-        write_fake_rclone(&fake_rclone);
+        write_fake_rclone(&fake_rclone, 0);
 
         let paths = build_paths(dir.path());
         let config = AppConfig {
@@ -844,6 +874,34 @@ mod tests {
         assert!(!paths.rclone_config_file.exists());
     }
 
+    #[tokio::test]
+    async fn connect_recovers_when_rclone_writes_remote_then_exits_non_zero() {
+        let dir = tempdir().expect("tempdir");
+        let fake_rclone = dir.path().join("fake-rclone");
+        let mount_path = dir.path().join("mount");
+        fs::create_dir_all(&mount_path).expect("mount dir");
+        write_fake_rclone(&fake_rclone, 2);
+
+        let paths = build_paths(dir.path());
+        let config = AppConfig {
+            rclone_bin: Some(fake_rclone),
+            mount_path,
+            ..AppConfig::default()
+        };
+
+        let backend = RcloneBackend::load(paths.clone(), config)
+            .await
+            .expect("backend");
+        backend.begin_connect().await.expect("connect");
+        sleep(Duration::from_millis(700)).await;
+
+        let status = backend.status().await.expect("status");
+        assert!(status.remote_configured);
+        assert_eq!(status.mount_state, MountState::Mounted);
+        assert!(status.last_error.is_empty());
+        assert!(paths.rclone_config_file.exists());
+    }
+
     fn build_paths(root: &Path) -> ProjectPaths {
         ProjectPaths {
             config_dir: root.join("config"),
@@ -859,8 +917,9 @@ mod tests {
         }
     }
 
-    fn write_fake_rclone(path: &Path) {
-        let script = r#"#!/bin/sh
+    fn write_fake_rclone(path: &Path, connect_exit_code: i32) {
+        let script = format!(
+            r#"#!/bin/sh
 set -eu
 
 cmd="$1"
@@ -890,7 +949,7 @@ if [ "$cmd" = "config" ] && [ "$1" = "create" ]; then
   mkdir -p "$(dirname "$conf")"
   printf '[%s]\ntype = onedrive\n' "$remote" > "$conf"
   echo "config created"
-  exit 0
+  exit {connect_exit_code}
 fi
 
 if [ "$cmd" = "mount" ]; then
@@ -905,7 +964,8 @@ fi
 
 echo "unexpected invocation" >&2
 exit 1
-"#;
+"#
+        );
 
         fs::write(path, script).expect("write fake rclone");
         let mut permissions = fs::metadata(path).expect("metadata").permissions();
