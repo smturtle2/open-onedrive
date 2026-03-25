@@ -245,6 +245,36 @@ fn cmake_build(source_dir: &str, build_dir: &str) -> Result<()> {
     if nix_libx11.exists() {
         configure.arg(format!("-DX11_X11_LIB={}", nix_libx11.display()));
     }
+    if let Some(include_dir) = existing_path(&[
+        home.join(".nix-profile/include/GL/gl.h"),
+        PathBuf::from("/usr/include/GL/gl.h"),
+    ])
+    .and_then(|path| path.parent().and_then(|path| path.parent()).map(Path::to_path_buf))
+    {
+        configure.arg(format!("-DOPENGL_INCLUDE_DIR={}", include_dir.display()));
+    }
+    if let Some(gl_library) = existing_path(&[
+        home.join(".nix-profile/lib/libGL.so"),
+        PathBuf::from("/usr/lib/libGL.so"),
+    ]) {
+        configure.arg(format!("-DOPENGL_gl_LIBRARY={}", gl_library.display()));
+        configure.arg("-DOpenGL_GL_PREFERENCE=LEGACY");
+    }
+    if let Some(opengl_library) = existing_path(&[
+        home.join(".nix-profile/lib/libOpenGL.so"),
+        PathBuf::from("/usr/lib/libOpenGL.so"),
+    ]) {
+        configure.arg(format!(
+            "-DOPENGL_opengl_LIBRARY={}",
+            opengl_library.display()
+        ));
+    }
+    if let Some(glx_library) = existing_path(&[
+        home.join(".nix-profile/lib/libGLX.so"),
+        PathBuf::from("/usr/lib/libGLX.so"),
+    ]) {
+        configure.arg(format!("-DOPENGL_glx_LIBRARY={}", glx_library.display()));
+    }
     apply_cmake_env(&mut configure)?;
     run_command(configure, "cmake configure")?;
 
@@ -361,17 +391,11 @@ fn apply_cmake_env(command: &mut Command) -> Result<()> {
         command.env("QT_QTPATHS_EXECUTABLE", "/usr/lib/qt6/bin/qtpaths");
     }
 
-    if Path::new("/usr/include/GL/gl.h").exists() {
-        command.env("OPENGL_INCLUDE_DIR", "/usr/include");
-    }
-    if Path::new("/usr/lib/libOpenGL.so").exists() {
-        command.env("OPENGL_opengl_LIBRARY", "/usr/lib/libOpenGL.so");
-    }
-    if Path::new("/usr/lib/libGLX.so").exists() {
-        command.env("OPENGL_glx_LIBRARY", "/usr/lib/libGLX.so");
-    }
-
     Ok(())
+}
+
+fn existing_path(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|path| path.exists()).cloned()
 }
 
 fn cmake_prefix_path() -> Result<OsString> {
