@@ -139,7 +139,10 @@ fn install() -> Result<()> {
 
     write_text_file(
         &app_dir.join("io.github.smturtle2.OpenOneDrive.desktop"),
-        &render_template("packaging/open-onedrive.desktop.in", &[])?,
+        &render_template(
+            "packaging/open-onedrive.desktop.in",
+            &[("@INSTALL_BIN_DIR@", bin_dir.to_string_lossy().as_ref())],
+        )?,
         false,
     )?;
 
@@ -166,6 +169,9 @@ fn install() -> Result<()> {
     let mut update_desktop_database = Command::new("update-desktop-database");
     update_desktop_database.arg(&app_dir);
     run_optional(update_desktop_database, "update-desktop-database");
+
+    let refresh_kde_cache = Command::new("kbuildsycoca6");
+    run_optional(refresh_kde_cache, "kbuildsycoca6");
 
     println!("Installed open-onedrive into {}", prefix.display());
     println!("Launch from your app menu or run: {}", bin_dir.join("open-onedrive").display());

@@ -52,6 +52,13 @@ Kirigami.ScrollablePage {
 
             StatusCard {
                 Layout.fillWidth: true
+                title: "Account"
+                value: shellBackend.accountLabel
+                description: "Microsoft account connected to this daemon"
+            }
+
+            StatusCard {
+                Layout.fillWidth: true
                 title: "Sync State"
                 value: shellBackend.syncState
                 description: shellBackend.statusMessage

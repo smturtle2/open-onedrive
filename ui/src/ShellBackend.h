@@ -9,7 +9,11 @@ class ShellBackend : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool configured READ configured NOTIFY configuredChanged)
+    Q_PROPERTY(bool accountConnected READ accountConnected NOTIFY accountConnectedChanged)
+    Q_PROPERTY(bool clientIdConfigured READ clientIdConfigured NOTIFY clientIdConfiguredChanged)
+    Q_PROPERTY(bool authPending READ authPending NOTIFY authPendingChanged)
     Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
+    Q_PROPERTY(QString accountLabel READ accountLabel NOTIFY accountLabelChanged)
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
     Q_PROPERTY(QString syncState READ syncState NOTIFY syncStateChanged)
     Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
@@ -21,7 +25,11 @@ public:
     explicit ShellBackend(QObject *parent = nullptr);
 
     bool configured() const;
+    bool accountConnected() const;
+    bool clientIdConfigured() const;
+    bool authPending() const;
     QString clientId() const;
+    QString accountLabel() const;
     QString mountPath() const;
     QString syncState() const;
     QString mountState() const;
@@ -41,7 +49,11 @@ public:
 
 Q_SIGNALS:
     void configuredChanged();
+    void accountConnectedChanged();
+    void clientIdConfiguredChanged();
+    void authPendingChanged();
     void clientIdChanged();
+    void accountLabelChanged();
     void mountPathChanged();
     void syncStateChanged();
     void mountStateChanged();
@@ -52,15 +64,17 @@ Q_SIGNALS:
 private:
     void applyStatusJson(const QString &jsonPayload);
     void updateStatusMessage(const QString &message);
-    void updateConfigured();
 
     QTimer *m_refreshTimer = nullptr;
-    bool m_configured = false;
+    bool m_accountConnected = false;
+    bool m_clientIdConfigured = false;
+    bool m_authPending = false;
     QString m_clientId;
+    QString m_accountLabel;
     QString m_mountPath;
     QString m_syncState = QStringLiteral("needs-setup");
     QString m_mountState = QStringLiteral("unmounted");
-    QString m_statusMessage = QStringLiteral("Waiting for initial setup");
+    QString m_statusMessage = QStringLiteral("Choose a mount folder, then sign in with Microsoft.");
     QString m_cacheUsageLabel = QStringLiteral("Cache usage: pending daemon data");
     QString m_indexedItemsLabel = QStringLiteral("0 items indexed");
 };

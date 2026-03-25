@@ -142,21 +142,21 @@ impl OpenOneDriveApp {
     }
 
     pub async fn login(self: &Arc<Self>, client_id: &str) -> Result<String> {
-        if client_id.trim().is_empty() {
-            bail!("client ID cannot be empty");
-        }
+        let client_id = self
+            .effective_client_id(client_id)
+            .context("no Microsoft OAuth client ID is configured")?;
 
-        let request = build_authorization_request(client_id, CALLBACK_PORT)?;
+        let request = build_authorization_request(&client_id, CALLBACK_PORT)?;
         {
             let mut config = self.config.write().expect("config lock poisoned");
-            config.client_id = Some(client_id.trim().to_string());
+            config.client_id = Some(client_id.clone());
             config.save(&self.paths)?;
         }
         {
             let mut runtime = self.runtime.write().await;
             runtime.last_error = None;
             runtime.pending_login = Some(PendingLogin {
-                client_id: client_id.trim().to_string(),
+                client_id: client_id.clone(),
                 csrf_state: request.csrf_state,
                 pkce_verifier: request.pkce_verifier,
                 redirect_uri: request.redirect_uri,
@@ -257,14 +257,19 @@ impl OpenOneDriveApp {
     pub async fn get_status(&self) -> Result<StatusSnapshot> {
         let config = self.config();
         let runtime = self.runtime.read().await.clone();
+        let session = self.state.get_auth_session()?;
         Ok(StatusSnapshot {
             sync_state: runtime.sync_state,
             mount_state: runtime.mount_state,
             mount_path: config
                 .mount_path
+                .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
-            client_id_configured: config.client_id.is_some(),
+            client_id_configured: configured_client_id(&config).is_some(),
+            account_connected: session.is_some(),
+            auth_pending: runtime.pending_login.is_some(),
+            account_label: session.map(|value| value.account_label).unwrap_or_default(),
             cache_limit_gb: config.cache_limit_gb,
             cache_usage_bytes: directory_size_bytes(&self.paths.cache_dir)?,
             items_indexed: self.state.items_indexed()?,
@@ -714,6 +719,16 @@ impl OpenOneDriveApp {
     }
 }
 
+impl OpenOneDriveApp {
+    fn effective_client_id(&self, requested_client_id: &str) -> Option<String> {
+        let requested = requested_client_id.trim();
+        if !requested.is_empty() {
+            return Some(requested.to_string());
+        }
+        configured_client_id(&self.config())
+    }
+}
+
 impl DaemonContentProvider {
     fn evict_paths(&self, paths: &[String]) -> Result<()> {
         for path in paths {
@@ -989,4 +1004,13 @@ fn unix_time() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system time before unix epoch")
         .as_secs() as i64
+}
+
+fn configured_client_id(config: &AppConfig) -> Option<String> {
+    config.client_id.clone().filter(|value| !value.trim().is_empty()).or_else(|| {
+        std::env::var("OPEN_ONEDRIVE_CLIENT_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
 }

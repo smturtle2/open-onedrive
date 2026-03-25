@@ -36,12 +36,32 @@ ShellBackend::ShellBackend(QObject *parent)
 
 bool ShellBackend::configured() const
 {
-    return m_configured;
+    return m_accountConnected;
+}
+
+bool ShellBackend::accountConnected() const
+{
+    return m_accountConnected;
+}
+
+bool ShellBackend::clientIdConfigured() const
+{
+    return m_clientIdConfigured || !m_clientId.trimmed().isEmpty();
+}
+
+bool ShellBackend::authPending() const
+{
+    return m_authPending;
 }
 
 QString ShellBackend::clientId() const
 {
     return m_clientId;
+}
+
+QString ShellBackend::accountLabel() const
+{
+    return m_accountLabel;
 }
 
 QString ShellBackend::mountPath() const
@@ -82,7 +102,7 @@ void ShellBackend::setClientId(const QString &clientId)
 
     m_clientId = clientId;
     emit clientIdChanged();
-    updateConfigured();
+    emit clientIdConfiguredChanged();
 }
 
 void ShellBackend::setMountPath(const QString &mountPath)
@@ -93,13 +113,12 @@ void ShellBackend::setMountPath(const QString &mountPath)
 
     m_mountPath = mountPath;
     emit mountPathChanged();
-    updateConfigured();
 }
 
 void ShellBackend::completeSetup()
 {
-    if (m_clientId.trimmed().isEmpty() || m_mountPath.trimmed().isEmpty()) {
-        updateStatusMessage(QStringLiteral("Client ID and mount path are both required."));
+    if (m_mountPath.trimmed().isEmpty()) {
+        updateStatusMessage(QStringLiteral("Choose a mount path before signing in."));
         return;
     }
 
@@ -115,16 +134,24 @@ void ShellBackend::completeSetup()
         return;
     }
 
-    const QDBusReply<QString> loginReply = iface.call(QStringLiteral("Login"), m_clientId.trimmed());
+    const QString requestedClientId = m_clientId.trimmed();
+    if (requestedClientId.isEmpty() && !m_clientIdConfigured) {
+        updateStatusMessage(QStringLiteral("No Microsoft OAuth Client ID is configured. Expand Advanced and paste one, or set OPEN_ONEDRIVE_CLIENT_ID."));
+        return;
+    }
+
+    const QDBusReply<QString> loginReply = iface.call(QStringLiteral("Login"), requestedClientId);
     if (!loginReply.isValid()) {
         updateStatusMessage(QStringLiteral("Login setup failed: %1").arg(loginReply.error().message()));
         return;
     }
 
-    m_configured = true;
-    emit configuredChanged();
     QDesktopServices::openUrl(QUrl(loginReply.value()));
-    updateStatusMessage(QStringLiteral("Opened browser for Microsoft sign-in."));
+    if (!m_authPending) {
+        m_authPending = true;
+        emit authPendingChanged();
+    }
+    updateStatusMessage(QStringLiteral("Opened browser for Microsoft sign-in. Finish the login in your browser."));
     refreshStatus();
 }
 
@@ -207,6 +234,10 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const QString syncState = object.value(QStringLiteral("sync_state")).toString();
     const QString mountState = object.value(QStringLiteral("mount_state")).toString();
     const QString lastError = object.value(QStringLiteral("last_error")).toString();
+    const QString accountLabel = object.value(QStringLiteral("account_label")).toString();
+    const bool clientIdConfigured = object.value(QStringLiteral("client_id_configured")).toBool();
+    const bool accountConnected = object.value(QStringLiteral("account_connected")).toBool();
+    const bool authPending = object.value(QStringLiteral("auth_pending")).toBool();
     const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
     const qint64 itemsIndexed = object.value(QStringLiteral("items_indexed")).toInteger();
 
@@ -215,10 +246,25 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit mountPathChanged();
     }
 
-    const bool configured = object.value(QStringLiteral("client_id_configured")).toBool();
-    if (configured != m_configured) {
-        m_configured = configured;
+    if (clientIdConfigured != m_clientIdConfigured) {
+        m_clientIdConfigured = clientIdConfigured;
+        emit clientIdConfiguredChanged();
+    }
+
+    if (accountConnected != m_accountConnected) {
+        m_accountConnected = accountConnected;
+        emit accountConnectedChanged();
         emit configuredChanged();
+    }
+
+    if (authPending != m_authPending) {
+        m_authPending = authPending;
+        emit authPendingChanged();
+    }
+
+    if (accountLabel != m_accountLabel) {
+        m_accountLabel = accountLabel;
+        emit accountLabelChanged();
     }
 
     if (!syncState.isEmpty() && syncState != m_syncState) {
@@ -248,7 +294,24 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         return;
     }
 
-    updateStatusMessage(QStringLiteral("Daemon connected. %1, %2.").arg(m_syncState, m_indexedItemsLabel));
+    if (m_authPending) {
+        updateStatusMessage(QStringLiteral("Waiting for Microsoft sign-in to complete in the browser."));
+        return;
+    }
+
+    if (m_accountConnected) {
+        const QString label = m_accountLabel.isEmpty() ? QStringLiteral("Microsoft account") : m_accountLabel;
+        updateStatusMessage(QStringLiteral("Signed in as %1. %2, %3.").arg(label, m_syncState, m_indexedItemsLabel));
+        return;
+    }
+
+    if (!m_clientIdConfigured && m_clientId.trimmed().isEmpty()) {
+        updateStatusMessage(
+            QStringLiteral("Sign in requires a Microsoft Client ID. Add one in Advanced Settings or set OPEN_ONEDRIVE_CLIENT_ID."));
+        return;
+    }
+
+    updateStatusMessage(QStringLiteral("Ready to sign in with Microsoft."));
 }
 
 void ShellBackend::updateStatusMessage(const QString &message)
@@ -259,15 +322,4 @@ void ShellBackend::updateStatusMessage(const QString &message)
 
     m_statusMessage = message;
     emit statusMessageChanged();
-}
-
-void ShellBackend::updateConfigured()
-{
-    const bool configured = !m_clientId.trimmed().isEmpty() && !m_mountPath.trimmed().isEmpty();
-    if (m_configured == configured) {
-        return;
-    }
-
-    m_configured = configured;
-    emit configuredChanged();
 }
