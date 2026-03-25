@@ -6,7 +6,7 @@ import "../components"
 
 Kirigami.ScrollablePage {
     id: page
-    title: shellBackend.remoteConfigured ? qsTr("Recover Mount") : qsTr("Set Up")
+    title: shellBackend.remoteConfigured ? qsTr("Recover Filesystem") : qsTr("Set Up")
 
     ColumnLayout {
         width: Math.min(parent.width, 760)
@@ -18,7 +18,7 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.Heading {
-            text: shellBackend.remoteConfigured ? qsTr("Reconnect the OneDrive mount") : qsTr("Connect OneDrive with rclone")
+            text: shellBackend.remoteConfigured ? qsTr("Reconnect the OneDrive root") : qsTr("Connect OneDrive with rclone")
             level: 1
         }
 
@@ -26,8 +26,8 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             text: shellBackend.remoteConfigured
-                  ? qsTr("The app-owned rclone remote already exists. Choose whether to mount it again, retry a failed mount, or disconnect it completely.")
-                  : qsTr("Choose where the OneDrive mount should appear on this machine, then start the browser sign-in flow managed by rclone.")
+                  ? qsTr("The app-owned rclone remote already exists. Choose whether to restart the filesystem, retry a failed session, or disconnect it completely.")
+                  : qsTr("Choose where the visible OneDrive root folder should appear on this machine, then start the browser sign-in flow managed by rclone.")
         }
 
         Kirigami.InlineMessage {
@@ -66,14 +66,14 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
 
             Button {
-                text: shellBackend.remoteConfigured ? qsTr("Retry Mount") : qsTr("Connect OneDrive")
+                text: shellBackend.remoteConfigured ? qsTr("Retry Filesystem") : qsTr("Connect OneDrive")
                 icon.name: shellBackend.remoteConfigured ? "view-refresh" : "network-connect"
                 enabled: shellBackend.mountPath.length > 0
                 onClicked: shellBackend.remoteConfigured ? shellBackend.retryMount() : shellBackend.beginConnect()
             }
 
             Button {
-                text: qsTr("Mount")
+                text: qsTr("Start Filesystem")
                 icon.name: "folder-cloud"
                 enabled: shellBackend.canMount
                 onClicked: shellBackend.mountRemote()
@@ -87,7 +87,7 @@ Kirigami.ScrollablePage {
             }
 
             Button {
-                text: qsTr("Open Mount Folder")
+                text: qsTr("Open Root Folder")
                 icon.name: "document-open-folder"
                 enabled: shellBackend.effectiveMountPath.length > 0
                 onClicked: shellBackend.openMountLocation()

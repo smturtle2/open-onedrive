@@ -20,12 +20,12 @@ enum Command {
     Status,
     BeginConnect,
     Disconnect,
-    SetMountPath {
+    SetRootPath {
         path: String,
     },
-    Mount,
-    Unmount,
-    RetryMount,
+    StartFilesystem,
+    StopFilesystem,
+    RetryFilesystem,
     Rescan,
     PauseSync,
     ResumeSync,
@@ -33,6 +33,9 @@ enum Command {
         paths: Vec<String>,
     },
     MakeOnlineOnly {
+        paths: Vec<String>,
+    },
+    RetryTransfer {
         paths: Vec<String>,
     },
     PathStates {
@@ -61,17 +64,17 @@ async fn main() -> Result<()> {
         Command::Disconnect => {
             proxy.call::<_, _, ()>("Disconnect", &()).await?;
         }
-        Command::SetMountPath { path } => {
-            proxy.call::<_, _, ()>("SetMountPath", &(path)).await?;
+        Command::SetRootPath { path } => {
+            proxy.call::<_, _, ()>("SetRootPath", &(path)).await?;
         }
-        Command::Mount => {
-            proxy.call::<_, _, ()>("Mount", &()).await?;
+        Command::StartFilesystem => {
+            proxy.call::<_, _, ()>("StartFilesystem", &()).await?;
         }
-        Command::Unmount => {
-            proxy.call::<_, _, ()>("Unmount", &()).await?;
+        Command::StopFilesystem => {
+            proxy.call::<_, _, ()>("StopFilesystem", &()).await?;
         }
-        Command::RetryMount => {
-            proxy.call::<_, _, ()>("RetryMount", &()).await?;
+        Command::RetryFilesystem => {
+            proxy.call::<_, _, ()>("RetryFilesystem", &()).await?;
         }
         Command::Rescan => {
             let count: u32 = proxy.call("Rescan", &()).await?;
@@ -90,6 +93,10 @@ async fn main() -> Result<()> {
         Command::MakeOnlineOnly { paths } => {
             let count: u32 = proxy.call("MakeOnlineOnly", &(paths)).await?;
             println!("returned {count} item(s) to online-only mode");
+        }
+        Command::RetryTransfer { paths } => {
+            let count: u32 = proxy.call("RetryTransfer", &(paths)).await?;
+            println!("retried {count} transfer item(s)");
         }
         Command::PathStates { paths } => {
             let states: Vec<PathState> = proxy.call("GetPathStates", &(paths)).await?;

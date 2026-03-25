@@ -6,25 +6,25 @@
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
   <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive residency workflow</text>
 
-  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">Mount once, decide file residency later.</text>
-  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper caches path state, drives the tray, keeps pinned files on disk, and sends others back to online-only mode.</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">Expose one folder, hydrate files only when needed.</text>
+  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">A custom FUSE layer exposes the OneDrive root. rclone lists remote state, downloads cold files, uploads edits, and leaves residency policy to the wrapper.</text>
 
   <g filter="url(#shadow)">
     <rect x="88" y="244" width="470" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dashboard</text>
-    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Mount control, sync state, cache size, pinned file count, and diagnostics stay together.</text>
+    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Filesystem control, sync state, backing usage, pinned count, conflict count, and diagnostics stay together.</text>
 
     <rect x="124" y="356" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="356" width="180" height="8" rx="4" fill="#4B7CFF"/>
     <text x="146" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Backend</text>
     <text x="146" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">rclone</text>
-    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">mounted and supervised</text>
+    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">lsjson + copyto primitives</text>
 
     <rect x="322" y="356" width="200" height="118" rx="22" fill="#12233A"/>
     <rect x="322" y="356" width="200" height="8" rx="4" fill="#26A269"/>
-    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Mount state</text>
-    <text x="344" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Mounted</text>
-    <text x="344" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">healthy session</text>
+    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Filesystem state</text>
+    <text x="344" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Running</text>
+    <text x="344" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">visible root is active</text>
 
     <rect x="124" y="494" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="494" width="180" height="8" rx="4" fill="#7D67FF"/>

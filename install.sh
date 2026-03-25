@@ -59,6 +59,18 @@ install_rclone_helper() {
   bash "$helper"
 }
 
+check_fuse_runtime() {
+  if [[ ! -e /dev/fuse ]]; then
+    echo "Warning: /dev/fuse is not available. open-onedrive needs FUSE to expose the OneDrive folder." >&2
+  fi
+
+  if have_cmd fusermount3 || have_cmd mount.fuse3; then
+    return
+  fi
+
+  echo "Warning: fuse3 helpers were not found in PATH. Install fuse3 if the filesystem fails to start." >&2
+}
+
 write_launcher() {
   local path="$1"
   local bin_dir="$2"
@@ -107,7 +119,7 @@ write_systemd_service() {
   local bin_dir="$2"
   cat > "$path" <<EOF
 [Unit]
-Description=open-onedrive rclone mount supervisor
+Description=open-onedrive custom FUSE OneDrive daemon
 After=default.target
 
 [Service]
@@ -200,6 +212,7 @@ install_from_release() {
   fi
 
   install_rclone_helper "$repo" "${ref:-main}" "$temp_dir"
+  check_fuse_runtime
   install_release_tree "$extracted_root"
   echo "Installed open-onedrive into \$HOME/.local"
 }

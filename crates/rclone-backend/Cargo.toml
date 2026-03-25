@@ -7,6 +7,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+fuser.workspace = true
+libc.workspace = true
 openonedrive-config = { path = "../config" }
 openonedrive-ipc-types = { path = "../ipc-types" }
 openonedrive-state = { path = "../state" }

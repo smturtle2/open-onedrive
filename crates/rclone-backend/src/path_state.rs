@@ -76,7 +76,8 @@ impl PathStateStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT path, is_dir, state, size_bytes, pinned, cached, error, last_sync_at
+                "SELECT path, is_dir, state, size_bytes, pinned, hydrated, dirty, error,
+                        last_sync_at, base_revision, conflict_reason
                  FROM path_states
                  ORDER BY path ASC",
             )
@@ -89,9 +90,12 @@ impl PathStateStore {
                     state: parse_state(&row.get::<_, String>(2)?),
                     size_bytes: row.get(3)?,
                     pinned: row.get::<_, i64>(4)? != 0,
-                    cached: row.get::<_, i64>(5)? != 0,
-                    error: row.get(6)?,
-                    last_sync_at: row.get(7)?,
+                    hydrated: row.get::<_, i64>(5)? != 0,
+                    dirty: row.get::<_, i64>(6)? != 0,
+                    error: row.get(7)?,
+                    last_sync_at: row.get(8)?,
+                    base_revision: row.get(9)?,
+                    conflict_reason: row.get(10)?,
                 })
             })
             .context("unable to query path states")?;
@@ -118,9 +122,12 @@ impl PathStateStore {
                     state TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL DEFAULT 0,
                     pinned INTEGER NOT NULL DEFAULT 0,
-                    cached INTEGER NOT NULL DEFAULT 0,
+                    hydrated INTEGER NOT NULL DEFAULT 0,
+                    dirty INTEGER NOT NULL DEFAULT 0,
                     error TEXT NOT NULL DEFAULT '',
-                    last_sync_at INTEGER NOT NULL DEFAULT 0
+                    last_sync_at INTEGER NOT NULL DEFAULT 0,
+                    base_revision TEXT NOT NULL DEFAULT '',
+                    conflict_reason TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY NOT NULL,
@@ -141,25 +148,34 @@ impl PathStateStore {
 fn upsert_state(connection: &Connection, state: &PathState) -> Result<()> {
     connection
         .execute(
-            "INSERT INTO path_states(path, is_dir, state, size_bytes, pinned, cached, error, last_sync_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO path_states(
+                 path, is_dir, state, size_bytes, pinned, hydrated, dirty, error,
+                 last_sync_at, base_revision, conflict_reason
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(path) DO UPDATE SET
                  is_dir = excluded.is_dir,
                  state = excluded.state,
                  size_bytes = excluded.size_bytes,
                  pinned = excluded.pinned,
-                 cached = excluded.cached,
+                 hydrated = excluded.hydrated,
+                 dirty = excluded.dirty,
                  error = excluded.error,
-                 last_sync_at = excluded.last_sync_at",
+                 last_sync_at = excluded.last_sync_at,
+                 base_revision = excluded.base_revision,
+                 conflict_reason = excluded.conflict_reason",
             params![
                 state.path,
                 state.is_dir as i64,
-                state_name(state.state),
+                state_name(&state.state),
                 state.size_bytes,
                 state.pinned as i64,
-                state.cached as i64,
+                state.hydrated as i64,
+                state.dirty as i64,
                 state.error,
                 state.last_sync_at,
+                state.base_revision,
+                state.conflict_reason,
             ],
         )
         .with_context(|| format!("unable to upsert path state {}", state.path))?;
@@ -169,7 +185,8 @@ fn upsert_state(connection: &Connection, state: &PathState) -> Result<()> {
 fn load_state(connection: &Connection, path: &str) -> Result<Option<PathState>> {
     connection
         .query_row(
-            "SELECT path, is_dir, state, size_bytes, pinned, cached, error, last_sync_at
+            "SELECT path, is_dir, state, size_bytes, pinned, hydrated, dirty, error,
+                    last_sync_at, base_revision, conflict_reason
              FROM path_states
              WHERE path = ?1",
             [path],
@@ -180,9 +197,12 @@ fn load_state(connection: &Connection, path: &str) -> Result<Option<PathState>> 
                     state: parse_state(&row.get::<_, String>(2)?),
                     size_bytes: row.get(3)?,
                     pinned: row.get::<_, i64>(4)? != 0,
-                    cached: row.get::<_, i64>(5)? != 0,
-                    error: row.get(6)?,
-                    last_sync_at: row.get(7)?,
+                    hydrated: row.get::<_, i64>(5)? != 0,
+                    dirty: row.get::<_, i64>(6)? != 0,
+                    error: row.get(7)?,
+                    last_sync_at: row.get(8)?,
+                    base_revision: row.get(9)?,
+                    conflict_reason: row.get(10)?,
                 })
             },
         )
@@ -190,12 +210,13 @@ fn load_state(connection: &Connection, path: &str) -> Result<Option<PathState>> 
         .with_context(|| format!("unable to query path state {path}"))
 }
 
-fn state_name(state: PathSyncState) -> &'static str {
+fn state_name(state: &PathSyncState) -> &'static str {
     match state {
         PathSyncState::OnlineOnly => "online_only",
         PathSyncState::AvailableLocal => "available_local",
         PathSyncState::PinnedLocal => "pinned_local",
         PathSyncState::Syncing => "syncing",
+        PathSyncState::Conflict => "conflict",
         PathSyncState::Error => "error",
     }
 }
@@ -205,6 +226,7 @@ fn parse_state(value: &str) -> PathSyncState {
         "available_local" => PathSyncState::AvailableLocal,
         "pinned_local" => PathSyncState::PinnedLocal,
         "syncing" => PathSyncState::Syncing,
+        "conflict" => PathSyncState::Conflict,
         "error" => PathSyncState::Error,
         _ => PathSyncState::OnlineOnly,
     }
@@ -234,19 +256,25 @@ mod tests {
                 state: PathSyncState::PinnedLocal,
                 size_bytes: 0,
                 pinned: true,
-                cached: true,
+                hydrated: false,
+                dirty: false,
                 error: String::new(),
                 last_sync_at: 44,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
             },
             PathState {
                 path: "Docs/readme.md".into(),
                 is_dir: false,
-                state: PathSyncState::AvailableLocal,
+                state: PathSyncState::Conflict,
                 size_bytes: 10,
                 pinned: false,
-                cached: true,
+                hydrated: true,
+                dirty: true,
                 error: String::new(),
                 last_sync_at: 45,
+                base_revision: "rev-1".into(),
+                conflict_reason: "remote changed".into(),
             },
         ];
 

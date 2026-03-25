@@ -63,9 +63,9 @@ QJsonArray pathStates(const QStringList &paths)
     return document.array();
 }
 
-QString mountRoot(const QJsonObject &status)
+QString rootFolder(const QJsonObject &status)
 {
-    return QDir::cleanPath(status.value(QStringLiteral("mount_path")).toString());
+    return QDir::cleanPath(status.value(QStringLiteral("root_path")).toString());
 }
 
 QStringList selectedLocalPaths(const KFileItemListProperties &fileItemInfos)
@@ -80,13 +80,22 @@ QStringList selectedLocalPaths(const KFileItemListProperties &fileItemInfos)
     return paths;
 }
 
-bool isWithinMountRoot(const QString &path, const QString &mountPath)
+bool isWithinVisibleRoot(const QString &path, const QString &rootPath, const QString &backingDirName)
 {
-    if (path.isEmpty() || mountPath.isEmpty()) {
+    if (path.isEmpty() || rootPath.isEmpty()) {
         return false;
     }
 
-    return path == mountPath || path.startsWith(mountPath + QLatin1Char('/'));
+    if (path != rootPath && !path.startsWith(rootPath + QLatin1Char('/'))) {
+        return false;
+    }
+
+    if (backingDirName.isEmpty()) {
+        return true;
+    }
+
+    const QString hiddenRoot = QDir::cleanPath(rootPath + QLatin1Char('/') + backingDirName);
+    return path != hiddenRoot && !path.startsWith(hiddenRoot + QLatin1Char('/'));
 }
 
 bool invokePathAction(const QString &method, const QStringList &paths)
@@ -114,20 +123,22 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
         return {};
     }
 
-    const QString mountPath = mountRoot(status);
+    const QString rootPath = rootFolder(status);
+    const QString backingDirName = status.value(QStringLiteral("backing_dir_name")).toString();
     const QStringList selectedPaths = selectedLocalPaths(fileItemInfos);
-    if (mountPath.isEmpty() || selectedPaths.isEmpty()) {
+    if (rootPath.isEmpty() || selectedPaths.isEmpty()) {
         return {};
     }
 
     for (const QString &path : selectedPaths) {
-        if (!isWithinMountRoot(path, mountPath)) {
+        if (!isWithinVisibleRoot(path, rootPath, backingDirName)) {
             return {};
         }
     }
 
     bool showKeepLocal = true;
     bool showOnlineOnly = true;
+    bool showRetryTransfer = false;
     const QJsonArray states = pathStates(selectedPaths);
     if (!states.isEmpty()) {
         bool anyOnlineOnly = false;
@@ -136,6 +147,7 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
             const QString state = value.toObject().value(QStringLiteral("state")).toString();
             anyOnlineOnly |= state == QStringLiteral("OnlineOnly");
             anyLocal |= state == QStringLiteral("PinnedLocal") || state == QStringLiteral("AvailableLocal");
+            showRetryTransfer |= state == QStringLiteral("Conflict") || state == QStringLiteral("Error");
         }
         showKeepLocal = anyOnlineOnly;
         showOnlineOnly = anyLocal;
@@ -159,11 +171,19 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
         actions << onlineOnlyAction;
     }
 
-    auto *openMountAction = new QAction(QStringLiteral("Open OneDrive Folder"), actionParent);
-    QObject::connect(openMountAction, &QAction::triggered, this, [mountPath] {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(mountPath));
+    if (showRetryTransfer) {
+        auto *retryTransferAction = new QAction(QStringLiteral("Retry transfer"), actionParent);
+        QObject::connect(retryTransferAction, &QAction::triggered, this, [selectedPaths] {
+            invokePathAction(QStringLiteral("RetryTransfer"), selectedPaths);
+        });
+        actions << retryTransferAction;
+    }
+
+    auto *openRootAction = new QAction(QStringLiteral("Open OneDrive Root"), actionParent);
+    QObject::connect(openRootAction, &QAction::triggered, this, [rootPath] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(rootPath));
     });
-    actions << openMountAction;
+    actions << openRootAction;
     return actions;
 }
 

@@ -53,11 +53,20 @@ async fn main() -> Result<()> {
 
         while let Ok(event) = events.recv().await {
             match event {
-                BackendEvent::MountStateChanged => {
+                BackendEvent::ConnectionStateChanged => {
                     if let Ok(status) = signal_app.get_status().await {
-                        let _ = OpenOneDriveBus::emit_mount_state_changed(
+                        let _ = OpenOneDriveBus::emit_connection_state_changed(
                             &signal_context,
-                            status.mount_state,
+                            status.connection_state,
+                        )
+                        .await;
+                    }
+                }
+                BackendEvent::FilesystemStateChanged => {
+                    if let Ok(status) = signal_app.get_status().await {
+                        let _ = OpenOneDriveBus::emit_filesystem_state_changed(
+                            &signal_context,
+                            status.filesystem_state,
                         )
                         .await;
                     }

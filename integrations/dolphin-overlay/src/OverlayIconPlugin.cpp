@@ -27,6 +27,18 @@ QStringList OpenOneDriveOverlayIconPlugin::getOverlays(const QUrl &item)
         return {};
     }
 
+    const QString mountRoot = currentMountRoot();
+    if (mountRoot.isEmpty()) {
+        return {};
+    }
+    const QString backingDirName = currentBackingDirName();
+    if (!backingDirName.isEmpty()) {
+        const QString hiddenRoot = QDir::cleanPath(mountRoot + QLatin1Char('/') + backingDirName);
+        if (absolutePath == hiddenRoot || absolutePath.startsWith(hiddenRoot + QLatin1Char('/'))) {
+            return {};
+        }
+    }
+
     if (m_cache.contains(absolutePath)) {
         return m_cache.value(absolutePath);
     }
@@ -117,7 +129,26 @@ QString OpenOneDriveOverlayIconPlugin::currentMountRoot() const
         return {};
     }
 
-    return QDir::cleanPath(document.object().value(QStringLiteral("mount_path")).toString());
+    return QDir::cleanPath(document.object().value(QStringLiteral("root_path")).toString());
+}
+
+QString OpenOneDriveOverlayIconPlugin::currentBackingDirName() const
+{
+    QDBusInterface iface(QString::fromLatin1(kService),
+                         QString::fromLatin1(kPath),
+                         QString::fromLatin1(kInterface),
+                         QDBusConnection::sessionBus());
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
+    if (!reply.isValid()) {
+        return {};
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
+    if (!document.isObject()) {
+        return {};
+    }
+
+    return document.object().value(QStringLiteral("backing_dir_name")).toString();
 }
 
 QStringList OpenOneDriveOverlayIconPlugin::overlaysForState(const QString &state)
@@ -132,6 +163,9 @@ QStringList OpenOneDriveOverlayIconPlugin::overlaysForState(const QString &state
         return {QStringLiteral("emblem-synchronizing")};
     }
     if (state == QStringLiteral("Error")) {
+        return {QStringLiteral("emblem-important")};
+    }
+    if (state == QStringLiteral("Conflict")) {
         return {QStringLiteral("emblem-important")};
     }
     if (state == QStringLiteral("OnlineOnly")) {

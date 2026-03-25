@@ -76,22 +76,26 @@ impl ProjectPaths {
 #[serde(default)]
 pub struct AppConfig {
     pub rclone_bin: Option<PathBuf>,
-    pub mount_path: PathBuf,
+    #[serde(alias = "mount_path")]
+    pub root_path: PathBuf,
     pub remote_name: String,
     pub cache_limit_gb: u64,
-    pub auto_mount: bool,
+    #[serde(alias = "auto_mount")]
+    pub auto_start_filesystem: bool,
     pub custom_client_id: Option<String>,
+    pub backing_dir_name: String,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             rclone_bin: None,
-            mount_path: Self::default_mount_hint(),
+            root_path: Self::default_root_hint(),
             remote_name: Self::default_remote_name(),
             cache_limit_gb: 10,
-            auto_mount: true,
+            auto_start_filesystem: true,
             custom_client_id: None,
+            backing_dir_name: Self::default_backing_dir_name(),
         }
     }
 }
@@ -128,7 +132,7 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn default_mount_hint() -> PathBuf {
+    pub fn default_root_hint() -> PathBuf {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -138,37 +142,51 @@ impl AppConfig {
     pub fn default_remote_name() -> String {
         "openonedrive".to_string()
     }
+
+    pub fn default_backing_dir_name() -> String {
+        ".openonedrive-cache".to_string()
+    }
+
+    pub fn backing_dir_path(&self) -> PathBuf {
+        self.root_path.join(&self.backing_dir_name)
+    }
 }
 
-pub fn validate_mount_path(path: &Path) -> Result<()> {
+pub fn validate_root_path(path: &Path, backing_dir_name: &str) -> Result<()> {
     if !path.is_absolute() {
-        bail!("mount path must be absolute");
+        bail!("root path must be absolute");
     }
     if path == Path::new("/") {
-        bail!("mount path cannot be the filesystem root");
+        bail!("root path cannot be the filesystem root");
     }
     if is_known_mount_point(path)? {
-        bail!("mount path already exists as a mount point");
+        bail!("root path already exists as a mount point");
     }
 
     if let Ok(metadata) = fs::metadata(path) {
         if !metadata.is_dir() {
-            bail!("mount path must be a directory");
+            bail!("root path must be a directory");
         }
-        let mut entries =
+        let entries =
             fs::read_dir(path).with_context(|| format!("unable to inspect {}", path.display()))?;
-        if entries.next().is_some() {
-            bail!("mount path must be empty");
+        for entry in entries {
+            let entry = entry.with_context(|| format!("unable to inspect {}", path.display()))?;
+            if entry.file_name().to_string_lossy() != backing_dir_name {
+                bail!(
+                    "root path must be empty except for the hidden backing directory {}",
+                    backing_dir_name
+                );
+            }
         }
     } else {
         let parent = path
             .parent()
-            .context("mount path must have a writable parent directory")?;
+            .context("root path must have a writable parent directory")?;
         if !parent.exists() {
-            bail!("mount path parent directory does not exist");
+            bail!("root path parent directory does not exist");
         }
         if !parent.is_dir() {
-            bail!("mount path parent is not a directory");
+            bail!("root path parent is not a directory");
         }
     }
 
@@ -208,12 +226,12 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, ProjectPaths, validate_mount_path};
+    use super::{AppConfig, ProjectPaths, validate_root_path};
     use tempfile::tempdir;
 
     #[test]
-    fn default_mount_hint_is_absolute() {
-        assert!(AppConfig::default_mount_hint().is_absolute());
+    fn default_root_hint_is_absolute() {
+        assert!(AppConfig::default_root_hint().is_absolute());
     }
 
     #[test]
@@ -224,14 +242,23 @@ mod tests {
     #[test]
     fn validates_empty_directory() {
         let dir = tempdir().expect("tempdir");
-        validate_mount_path(dir.path()).expect("empty directory should validate");
+        validate_root_path(dir.path(), ".openonedrive-cache")
+            .expect("empty directory should validate");
+    }
+
+    #[test]
+    fn allows_hidden_backing_directory() {
+        let dir = tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join(".openonedrive-cache")).expect("create cache dir");
+        validate_root_path(dir.path(), ".openonedrive-cache")
+            .expect("backing dir should be allowed");
     }
 
     #[test]
     fn rejects_non_empty_directory() {
         let dir = tempdir().expect("tempdir");
         std::fs::write(dir.path().join("occupied"), "busy").expect("write marker");
-        assert!(validate_mount_path(dir.path()).is_err());
+        assert!(validate_root_path(dir.path(), ".openonedrive-cache").is_err());
     }
 
     #[test]

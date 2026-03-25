@@ -5,13 +5,14 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  A KDE-first Linux shell for OneDrive where <code>rclone</code> provides the mounted tree and file bytes, while the wrapper owns path state, device residency, Dolphin overlays, and the tray/dashboard experience.
+  A KDE-first Linux OneDrive client with a real local root folder, transparent on-demand hydration, per-file keep-local or online-only control, Dolphin overlays, and a tray/dashboard shell.
 </p>
 
 <p align="center">
   <a href="https://kde.org/plasma-desktop/"><img alt="Platform" src="https://img.shields.io/badge/platform-KDE%20Plasma%206-1D99F3?logo=kdeplasma&logoColor=white"></a>
   <a href="https://www.rust-lang.org/"><img alt="Rust" src="https://img.shields.io/badge/core-Rust-black?logo=rust"></a>
   <a href="https://www.qt.io/"><img alt="Qt6" src="https://img.shields.io/badge/ui-Qt%206-41CD52?logo=qt"></a>
+  <a href="https://github.com/smturtle2/open-onedrive/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/smturtle2/open-onedrive/ci.yml?label=ci"></a>
   <a href="https://github.com/smturtle2/open-onedrive/actions/workflows/release.yml"><img alt="Release" src="https://img.shields.io/github/actions/workflow/status/smturtle2/open-onedrive/release.yml?label=release"></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
@@ -31,30 +32,28 @@
 
 ## Overview
 
-`open-onedrive` targets `KDE Plasma 6 + Dolphin` on Linux. The daemon owns an app-specific `rclone.conf`, supervises `rclone mount`, maintains a SQLite-backed path-state cache, and exposes that state to the dashboard, tray icon, CLI, Dolphin overlays, and Dolphin context actions.
+`open-onedrive` targets `KDE Plasma 6 + Dolphin` on Linux and exposes OneDrive through a custom FUSE filesystem rooted at a normal folder such as `~/OneDrive`.
 
-`rclone` is still responsible for:
+It does **not** use `rclone mount`.
 
-- mounting the OneDrive tree into the filesystem
-- downloading file bytes on demand
-- listing remote paths for cache refresh via `lsjson`
+Instead:
 
-The wrapper is responsible for:
+- `rclone` handles remote auth, directory listing, and file transfer primitives
+- the daemon owns the on-demand filesystem, transfer queue, path-state cache, conflicts, tray state, and Dolphin integration
+- hydrated bytes live in an app-managed hidden backing directory inside the visible root, defaulting to `.openonedrive-cache`
 
-- keeping files pinned locally or returning them to online-only mode
-- caching path state for fast Dolphin overlays
-- driving a tray-resident desktop app and signal-driven dashboard
-- keeping its runtime state under dedicated XDG paths instead of touching the user's default `~/.config/rclone/rclone.conf`
+This gives regular applications a normal local path while still supporting Windows-style per-file availability controls.
 
 ## Highlights
 
-- `curl ... | bash` installs the latest GitHub release asset by default
+- visible root folder like `~/OneDrive` backed by a custom FUSE filesystem
+- transparent on-demand hydration for normal Linux apps, not only KDE apps
+- per-file `Keep on this device` and `Make online-only`
 - app-owned `rclone.conf` under XDG paths, isolated from `~/.config/rclone/rclone.conf`
-- daemon-managed `rclone mount` with mount readiness checks, restart backoff, and recent log capture
-- SQLite-backed path-state cache refreshed from `rclone lsjson`
-- Dolphin overlay icons plus `Keep on this device` / `Make online-only` actions
-- Qt6/Kirigami dashboard with quick per-file controls, sync pause/resume, and recent diagnostics
-- KDE StatusNotifier tray item with close-to-tray behavior
+- SQLite-backed path-state cache plus queued upload and download operations
+- Dolphin overlay icons and context actions
+- Qt6/Kirigami dashboard with filesystem state, queue depth, conflicts, logs, and tray controls
+- release-first `curl ... | bash` installer
 
 ## Quick Start
 
@@ -64,13 +63,13 @@ Install the latest release directly from GitHub:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-Install a specific release tag:
+Install a specific tag:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.0 bash
 ```
 
-Force the old source-build bootstrap path:
+Force the source-build bootstrap path:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
@@ -78,10 +77,11 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 
 What the release installer does:
 
-- downloads the Linux `x86_64` release archive and its SHA256 file
+- downloads the Linux `x86_64` release archive and SHA256 file
 - verifies the archive before extracting it
 - installs binaries, KDE plugins, icon, launcher, and the user service into your home directory
 - installs `rclone` automatically if it is missing
+- warns when FUSE 3 runtime support is missing
 - enables `openonedrived.service` for the current user when `systemd --user` is available
 
 Launch and verify:
@@ -94,28 +94,31 @@ openonedrivectl status
 
 Typical first run:
 
-1. Choose an empty mount directory such as `~/OneDrive`.
+1. Choose a root folder such as `~/OneDrive`.
 2. Finish the Microsoft browser sign-in started by `rclone`.
-3. Open the mounted folder in Dolphin.
-4. Use overlay icons or the context menu to keep files local or return them to online-only mode.
-5. Close the window and keep the app running from the tray if desired.
+3. Start the filesystem from the app if it is not already running.
+4. Open the visible root folder in Dolphin, a terminal, LibreOffice, VS Code, or another normal app.
+5. Keep selected files local or return them to online-only mode from the dashboard, tray, CLI, or Dolphin actions.
 
 CLI equivalents:
 
 ```bash
+openonedrivectl set-root-path ~/OneDrive
+openonedrivectl start-filesystem
 openonedrivectl keep-local ~/OneDrive/Documents/report.pdf
 openonedrivectl make-online-only ~/OneDrive/Documents/report.pdf
-openonedrivectl rescan
+openonedrivectl retry-transfer ~/OneDrive/Documents/report.pdf
 openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 ```
 
 ## Requirements
 
 - Linux `x86_64`
-- runtime dependency: `rclone`
+- `rclone`
+- FUSE 3 runtime support with `/dev/fuse`
 - first-class target: `KDE Plasma 6` with `Dolphin`
 - release installer target: user-local install under `~/.local`
-- source build path: Rust, CMake, Qt6 tooling, KF6 development packages, and a C++ compiler
+- source build path: Rust, CMake, Qt6 tooling, KF6 development packages, fuse3 development packages, and a C++ compiler
 
 ## Configuration
 
@@ -125,15 +128,15 @@ The app stores its config under the XDG project directory, typically:
 - `~/.config/open-onedrive/rclone/rclone.conf`
 - `~/.local/state/open-onedrive/runtime-state.toml`
 - `~/.local/state/open-onedrive/path-state.sqlite3`
-- `~/.cache/open-onedrive/rclone/`
 
 Example `config.toml`:
 
 ```toml
-mount_path = "/home/you/OneDrive"
+root_path = "/home/you/OneDrive"
 remote_name = "openonedrive"
 cache_limit_gb = 10
-auto_mount = true
+auto_start_filesystem = true
+backing_dir_name = ".openonedrive-cache"
 
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
@@ -143,17 +146,17 @@ auto_mount = true
 Design guarantees:
 
 - the wrapper never writes to `~/.config/rclone/rclone.conf`
-- runtime state and path-state cache live under the app's own XDG surface area
-- the dashboard, tray, Dolphin actions, and Dolphin overlays all resolve from the same daemon state
-- `openonedrived --print-config` stays read-only when no config file exists
+- the visible root folder is for normal app access
+- hydrated bytes are stored in the hidden backing directory, not directly in the daemon state directory
+- the dashboard, tray, CLI, and Dolphin integrations resolve from the same daemon state
+- the hidden backing directory is implementation detail and should not be edited by hand
 
 ## UI Notes
 
-- Setup focuses on picking an empty mount directory and starting the browser auth flow.
-- Dashboard shows mount state, sync state, queue depth, cache size, pinned file count, last sync time, and recent diagnostics.
-- Quick file controls in the dashboard let you apply residency changes without leaving the app.
-- The tray icon mirrors mount/sync/error state and keeps the app resident after the window closes.
-- Dolphin is both a browsing surface and a control surface: overlays show file residency, and context actions call the same daemon methods as the UI and CLI.
+- Setup focuses on picking a visible root folder and starting the browser auth flow.
+- Dashboard shows connection state, filesystem state, sync state, pending transfers, conflicts, backing storage usage, pinned file count, and recent diagnostics.
+- The tray mirrors filesystem, transfer, and error state and keeps the app resident after the window closes.
+- Dolphin overlays and actions operate on the visible root path while ignoring the hidden backing directory.
 
 ## How It Works
 
@@ -161,11 +164,12 @@ Design guarantees:
   <img src="./assets/docs/flow-overview.svg" alt="open-onedrive architecture overview" width="100%">
 </p>
 
-- `openonedrived` owns runtime state, D-Bus methods, mount supervision, path-state caching, and residency policy.
-- `rclone mount` provides the visible OneDrive tree in Dolphin and fetches file bytes on demand.
-- `rclone lsjson` refreshes the SQLite path-state cache used by the tray, dashboard, CLI, and overlay plugin.
-- Dolphin overlays query the daemon asynchronously and invalidate their local cache from daemon signals.
-- Dolphin actions and `openonedrivectl` both call the daemon to hydrate or evict individual files.
+- `openonedrived` owns runtime state, D-Bus methods, the custom FUSE filesystem, queueing, conflicts, and residency policy.
+- the visible root folder is mounted by the daemon itself, not by `rclone mount`
+- `rclone lsjson` refreshes remote metadata
+- `rclone copyto` downloads and uploads file content on demand
+- a hidden backing directory keeps hydrated and pinned bytes on disk
+- Dolphin overlays query daemon state and invalidate local caches from daemon signals
 
 ## Project Layout
 
@@ -175,8 +179,8 @@ Design guarantees:
 | `scripts/install.sh` | developer source install path |
 | `crates/openonedrived` | daemon entrypoint and D-Bus surface |
 | `crates/openonedrivectl` | CLI for control, status, rescans, and path-state inspection |
-| `crates/rclone-backend` | `rclone` discovery, mount supervision, cache policy, path-state cache, logs |
-| `crates/config` | XDG paths, app config, mount path validation |
+| `crates/rclone-backend` | custom FUSE sync engine, transfer queue, path-state cache, logs, and `rclone` primitives |
+| `crates/config` | XDG paths, app config, and visible-root validation |
 | `crates/ipc-types` | shared D-Bus status and path-state types |
 | `crates/state` | persisted lightweight runtime state |
 | `ui/` | Qt6/Kirigami shell and KDE tray integration |
@@ -185,10 +189,11 @@ Design guarantees:
 
 ## Non-goals
 
-- no Windows Cloud Files placeholder parity or Finder-style virtual file APIs
-- no GNOME/Nautilus support in this release
-- no custom Microsoft OAuth stack
-- no Graph delta sync engine or cross-desktop abstraction layer
+- `rclone mount`
+- KIO-only browsing
+- Windows Cloud Files placeholder parity
+- GNOME/Nautilus support in this release
+- custom Microsoft OAuth stack
 
 ## Development
 

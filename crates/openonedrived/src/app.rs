@@ -28,20 +28,36 @@ impl OpenOneDriveApp {
         self.backend.disconnect().await
     }
 
+    pub async fn set_root_path(self: &Arc<Self>, path: &str) -> Result<()> {
+        self.backend.set_root_path(path).await
+    }
+
     pub async fn set_mount_path(self: &Arc<Self>, path: &str) -> Result<()> {
-        self.backend.set_mount_path(path).await
+        self.set_root_path(path).await
+    }
+
+    pub async fn start_filesystem(self: &Arc<Self>) -> Result<()> {
+        self.backend.start_filesystem().await
+    }
+
+    pub async fn stop_filesystem(self: &Arc<Self>) -> Result<()> {
+        self.backend.stop_filesystem().await
+    }
+
+    pub async fn retry_filesystem(self: &Arc<Self>) -> Result<()> {
+        self.backend.retry_filesystem().await
     }
 
     pub async fn mount(self: &Arc<Self>) -> Result<()> {
-        self.backend.mount().await
+        self.start_filesystem().await
     }
 
     pub async fn unmount(self: &Arc<Self>) -> Result<()> {
-        self.backend.unmount().await
+        self.stop_filesystem().await
     }
 
     pub async fn retry_mount(self: &Arc<Self>) -> Result<()> {
-        self.backend.retry_mount().await
+        self.retry_filesystem().await
     }
 
     pub async fn keep_local(self: &Arc<Self>, paths: &[String]) -> Result<u32> {
@@ -50,6 +66,10 @@ impl OpenOneDriveApp {
 
     pub async fn make_online_only(self: &Arc<Self>, paths: &[String]) -> Result<u32> {
         self.backend.make_online_only(paths).await
+    }
+
+    pub async fn retry_transfer(self: &Arc<Self>, paths: &[String]) -> Result<u32> {
+        self.backend.retry_transfer(paths).await
     }
 
     pub async fn rescan(self: &Arc<Self>) -> Result<u32> {

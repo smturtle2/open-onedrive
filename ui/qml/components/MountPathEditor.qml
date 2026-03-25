@@ -14,7 +14,7 @@ Frame {
 
     FolderDialog {
         id: folderDialog
-        title: qsTr("Choose mount directory")
+        title: qsTr("Choose OneDrive root folder")
         acceptLabel: qsTr("Use Folder")
 
         onAccepted: shellBackend.setMountPathFromUrl(selectedFolder)
@@ -25,7 +25,7 @@ Frame {
         spacing: Kirigami.Units.mediumSpacing
 
         Label {
-            text: qsTr("Mount directory")
+            text: qsTr("Root folder")
         }
 
         RowLayout {
@@ -58,8 +58,8 @@ Frame {
                    ? Kirigami.Theme.neutralTextColor
                    : Kirigami.Theme.disabledTextColor
             text: shellBackend.mountPathPending
-                  ? qsTr("Pending change. Apply it with Connect, Mount, or Retry Mount.")
-                  : qsTr("Changes take effect the next time you connect or remount.")
+                  ? qsTr("Pending change. Apply it with Connect, Start Filesystem, or Retry Filesystem.")
+                  : qsTr("Changes take effect the next time you connect or restart the filesystem.")
         }
 
         Label {
@@ -67,7 +67,7 @@ Frame {
             visible: helperText.length > 0
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.neutralTextColor
-            text: helperText + qsTr(" Choose an empty directory; existing files or folders are rejected to avoid mounting over real data.")
+            text: helperText + qsTr(" Choose an empty directory. The daemon manages a hidden %1 backing folder inside this root for hydrated file bytes.").arg(shellBackend.backingDirName)
         }
     }
 }

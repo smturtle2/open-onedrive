@@ -19,7 +19,7 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
 
             Kirigami.Heading {
-                text: qsTr("Recent rclone logs")
+                text: qsTr("Recent daemon and rclone logs")
                 level: 1
             }
 
@@ -53,7 +53,7 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Stay on this page while you retry or remount. The dashboard remains available even when the mount is in an error state.")
+                    text: qsTr("Stay on this page while you retry transfers or restart the filesystem. The dashboard remains available even when the filesystem is in an error state.")
                 }
 
                 Label {
@@ -61,7 +61,7 @@ Kirigami.ScrollablePage {
                     visible: shellBackend.recentLogs.length === 0
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("No log lines yet. Start the sign-in flow or mount the remote to capture rclone output.")
+                    text: qsTr("No log lines yet. Start the sign-in flow or the filesystem to capture daemon and rclone output.")
                 }
 
                 ListView {

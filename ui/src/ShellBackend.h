@@ -18,6 +18,8 @@ class ShellBackend : public QObject
     Q_PROPERTY(bool remoteConfigured READ remoteConfigured NOTIFY remoteConfiguredChanged)
     Q_PROPERTY(bool dashboardReady READ dashboardReady NOTIFY dashboardReadyChanged)
     Q_PROPERTY(bool customClientIdConfigured READ customClientIdConfigured NOTIFY customClientIdConfiguredChanged)
+    Q_PROPERTY(QString connectionState READ connectionState NOTIFY connectionStateChanged)
+    Q_PROPERTY(QString connectionStateLabel READ connectionStateLabel NOTIFY connectionStateChanged)
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
     Q_PROPERTY(QString effectiveMountPath READ effectiveMountPath NOTIFY effectiveMountPathChanged)
     Q_PROPERTY(bool mountPathPending READ mountPathPending NOTIFY mountPathPendingChanged)
@@ -27,7 +29,11 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString syncStateLabel READ syncStateLabel NOTIFY syncStateChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QString cacheUsageLabel READ cacheUsageLabel NOTIFY cacheUsageLabelChanged)
+    Q_PROPERTY(QString backingDirName READ backingDirName NOTIFY backingDirNameChanged)
     Q_PROPERTY(int pinnedFileCount READ pinnedFileCount NOTIFY pinnedFileCountChanged)
+    Q_PROPERTY(int pendingDownloads READ pendingDownloads NOTIFY syncStateChanged)
+    Q_PROPERTY(int pendingUploads READ pendingUploads NOTIFY syncStateChanged)
+    Q_PROPERTY(int conflictCount READ conflictCount NOTIFY syncStateChanged)
     Q_PROPERTY(int queueDepth READ queueDepth NOTIFY syncStateChanged)
     Q_PROPERTY(int activeTransferCount READ activeTransferCount NOTIFY syncStateChanged)
     Q_PROPERTY(QString lastSyncLabel READ lastSyncLabel NOTIFY syncStateChanged)
@@ -47,6 +53,8 @@ public:
     bool remoteConfigured() const;
     bool dashboardReady() const;
     bool customClientIdConfigured() const;
+    QString connectionState() const;
+    QString connectionStateLabel() const;
     QString mountPath() const;
     QString effectiveMountPath() const;
     bool mountPathPending() const;
@@ -56,7 +64,11 @@ public:
     QString syncStateLabel() const;
     QString statusMessage() const;
     QString cacheUsageLabel() const;
+    QString backingDirName() const;
     int pinnedFileCount() const;
+    int pendingDownloads() const;
+    int pendingUploads() const;
+    int conflictCount() const;
     int queueDepth() const;
     int activeTransferCount() const;
     QString lastSyncLabel() const;
@@ -78,6 +90,7 @@ public:
     Q_INVOKABLE void mountRemote();
     Q_INVOKABLE void unmountRemote();
     Q_INVOKABLE void retryMount();
+    Q_INVOKABLE void retryTransferPath(const QString &path);
     Q_INVOKABLE void rescanRemote();
     Q_INVOKABLE void pauseSync();
     Q_INVOKABLE void resumeSync();
@@ -94,6 +107,7 @@ Q_SIGNALS:
     void remoteConfiguredChanged();
     void dashboardReadyChanged();
     void customClientIdConfiguredChanged();
+    void connectionStateChanged();
     void mountPathChanged();
     void effectiveMountPathChanged();
     void mountPathPendingChanged();
@@ -101,6 +115,7 @@ Q_SIGNALS:
     void syncStateChanged();
     void statusMessageChanged();
     void cacheUsageLabelChanged();
+    void backingDirNameChanged();
     void pinnedFileCountChanged();
     void rcloneVersionChanged();
     void lastLogLineChanged();
@@ -129,13 +144,18 @@ private Q_SLOTS:
 private:
     bool m_remoteConfigured = false;
     bool m_customClientIdConfigured = false;
+    QString m_connectionState = QStringLiteral("Disconnected");
     QString m_mountPath;
     QString m_effectiveMountPath;
-    QString m_mountState = QStringLiteral("Disconnected");
+    QString m_mountState = QStringLiteral("Stopped");
     QString m_syncState = QStringLiteral("Idle");
-    QString m_statusMessage = QStringLiteral("Choose a mount folder, then start the OneDrive browser sign-in.");
-    QString m_cacheUsageLabel = QStringLiteral("Cache usage: pending daemon data");
+    QString m_statusMessage = QStringLiteral("Choose a OneDrive root folder, then start the browser sign-in.");
+    QString m_cacheUsageLabel = QStringLiteral("Backing store usage: pending daemon data");
+    QString m_backingDirName = QStringLiteral(".openonedrive-cache");
     int m_pinnedFileCount = 0;
+    int m_pendingDownloads = 0;
+    int m_pendingUploads = 0;
+    int m_conflictCount = 0;
     int m_queueDepth = 0;
     int m_activeTransferCount = 0;
     qint64 m_lastSyncAt = 0;

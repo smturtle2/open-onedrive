@@ -51,6 +51,7 @@ fn bootstrap() -> Result<()> {
     for binary in ["pkg-config", "qml"] {
         ensure_binary(binary)?;
     }
+    ensure_any_binary(&["fusermount3", "fusermount", "mount.fuse3"])?;
     println!("bootstrap checks passed");
     Ok(())
 }
@@ -58,6 +59,11 @@ fn bootstrap() -> Result<()> {
 fn install() -> Result<()> {
     bootstrap()?;
     ensure_rclone_installed()?;
+    if !Path::new("/dev/fuse").exists() {
+        println!(
+            "warning: /dev/fuse is not available; the custom filesystem will not start until FUSE is enabled"
+        );
+    }
     cargo(&["build", "--workspace"])?;
     cmake_build("ui", "build/ui")?;
     cmake_build("integrations", "build/integrations")?;

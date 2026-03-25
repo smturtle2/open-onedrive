@@ -1,5 +1,5 @@
 [Unit]
-Description=open-onedrive rclone mount supervisor
+Description=open-onedrive custom FUSE OneDrive daemon
 After=default.target
 
 [Service]

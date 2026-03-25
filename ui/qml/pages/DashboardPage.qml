@@ -10,13 +10,13 @@ Kirigami.ScrollablePage {
     property string quickPath: ""
 
     function stateColor() {
-        if (shellBackend.mountState === "Mounted") {
+        if (shellBackend.mountState === "Running") {
             return "#1f7a4d"
         }
-        if (shellBackend.mountState === "Mounting" || shellBackend.mountState === "Connecting") {
+        if (shellBackend.mountState === "Starting" || shellBackend.connectionState === "Connecting") {
             return "#c77700"
         }
-        if (shellBackend.mountState === "Error") {
+        if (shellBackend.mountState === "Error" || shellBackend.connectionState === "Error" || shellBackend.conflictCount > 0) {
             return "#b3261e"
         }
         return "#3a5a78"
@@ -50,7 +50,7 @@ Kirigami.ScrollablePage {
                             spacing: Kirigami.Units.smallSpacing
 
                             Kirigami.Heading {
-                                text: qsTr("OneDrive mount control")
+                                text: qsTr("OneDrive filesystem control")
                                 level: 1
                             }
 
@@ -95,14 +95,14 @@ Kirigami.ScrollablePage {
                         }
 
                         Button {
-                            text: qsTr("Mount")
+                            text: qsTr("Start Filesystem")
                             icon.name: "folder-cloud"
                             enabled: shellBackend.canMount
                             onClicked: shellBackend.mountRemote()
                         }
 
                         Button {
-                            text: qsTr("Unmount")
+                            text: qsTr("Stop Filesystem")
                             icon.name: "media-eject"
                             enabled: shellBackend.canUnmount
                             onClicked: shellBackend.unmountRemote()
@@ -162,7 +162,19 @@ Kirigami.ScrollablePage {
 
             StatusCard {
                 Layout.fillWidth: true
-                title: qsTr("Mount state")
+                title: qsTr("Connection")
+                value: shellBackend.connectionStateLabel
+                description: shellBackend.remoteConfigured ? qsTr("Remote profile is ready for the local filesystem.") : qsTr("Browser sign-in has not completed yet.")
+                accentColor: shellBackend.connectionState === "Error"
+                             ? "#b3261e"
+                             : shellBackend.connectionState === "Connecting"
+                               ? "#c77700"
+                               : "#3a5a78"
+            }
+
+            StatusCard {
+                Layout.fillWidth: true
+                title: qsTr("Filesystem")
                 value: shellBackend.mountStateLabel
                 description: shellBackend.statusMessage
                 accentColor: page.stateColor()
@@ -172,7 +184,7 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 title: qsTr("Sync")
                 value: shellBackend.syncStateLabel
-                description: qsTr("%1 queued · %2 active").arg(shellBackend.queueDepth).arg(shellBackend.activeTransferCount)
+                description: qsTr("%1 downloads pending · %2 uploads pending").arg(shellBackend.pendingDownloads).arg(shellBackend.pendingUploads)
                 accentColor: shellBackend.syncState === "Error"
                              ? "#b3261e"
                              : shellBackend.syncState === "Paused"
@@ -184,31 +196,31 @@ Kirigami.ScrollablePage {
 
             StatusCard {
                 Layout.fillWidth: true
-                title: qsTr("Mount path")
+                title: qsTr("Root folder")
                 value: shellBackend.effectiveMountPath
-                description: qsTr("Host filesystem path exposed by rclone mount")
+                description: qsTr("Visible local path exposed by the custom filesystem")
                 accentColor: "#3a5a78"
             }
 
             StatusCard {
                 Layout.fillWidth: true
-                title: qsTr("Cache")
+                title: qsTr("Backing store")
                 value: shellBackend.cacheUsageLabel
-                description: qsTr("App-owned rclone VFS cache usage")
+                description: qsTr("Hidden %1 directory that keeps hydrated file bytes").arg(shellBackend.backingDirName)
                 accentColor: "#6f8b42"
             }
 
             StatusCard {
                 Layout.fillWidth: true
-                title: qsTr("Pinned files")
-                value: shellBackend.pinnedFileCount.toString()
-                description: qsTr("Files kept on this device from Dolphin or the dashboard")
+                title: qsTr("Residency")
+                value: qsTr("%1 pinned").arg(shellBackend.pinnedFileCount)
+                description: qsTr("%1 pending total · %2 conflicts").arg(shellBackend.queueDepth).arg(shellBackend.conflictCount)
                 accentColor: "#9b6bff"
             }
         }
 
         MountPathEditor {
-            helperText: qsTr("Path changes stay local until you trigger Connect, Mount, or Retry from this dashboard.")
+            helperText: qsTr("Path changes stay local until you trigger Connect, Start Filesystem, or Retry Filesystem from this dashboard.")
         }
 
         Frame {
@@ -228,7 +240,7 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Enter an absolute path inside the mounted OneDrive folder or a path relative to the mount root.")
+                    text: qsTr("Enter an absolute path inside the OneDrive root folder or a path relative to that root.")
                 }
 
                 RowLayout {
@@ -254,6 +266,13 @@ Kirigami.ScrollablePage {
                         enabled: page.quickPath.trim().length > 0
                         onClicked: shellBackend.makeOnlineOnlyPath(page.quickPath)
                     }
+
+                    Button {
+                        text: qsTr("Retry transfer")
+                        icon.name: "view-refresh"
+                        enabled: page.quickPath.trim().length > 0
+                        onClicked: shellBackend.retryTransferPath(page.quickPath)
+                    }
                 }
             }
         }
@@ -276,7 +295,7 @@ Kirigami.ScrollablePage {
                     color: Kirigami.Theme.neutralTextColor
                     text: shellBackend.lastLogLine.length > 0
                           ? shellBackend.lastLogLine
-                          : qsTr("Recent rclone output will appear here.")
+                          : qsTr("Recent daemon and rclone output will appear here.")
                 }
 
                 Label {

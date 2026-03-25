@@ -1,5 +1,7 @@
 use crate::app::OpenOneDriveApp;
-use openonedrive_ipc_types::{MountState, PathState, StatusSnapshot, SyncState};
+use openonedrive_ipc_types::{
+    ConnectionState, FilesystemState, PathState, StatusSnapshot, SyncState,
+};
 use std::sync::Arc;
 use zbus::{SignalContext, interface};
 
@@ -15,11 +17,18 @@ impl OpenOneDriveBus {
         Self { app }
     }
 
-    pub async fn emit_mount_state_changed(
+    pub async fn emit_connection_state_changed(
         ctxt: &SignalContext<'_>,
-        state: MountState,
+        state: ConnectionState,
     ) -> zbus::Result<()> {
-        Self::mount_state_changed(ctxt, state).await
+        Self::connection_state_changed(ctxt, state).await
+    }
+
+    pub async fn emit_filesystem_state_changed(
+        ctxt: &SignalContext<'_>,
+        state: FilesystemState,
+    ) -> zbus::Result<()> {
+        Self::filesystem_state_changed(ctxt, state).await
     }
 
     pub async fn emit_sync_state_changed(
@@ -67,8 +76,24 @@ impl OpenOneDriveBus {
         self.app.disconnect().await.map_err(map_error)
     }
 
+    async fn set_root_path(&self, path: &str) -> zbus::fdo::Result<()> {
+        self.app.set_root_path(path).await.map_err(map_error)
+    }
+
     async fn set_mount_path(&self, path: &str) -> zbus::fdo::Result<()> {
         self.app.set_mount_path(path).await.map_err(map_error)
+    }
+
+    async fn start_filesystem(&self) -> zbus::fdo::Result<()> {
+        self.app.start_filesystem().await.map_err(map_error)
+    }
+
+    async fn stop_filesystem(&self) -> zbus::fdo::Result<()> {
+        self.app.stop_filesystem().await.map_err(map_error)
+    }
+
+    async fn retry_filesystem(&self) -> zbus::fdo::Result<()> {
+        self.app.retry_filesystem().await.map_err(map_error)
     }
 
     async fn mount(&self) -> zbus::fdo::Result<()> {
@@ -89,6 +114,10 @@ impl OpenOneDriveBus {
 
     async fn make_online_only(&self, paths: Vec<String>) -> zbus::fdo::Result<u32> {
         self.app.make_online_only(&paths).await.map_err(map_error)
+    }
+
+    async fn retry_transfer(&self, paths: Vec<String>) -> zbus::fdo::Result<u32> {
+        self.app.retry_transfer(&paths).await.map_err(map_error)
     }
 
     async fn rescan(&self) -> zbus::fdo::Result<u32> {
@@ -130,7 +159,16 @@ impl OpenOneDriveBus {
     }
 
     #[zbus(signal)]
-    async fn mount_state_changed(ctxt: &SignalContext<'_>, state: MountState) -> zbus::Result<()>;
+    async fn connection_state_changed(
+        ctxt: &SignalContext<'_>,
+        state: ConnectionState,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn filesystem_state_changed(
+        ctxt: &SignalContext<'_>,
+        state: FilesystemState,
+    ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn sync_state_changed(ctxt: &SignalContext<'_>, state: SyncState) -> zbus::Result<()>;

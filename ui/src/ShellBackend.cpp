@@ -68,6 +68,25 @@ bool ShellBackend::customClientIdConfigured() const
     return m_customClientIdConfigured;
 }
 
+QString ShellBackend::connectionState() const
+{
+    return m_connectionState;
+}
+
+QString ShellBackend::connectionStateLabel() const
+{
+    if (m_connectionState == QStringLiteral("Connecting")) {
+        return tr("Connecting");
+    }
+    if (m_connectionState == QStringLiteral("Ready")) {
+        return tr("Ready");
+    }
+    if (m_connectionState == QStringLiteral("Error")) {
+        return tr("Needs attention");
+    }
+    return tr("Disconnected");
+}
+
 QString ShellBackend::mountPath() const
 {
     return m_mountPath;
@@ -90,22 +109,22 @@ QString ShellBackend::mountState() const
 
 QString ShellBackend::mountStateLabel() const
 {
-    if (m_mountState == QStringLiteral("Mounted")) {
-        return tr("Mounted");
+    if (m_mountState == QStringLiteral("Running")) {
+        return tr("Running");
     }
-    if (m_mountState == QStringLiteral("Mounting")) {
-        return tr("Mounting");
+    if (m_mountState == QStringLiteral("Starting")) {
+        return tr("Starting");
     }
-    if (m_mountState == QStringLiteral("Connecting")) {
-        return tr("Connecting");
-    }
-    if (m_mountState == QStringLiteral("Unmounted")) {
-        return tr("Ready to mount");
+    if (m_mountState == QStringLiteral("Stopped")) {
+        return tr("Stopped");
     }
     if (m_mountState == QStringLiteral("Error")) {
         return tr("Needs attention");
     }
-    return tr("Disconnected");
+    if (m_mountState == QStringLiteral("Degraded")) {
+        return tr("Degraded");
+    }
+    return tr("Unknown");
 }
 
 QString ShellBackend::syncState() const
@@ -140,9 +159,29 @@ QString ShellBackend::cacheUsageLabel() const
     return m_cacheUsageLabel;
 }
 
+QString ShellBackend::backingDirName() const
+{
+    return m_backingDirName;
+}
+
 int ShellBackend::pinnedFileCount() const
 {
     return m_pinnedFileCount;
+}
+
+int ShellBackend::pendingDownloads() const
+{
+    return m_pendingDownloads;
+}
+
+int ShellBackend::pendingUploads() const
+{
+    return m_pendingUploads;
+}
+
+int ShellBackend::conflictCount() const
+{
+    return m_conflictCount;
 }
 
 int ShellBackend::queueDepth() const
@@ -183,21 +222,22 @@ QStringList ShellBackend::recentLogs() const
 bool ShellBackend::canMount() const
 {
     return m_remoteConfigured
-           && m_mountState != QStringLiteral("Mounted")
-           && m_mountState != QStringLiteral("Mounting")
-           && m_mountState != QStringLiteral("Connecting");
+           && m_connectionState == QStringLiteral("Ready")
+           && m_mountState != QStringLiteral("Running")
+           && m_mountState != QStringLiteral("Starting");
 }
 
 bool ShellBackend::canUnmount() const
 {
-    return m_mountState == QStringLiteral("Mounted") || m_mountState == QStringLiteral("Mounting");
+    return m_mountState == QStringLiteral("Running") || m_mountState == QStringLiteral("Starting");
 }
 
 bool ShellBackend::canRetry() const
 {
     return m_remoteConfigured
            && (m_mountState == QStringLiteral("Error")
-               || m_mountState == QStringLiteral("Unmounted"));
+               || m_mountState == QStringLiteral("Stopped")
+               || m_connectionState == QStringLiteral("Error"));
 }
 
 bool ShellBackend::canPauseSync() const
@@ -253,7 +293,7 @@ void ShellBackend::beginConnect()
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before connecting."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a root folder before connecting."))) {
         return;
     }
 
@@ -294,13 +334,13 @@ void ShellBackend::mountRemote()
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before mounting."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a root folder before starting the filesystem."))) {
         return;
     }
 
-    const QDBusReply<void> reply = iface.call(QStringLiteral("Mount"));
+    const QDBusReply<void> reply = iface.call(QStringLiteral("StartFilesystem"));
     if (!reply.isValid()) {
-        updateStatusMessage(tr("Mount failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Start filesystem failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -315,9 +355,9 @@ void ShellBackend::unmountRemote()
         return;
     }
 
-    const QDBusReply<void> reply = iface.call(QStringLiteral("Unmount"));
+    const QDBusReply<void> reply = iface.call(QStringLiteral("StopFilesystem"));
     if (!reply.isValid()) {
-        updateStatusMessage(tr("Unmount failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Stop filesystem failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -332,17 +372,27 @@ void ShellBackend::retryMount()
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before retrying."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a root folder before retrying."))) {
         return;
     }
 
-    const QDBusReply<void> reply = iface.call(QStringLiteral("RetryMount"));
+    const QDBusReply<void> reply = iface.call(QStringLiteral("RetryFilesystem"));
     if (!reply.isValid()) {
         updateStatusMessage(tr("Retry failed: %1").arg(reply.error().message()));
         return;
     }
 
     refreshStatus();
+}
+
+void ShellBackend::retryTransferPath(const QString &path)
+{
+    if (invokePathAction(QStringLiteral("RetryTransfer"),
+                         path,
+                         tr("Enter a path inside the OneDrive root folder."))) {
+        refreshStatus();
+        refreshLogs();
+    }
 }
 
 void ShellBackend::rescanRemote()
@@ -400,7 +450,7 @@ void ShellBackend::resumeSync()
 void ShellBackend::openMountLocation()
 {
     if (m_effectiveMountPath.isEmpty()) {
-        updateStatusMessage(tr("Choose a mount path first."));
+        updateStatusMessage(tr("Choose a root folder first."));
         return;
     }
 
@@ -440,7 +490,7 @@ void ShellBackend::keepLocalPath(const QString &path)
 {
     if (invokePathAction(QStringLiteral("KeepLocal"),
                          path,
-                         tr("Enter a path inside the mounted OneDrive folder."))) {
+                         tr("Enter a path inside the OneDrive root folder."))) {
         refreshStatus();
         refreshLogs();
     }
@@ -450,7 +500,7 @@ void ShellBackend::makeOnlineOnlyPath(const QString &path)
 {
     if (invokePathAction(QStringLiteral("MakeOnlineOnly"),
                          path,
-                         tr("Enter a path inside the mounted OneDrive folder."))) {
+                         tr("Enter a path inside the OneDrive root folder."))) {
         refreshStatus();
         refreshLogs();
     }
@@ -516,19 +566,24 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
 
     const QJsonObject object = document.object();
     const bool remoteConfigured = object.value(QStringLiteral("remote_configured")).toBool();
-    const QString mountPath = object.value(QStringLiteral("mount_path")).toString();
-    const QString mountState = object.value(QStringLiteral("mount_state")).toString();
+    const QString mountPath = object.value(QStringLiteral("root_path")).toString();
+    const QString connectionState = object.value(QStringLiteral("connection_state")).toString();
+    const QString mountState = object.value(QStringLiteral("filesystem_state")).toString();
     const QString syncState = object.value(QStringLiteral("sync_state")).toString();
     const QString lastError = object.value(QStringLiteral("last_error")).toString();
     const QString lastSyncError = object.value(QStringLiteral("last_sync_error")).toString();
     const QString lastLogLine = object.value(QStringLiteral("last_log_line")).toString();
     const QString rcloneVersion = object.value(QStringLiteral("rclone_version")).toString();
     const bool customClientIdConfigured = object.value(QStringLiteral("custom_client_id_configured")).toBool();
-    const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
+    const qint64 cacheBytes = object.value(QStringLiteral("backing_usage_bytes")).toInteger();
+    const QString backingDirName = object.value(QStringLiteral("backing_dir_name")).toString();
     const int pinnedFileCount = object.value(QStringLiteral("pinned_file_count")).toInt();
-    const int queueDepth = object.value(QStringLiteral("queue_depth")).toInt();
-    const int activeTransferCount = object.value(QStringLiteral("active_transfer_count")).toInt();
+    const int pendingDownloads = object.value(QStringLiteral("pending_downloads")).toInt();
+    const int pendingUploads = object.value(QStringLiteral("pending_uploads")).toInt();
+    const int conflictCount = object.value(QStringLiteral("conflict_count")).toInt();
     const qint64 lastSyncAt = object.value(QStringLiteral("last_sync_at")).toInteger();
+    const int queueDepth = pendingDownloads + pendingUploads;
+    const int activeTransferCount = pendingDownloads + pendingUploads;
 
     const bool wasDashboardReady = dashboardReady();
     const bool pendingBefore = mountPathPending();
@@ -555,8 +610,18 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit customClientIdConfiguredChanged();
     }
 
+    bool mountChanged = false;
+    if (!connectionState.isEmpty() && connectionState != m_connectionState) {
+        m_connectionState = connectionState;
+        emit connectionStateChanged();
+        mountChanged = true;
+    }
+
     if (!mountState.isEmpty() && mountState != m_mountState) {
         m_mountState = mountState;
+        mountChanged = true;
+    }
+    if (mountChanged) {
         emit mountStateChanged();
     }
 
@@ -581,14 +646,33 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         m_lastSyncError = lastSyncError;
         syncChanged = true;
     }
+    if (pendingDownloads != m_pendingDownloads) {
+        m_pendingDownloads = pendingDownloads;
+        syncChanged = true;
+    }
+    if (pendingUploads != m_pendingUploads) {
+        m_pendingUploads = pendingUploads;
+        syncChanged = true;
+    }
+    if (conflictCount != m_conflictCount) {
+        m_conflictCount = conflictCount;
+        syncChanged = true;
+    }
     if (syncChanged) {
         emit syncStateChanged();
     }
 
-    const QString cacheLabel = tr("%1 cached").arg(formatBytes(cacheBytes));
+    const QString cacheLabel = tr("%1 in %2").arg(formatBytes(cacheBytes),
+                                                  backingDirName.isEmpty() ? m_backingDirName
+                                                                           : backingDirName);
     if (cacheLabel != m_cacheUsageLabel) {
         m_cacheUsageLabel = cacheLabel;
         emit cacheUsageLabelChanged();
+    }
+
+    if (!backingDirName.isEmpty() && backingDirName != m_backingDirName) {
+        m_backingDirName = backingDirName;
+        emit backingDirNameChanged();
     }
 
     if (pinnedFileCount != m_pinnedFileCount) {
@@ -627,19 +711,25 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     if (!m_remoteConfigured) {
-        updateStatusMessage(tr("Choose a mount folder, then start the OneDrive browser sign-in."));
+        updateStatusMessage(tr("Choose a OneDrive root folder, then start the browser sign-in."));
         updateTray();
         return;
     }
 
-    if (m_mountState == QStringLiteral("Connecting")) {
+    if (m_connectionState == QStringLiteral("Connecting")) {
         updateStatusMessage(tr("Browser sign-in is in progress. Finish the Microsoft login flow."));
         updateTray();
         return;
     }
 
-    if (m_mountState == QStringLiteral("Mounting")) {
-        updateStatusMessage(tr("Starting rclone mount and waiting for the mountpoint to become ready."));
+    if (m_connectionState == QStringLiteral("Error")) {
+        updateStatusMessage(tr("Connection needs attention. Review the recent logs and retry the sign-in flow if needed."));
+        updateTray();
+        return;
+    }
+
+    if (m_mountState == QStringLiteral("Starting")) {
+        updateStatusMessage(tr("Starting the local OneDrive filesystem at %1.").arg(m_effectiveMountPath));
         updateTray();
         return;
     }
@@ -651,30 +741,42 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     if (m_syncState == QStringLiteral("Paused")) {
-        updateStatusMessage(tr("Background sync is paused. Mounted files still stay available on demand."));
+        updateStatusMessage(tr("Background sync is paused. The visible root stays available on demand."));
         updateTray();
         return;
     }
 
     if (m_syncState == QStringLiteral("Syncing")) {
-        updateStatusMessage(tr("Applying on-device retention changes and syncing path state."));
+        updateStatusMessage(tr("Applying residency changes and syncing pending transfers."));
         updateTray();
         return;
     }
 
-    if (m_mountState == QStringLiteral("Mounted")) {
-        updateStatusMessage(tr("rclone mount is active at %1.").arg(m_effectiveMountPath));
+    if (m_conflictCount > 0) {
+        updateStatusMessage(tr("%1 item(s) need manual conflict recovery. Retry the transfer after reviewing the file.").arg(m_conflictCount));
         updateTray();
         return;
     }
 
-    if (m_mountState == QStringLiteral("Unmounted")) {
-        updateStatusMessage(tr("OneDrive is configured but currently unmounted."));
+    if (m_mountState == QStringLiteral("Running")) {
+        updateStatusMessage(tr("The OneDrive root is active at %1.").arg(m_effectiveMountPath));
         updateTray();
         return;
     }
 
-    updateStatusMessage(tr("Review recent logs and reconnect if needed."));
+    if (m_mountState == QStringLiteral("Stopped")) {
+        updateStatusMessage(tr("OneDrive is connected, but the local filesystem is currently stopped."));
+        updateTray();
+        return;
+    }
+
+    if (m_mountState == QStringLiteral("Degraded")) {
+        updateStatusMessage(tr("The filesystem is running in a degraded state. Review recent logs and retry failed transfers."));
+        updateTray();
+        return;
+    }
+
+    updateStatusMessage(tr("Review recent logs and retry the filesystem if needed."));
     updateTray();
 }
 
@@ -684,7 +786,13 @@ void ShellBackend::connectDaemonSignals()
     bus.connect(QString::fromLatin1(kService),
                 QString::fromLatin1(kPath),
                 QString::fromLatin1(kInterface),
-                QStringLiteral("MountStateChanged"),
+                QStringLiteral("ConnectionStateChanged"),
+                this,
+                SLOT(onDaemonActivity()));
+    bus.connect(QString::fromLatin1(kService),
+                QString::fromLatin1(kPath),
+                QString::fromLatin1(kInterface),
+                QStringLiteral("FilesystemStateChanged"),
                 this,
                 SLOT(onDaemonActivity()));
     bus.connect(QString::fromLatin1(kService),
@@ -740,8 +848,8 @@ void ShellBackend::initializeTray()
 
     m_trayMenu = new QMenu;
     m_showWindowAction = m_trayMenu->addAction(tr("Open Dashboard"));
-    m_mountAction = m_trayMenu->addAction(tr("Mount"));
-    m_unmountAction = m_trayMenu->addAction(tr("Unmount"));
+    m_mountAction = m_trayMenu->addAction(tr("Start Filesystem"));
+    m_unmountAction = m_trayMenu->addAction(tr("Stop Filesystem"));
     m_rescanAction = m_trayMenu->addAction(tr("Rescan"));
     m_pauseSyncAction = m_trayMenu->addAction(tr("Pause Sync"));
     m_resumeSyncAction = m_trayMenu->addAction(tr("Resume Sync"));
@@ -802,9 +910,9 @@ bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &e
     }
 
     const bool pendingBefore = mountPathPending();
-    const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath);
+    const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetRootPath"), m_mountPath);
     if (!pathReply.isValid()) {
-        updateStatusMessage(tr("Mount path update failed: %1").arg(pathReply.error().message()));
+        updateStatusMessage(tr("Root folder update failed: %1").arg(pathReply.error().message()));
         return false;
     }
 
@@ -844,11 +952,14 @@ void ShellBackend::updateTray()
 
     auto trayStatus = KStatusNotifierItem::Active;
     QString overlayIcon;
-    if (m_mountState == QStringLiteral("Error") || m_syncState == QStringLiteral("Error")) {
+    if (m_mountState == QStringLiteral("Error")
+        || m_connectionState == QStringLiteral("Error")
+        || m_syncState == QStringLiteral("Error")
+        || m_conflictCount > 0) {
         trayStatus = KStatusNotifierItem::NeedsAttention;
         overlayIcon = QStringLiteral("emblem-important");
-    } else if (m_mountState == QStringLiteral("Connecting")
-               || m_mountState == QStringLiteral("Mounting")
+    } else if (m_connectionState == QStringLiteral("Connecting")
+               || m_mountState == QStringLiteral("Starting")
                || m_syncState == QStringLiteral("Scanning")
                || m_syncState == QStringLiteral("Syncing")) {
         overlayIcon = QStringLiteral("emblem-synchronizing");
@@ -856,7 +967,7 @@ void ShellBackend::updateTray()
         overlayIcon = QStringLiteral("media-playback-pause");
     } else if (!m_remoteConfigured) {
         trayStatus = KStatusNotifierItem::Passive;
-    } else if (m_mountState == QStringLiteral("Mounted")) {
+    } else if (m_mountState == QStringLiteral("Running")) {
         overlayIcon = QStringLiteral("emblem-checked");
     }
 

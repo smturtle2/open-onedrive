@@ -22,6 +22,7 @@ private Q_SLOTS:
 private:
     void requestPathState(const QString &absolutePath);
     QString currentMountRoot() const;
+    QString currentBackingDirName() const;
     static QStringList overlaysForState(const QString &state);
 
     QHash<QString, QStringList> m_cache;

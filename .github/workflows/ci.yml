@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            fuse3 \
+            libfuse3-dev \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-tools-dev-tools \
+            libkf6coreaddons-dev \
+            libkf6kirigami-dev \
+            libkf6kio-dev \
+            libkf6statusnotifieritem-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run workspace check
+        run: cargo run -p xtask -- check
+
+      - name: Build UI
+        run: cargo run -p xtask -- build-ui
+
+      - name: Build integrations
+        run: cargo run -p xtask -- build-integrations
