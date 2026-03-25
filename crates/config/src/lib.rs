@@ -17,6 +17,7 @@ pub struct ProjectPaths {
     pub runtime_dir: PathBuf,
     pub config_file: PathBuf,
     pub legacy_db_file: PathBuf,
+    pub path_state_db_file: PathBuf,
     pub runtime_state_file: PathBuf,
     pub rclone_config_dir: PathBuf,
     pub rclone_config_file: PathBuf,
@@ -43,6 +44,7 @@ impl ProjectPaths {
         Ok(Self {
             config_file: config_dir.join("config.toml"),
             legacy_db_file: state_dir.join("state.sqlite3"),
+            path_state_db_file: state_dir.join("path-state.sqlite3"),
             runtime_state_file: state_dir.join("runtime-state.toml"),
             rclone_config_file: rclone_config_dir.join("rclone.conf"),
             config_dir,
@@ -237,6 +239,7 @@ mod tests {
         let paths = ProjectPaths::discover().expect("discover xdg paths");
         assert!(paths.config_file.ends_with("config.toml"));
         assert!(paths.legacy_db_file.ends_with("state.sqlite3"));
+        assert!(paths.path_state_db_file.ends_with("path-state.sqlite3"));
         assert!(paths.rclone_config_file.ends_with("rclone/rclone.conf"));
     }
 
@@ -250,6 +253,7 @@ mod tests {
             runtime_dir: dir.path().join("run"),
             config_file: dir.path().join("config").join("config.toml"),
             legacy_db_file: dir.path().join("state").join("state.sqlite3"),
+            path_state_db_file: dir.path().join("state").join("path-state.sqlite3"),
             runtime_state_file: dir.path().join("state").join("runtime-state.toml"),
             rclone_config_dir: dir.path().join("config").join("rclone"),
             rclone_config_file: dir.path().join("config").join("rclone").join("rclone.conf"),

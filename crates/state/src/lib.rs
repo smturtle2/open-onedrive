@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use openonedrive_ipc_types::MountState;
+use openonedrive_ipc_types::{MountState, SyncState};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,9 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct RuntimeState {
     pub remote_configured: bool,
     pub mount_state: MountState,
+    pub sync_state: SyncState,
     pub last_error: String,
+    pub last_sync_error: String,
     pub last_log_line: String,
     pub pinned_relative_paths: Vec<String>,
+    pub queue_depth: u32,
+    pub active_transfer_count: u32,
+    pub last_sync_at: u64,
+    pub sync_paused: bool,
 }
 
 pub struct StateStore {
@@ -103,7 +109,7 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{RuntimeState, StateStore};
-    use openonedrive_ipc_types::MountState;
+    use openonedrive_ipc_types::{MountState, SyncState};
     use tempfile::tempdir;
 
     #[test]
@@ -120,9 +126,15 @@ mod tests {
         let snapshot = RuntimeState {
             remote_configured: true,
             mount_state: MountState::Mounted,
+            sync_state: SyncState::Syncing,
             last_error: "boom".into(),
+            last_sync_error: "sync boom".into(),
             last_log_line: "mounted".into(),
             pinned_relative_paths: vec!["dir/hello.txt".into()],
+            queue_depth: 2,
+            active_transfer_count: 1,
+            last_sync_at: 123,
+            sync_paused: true,
         };
 
         store.save(&snapshot).expect("save");

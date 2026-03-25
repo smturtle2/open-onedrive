@@ -7,6 +7,7 @@ import "../components"
 Kirigami.ScrollablePage {
     id: page
     title: qsTr("Dashboard")
+    property string quickPath: ""
 
     function stateColor() {
         if (shellBackend.mountState === "Mounted") {
@@ -87,6 +88,13 @@ Kirigami.ScrollablePage {
                         }
 
                         Button {
+                            text: qsTr("Rescan")
+                            icon.name: "folder-sync"
+                            enabled: shellBackend.remoteConfigured
+                            onClicked: shellBackend.rescanRemote()
+                        }
+
+                        Button {
                             text: qsTr("Mount")
                             icon.name: "folder-cloud"
                             enabled: shellBackend.canMount
@@ -108,6 +116,20 @@ Kirigami.ScrollablePage {
                         }
 
                         Button {
+                            text: qsTr("Pause Sync")
+                            icon.name: "media-playback-pause"
+                            enabled: shellBackend.canPauseSync
+                            onClicked: shellBackend.pauseSync()
+                        }
+
+                        Button {
+                            text: qsTr("Resume Sync")
+                            icon.name: "media-playback-start"
+                            enabled: shellBackend.canResumeSync
+                            onClicked: shellBackend.resumeSync()
+                        }
+
+                        Button {
                             text: qsTr("Open Folder")
                             icon.name: "document-open-folder"
                             enabled: shellBackend.effectiveMountPath.length > 0
@@ -126,7 +148,7 @@ Kirigami.ScrollablePage {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 840 ? 5 : width > 600 ? 2 : 1
+            columns: width > 960 ? 6 : width > 680 ? 2 : 1
             columnSpacing: Kirigami.Units.largeSpacing
             rowSpacing: Kirigami.Units.largeSpacing
 
@@ -144,6 +166,20 @@ Kirigami.ScrollablePage {
                 value: shellBackend.mountStateLabel
                 description: shellBackend.statusMessage
                 accentColor: page.stateColor()
+            }
+
+            StatusCard {
+                Layout.fillWidth: true
+                title: qsTr("Sync")
+                value: shellBackend.syncStateLabel
+                description: qsTr("%1 queued · %2 active").arg(shellBackend.queueDepth).arg(shellBackend.activeTransferCount)
+                accentColor: shellBackend.syncState === "Error"
+                             ? "#b3261e"
+                             : shellBackend.syncState === "Paused"
+                               ? "#8b6f00"
+                               : shellBackend.syncState === "Syncing" || shellBackend.syncState === "Scanning"
+                                 ? "#4f7cff"
+                                 : "#3a5a78"
             }
 
             StatusCard {
@@ -166,13 +202,60 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 title: qsTr("Pinned files")
                 value: shellBackend.pinnedFileCount.toString()
-                description: qsTr("Files kept on this device from Dolphin actions")
+                description: qsTr("Files kept on this device from Dolphin or the dashboard")
                 accentColor: "#9b6bff"
             }
         }
 
         MountPathEditor {
             helperText: qsTr("Path changes stay local until you trigger Connect, Mount, or Retry from this dashboard.")
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            padding: Kirigami.Units.largeSpacing
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Kirigami.Units.mediumSpacing
+
+                Kirigami.Heading {
+                    text: qsTr("Quick File Controls")
+                    level: 3
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("Enter an absolute path inside the mounted OneDrive folder or a path relative to the mount root.")
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Documents/report.pdf")
+                        text: page.quickPath
+                        onTextEdited: page.quickPath = text
+                    }
+
+                    Button {
+                        text: qsTr("Keep on device")
+                        icon.name: "emblem-favorite"
+                        enabled: page.quickPath.trim().length > 0
+                        onClicked: shellBackend.keepLocalPath(page.quickPath)
+                    }
+
+                    Button {
+                        text: qsTr("Make online-only")
+                        icon.name: "folder-download"
+                        enabled: page.quickPath.trim().length > 0
+                        onClicked: shellBackend.makeOnlineOnlyPath(page.quickPath)
+                    }
+                }
+            }
         }
 
         Frame {
@@ -200,7 +283,22 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Use the Dolphin context menu on mounted files to keep them on this device or return them to online-only mode.")
+                    text: qsTr("Last sync: %1").arg(shellBackend.lastSyncLabel)
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    visible: shellBackend.lastSyncError.length > 0
+                    wrapMode: Text.WordWrap
+                    color: "#b3261e"
+                    text: shellBackend.lastSyncError
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("Dolphin overlays update from the daemon path-state cache. Use Dolphin or the quick controls above to keep files local or return them to online-only mode.")
                 }
             }
         }

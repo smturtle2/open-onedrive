@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use openonedrive_ipc_types::StatusSnapshot;
+use openonedrive_ipc_types::{PathState, StatusSnapshot};
 use zbus::Proxy;
 
 const DBUS_SERVICE: &str = "io.github.smturtle2.OpenOneDrive1";
@@ -26,10 +26,16 @@ enum Command {
     Mount,
     Unmount,
     RetryMount,
+    Rescan,
+    PauseSync,
+    ResumeSync,
     KeepLocal {
         paths: Vec<String>,
     },
     MakeOnlineOnly {
+        paths: Vec<String>,
+    },
+    PathStates {
         paths: Vec<String>,
     },
     Logs {
@@ -67,6 +73,16 @@ async fn main() -> Result<()> {
         Command::RetryMount => {
             proxy.call::<_, _, ()>("RetryMount", &()).await?;
         }
+        Command::Rescan => {
+            let count: u32 = proxy.call("Rescan", &()).await?;
+            println!("scanned {count} path state item(s)");
+        }
+        Command::PauseSync => {
+            proxy.call::<_, _, ()>("PauseSync", &()).await?;
+        }
+        Command::ResumeSync => {
+            proxy.call::<_, _, ()>("ResumeSync", &()).await?;
+        }
         Command::KeepLocal { paths } => {
             let count: u32 = proxy.call("KeepLocal", &(paths)).await?;
             println!("kept {count} item(s) on this device");
@@ -74,6 +90,10 @@ async fn main() -> Result<()> {
         Command::MakeOnlineOnly { paths } => {
             let count: u32 = proxy.call("MakeOnlineOnly", &(paths)).await?;
             println!("returned {count} item(s) to online-only mode");
+        }
+        Command::PathStates { paths } => {
+            let states: Vec<PathState> = proxy.call("GetPathStates", &(paths)).await?;
+            println!("{}", serde_json::to_string_pretty(&states)?);
         }
         Command::Logs { limit } => {
             let lines: Vec<String> = proxy.call("GetRecentLogLines", &(limit)).await?;

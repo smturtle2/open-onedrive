@@ -1,8 +1,12 @@
+mod path_state;
+
 use anyhow::{Context, Result, bail};
 use openonedrive_config::{AppConfig, ProjectPaths, validate_mount_path};
-use openonedrive_ipc_types::{MountState, StatusSnapshot};
+use openonedrive_ipc_types::{MountState, PathState, PathSyncState, StatusSnapshot, SyncState};
 use openonedrive_state::{RuntimeState, StateStore};
-use std::collections::{BTreeSet, VecDeque};
+use path_state::PathStateStore;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -13,24 +17,42 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 use tracing::warn;
 
 const MAX_RECENT_LOGS: usize = 200;
 const DEFAULT_DIR_CACHE_TIME: &str = "5m";
 const DEFAULT_POLL_INTERVAL: &str = "1m";
+const DEFAULT_MOUNT_READY_TIMEOUT: Duration = Duration::from_secs(20);
 pub const BACKEND_NAME: &str = "rclone";
+
+#[derive(Debug, Clone)]
+pub enum BackendEvent {
+    MountStateChanged,
+    SyncStateChanged,
+    AuthFlowStarted,
+    AuthFlowCompleted,
+    ErrorRaised(String),
+    LogsUpdated,
+    PathStatesChanged(Vec<String>),
+}
 
 #[derive(Debug, Clone)]
 struct Runtime {
     remote_configured: bool,
     mount_state: MountState,
+    sync_state: SyncState,
     last_error: String,
+    last_sync_error: String,
     last_log_line: String,
     pinned_relative_paths: BTreeSet<String>,
     rclone_version: String,
     mount_desired: bool,
     restart_attempt: u32,
+    queue_depth: u32,
+    active_transfer_count: u32,
+    last_sync_at: u64,
+    sync_paused: bool,
 }
 
 impl Runtime {
@@ -50,12 +72,22 @@ impl Runtime {
         Self {
             remote_configured,
             mount_state,
+            sync_state: if state.sync_paused {
+                SyncState::Paused
+            } else {
+                state.sync_state
+            },
             last_error: state.last_error,
+            last_sync_error: state.last_sync_error,
             last_log_line: state.last_log_line,
             pinned_relative_paths: state.pinned_relative_paths.into_iter().collect(),
             rclone_version: String::new(),
             mount_desired: false,
             restart_attempt: 0,
+            queue_depth: state.queue_depth,
+            active_transfer_count: state.active_transfer_count,
+            last_sync_at: state.last_sync_at,
+            sync_paused: state.sync_paused,
         }
     }
 }
@@ -64,49 +96,83 @@ pub struct RcloneBackend {
     paths: ProjectPaths,
     config: RwLock<AppConfig>,
     state_store: StateStore,
+    path_state_store: PathStateStore,
     runtime: RwLock<Runtime>,
     recent_logs: Mutex<VecDeque<String>>,
     connect_child: Mutex<Option<Child>>,
     mount_child: Mutex<Option<Child>>,
     connect_generation: Mutex<u64>,
     mount_generation: Mutex<u64>,
+    event_tx: broadcast::Sender<BackendEvent>,
 }
 
 impl RcloneBackend {
     pub async fn load(paths: ProjectPaths, config: AppConfig) -> Result<Arc<Self>> {
         paths.ensure()?;
         let state_store = StateStore::open(&paths.runtime_state_file)?;
+        let path_state_store = PathStateStore::open(&paths.path_state_db_file)?;
         let persisted = state_store.load()?;
         let remote_configured = has_remote_config(&paths.rclone_config_file, &config.remote_name)?;
+        let (event_tx, _) = broadcast::channel(64);
 
         let backend = Arc::new(Self {
             paths,
             config: RwLock::new(config),
             state_store,
+            path_state_store,
             runtime: RwLock::new(Runtime::from_state(persisted, remote_configured)),
             recent_logs: Mutex::new(VecDeque::with_capacity(MAX_RECENT_LOGS)),
             connect_child: Mutex::new(None),
             mount_child: Mutex::new(None),
             connect_generation: Mutex::new(0),
             mount_generation: Mutex::new(0),
+            event_tx,
         });
 
         backend.refresh_rclone_version().await;
         if let Err(error) = backend.prune_cache_to_pins().await {
-            backend.append_log(format!("cache prune skipped: {error}")).await;
+            backend
+                .append_log(format!("cache prune skipped: {error}"))
+                .await;
+        }
+        if let Err(error) = backend.refresh_path_state_snapshot().await {
+            backend
+                .append_log(format!("path state refresh skipped: {error}"))
+                .await;
         }
 
         if backend.current_config().await.auto_mount && remote_configured {
             if let Err(error) = backend.mount().await {
                 backend.record_error(error.to_string()).await;
             }
+        } else if remote_configured && !backend.runtime.read().await.sync_paused {
+            backend.spawn_rescan();
         }
 
         Ok(backend)
     }
 
+    pub fn subscribe_events(&self) -> broadcast::Receiver<BackendEvent> {
+        self.event_tx.subscribe()
+    }
+
     pub async fn current_config(&self) -> AppConfig {
         self.config.read().await.clone()
+    }
+
+    pub async fn get_path_states(&self, raw_paths: &[String]) -> Result<Vec<PathState>> {
+        let config = self.current_config().await;
+        let mut relative_paths = Vec::with_capacity(raw_paths.len());
+        for raw_path in raw_paths {
+            let relative = relative_path_for(&config.mount_path, Path::new(raw_path))?;
+            relative_paths.push(relative_string(&relative));
+        }
+        self.path_state_store.get_many(&relative_paths)
+    }
+
+    pub async fn get_path_states_json(&self, raw_paths: &[String]) -> Result<String> {
+        serde_json::to_string(&self.get_path_states(raw_paths).await?)
+            .context("unable to serialize path states")
     }
 
     pub async fn set_mount_path(self: &Arc<Self>, raw_path: &str) -> Result<()> {
@@ -172,6 +238,8 @@ impl RcloneBackend {
             runtime.mount_desired = config.auto_mount;
         }
         self.persist_runtime().await?;
+        self.emit_event(BackendEvent::MountStateChanged);
+        self.emit_event(BackendEvent::AuthFlowStarted);
 
         if let Some(stdout) = child.stdout.take() {
             self.spawn_log_reader(stdout, "connect stdout");
@@ -256,14 +324,24 @@ impl RcloneBackend {
             let mut runtime = self.runtime.write().await;
             runtime.remote_configured = false;
             runtime.mount_state = MountState::Disconnected;
+            runtime.sync_state = SyncState::Idle;
             runtime.mount_desired = false;
             runtime.restart_attempt = 0;
             runtime.last_error.clear();
+            runtime.last_sync_error.clear();
             runtime.last_log_line.clear();
             runtime.pinned_relative_paths.clear();
+            runtime.queue_depth = 0;
+            runtime.active_transfer_count = 0;
+            runtime.last_sync_at = 0;
+            runtime.sync_paused = false;
         }
         self.recent_logs.lock().await.clear();
+        self.path_state_store.clear()?;
         self.persist_runtime().await?;
+        self.emit_event(BackendEvent::MountStateChanged);
+        self.emit_event(BackendEvent::SyncStateChanged);
+        self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
         Ok(())
     }
 
@@ -320,7 +398,7 @@ impl RcloneBackend {
         }
 
         *self.mount_child.lock().await = Some(child);
-        self.set_mount_state(MountState::Mounted).await;
+        self.spawn_mount_ready_waiter(config.mount_path.clone(), generation);
 
         let backend = self.clone();
         tokio::spawn(async move {
@@ -416,6 +494,8 @@ impl RcloneBackend {
         };
         self.set_mount_state(mount_state).await;
         self.prune_cache_to_pins().await?;
+        self.refresh_path_state_snapshot().await?;
+        self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
         Ok(())
     }
 
@@ -429,6 +509,61 @@ impl RcloneBackend {
         self.mount().await
     }
 
+    pub async fn rescan(self: &Arc<Self>) -> Result<u32> {
+        {
+            let runtime = self.runtime.read().await;
+            if !runtime.remote_configured {
+                bail!("configure OneDrive before scanning remote state");
+            }
+        }
+
+        self.begin_sync_activity(SyncState::Scanning).await?;
+        let result: Result<u32> = async {
+            let entries = self.scan_remote_entries().await?;
+            let snapshot = self.build_snapshot_from_remote_entries(&entries).await?;
+            let store = self.path_state_store.clone();
+            let snapshot_for_store = snapshot.clone();
+            tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
+                .await
+                .context("path-state write task join failed")??;
+            self.complete_sync_activity(None).await?;
+            self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
+            Ok(snapshot.len() as u32)
+        }
+        .await;
+
+        if let Err(error) = &result {
+            self.complete_sync_activity(Some(error.to_string())).await?;
+        }
+
+        result
+    }
+
+    pub async fn pause_sync(&self) -> Result<()> {
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.sync_paused = true;
+            runtime.sync_state = SyncState::Paused;
+        }
+        self.persist_runtime().await?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        Ok(())
+    }
+
+    pub async fn resume_sync(self: &Arc<Self>) -> Result<()> {
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.sync_paused = false;
+            if runtime.sync_state == SyncState::Paused {
+                runtime.sync_state = SyncState::Idle;
+            }
+        }
+        self.persist_runtime().await?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        self.spawn_rescan();
+        Ok(())
+    }
+
     pub async fn keep_local(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
         self.ensure_mounted().await?;
         let config = self.current_config().await;
@@ -438,22 +573,46 @@ impl RcloneBackend {
         }
 
         let mount_root = config.mount_path.clone();
-        let hydrated = tokio::task::spawn_blocking(move || {
-            hydrate_paths(&mount_root, selected_paths)
-        })
-        .await
-        .context("keep-local task join failed")??;
+        let tracked_paths = selected_paths.iter().cloned().collect::<Vec<_>>();
+        self.begin_sync_activity(SyncState::Syncing).await?;
+        self.update_selected_path_states(&tracked_paths, PathSyncState::Syncing, String::new())
+            .await?;
+
+        let hydrated =
+            match tokio::task::spawn_blocking(move || hydrate_paths(&mount_root, selected_paths))
+                .await
+                .context("keep-local task join failed")?
+            {
+                Ok(hydrated) => hydrated,
+                Err(error) => {
+                    self.update_selected_path_states(
+                        &tracked_paths,
+                        PathSyncState::Error,
+                        error.to_string(),
+                    )
+                    .await?;
+                    self.complete_sync_activity(Some(error.to_string())).await?;
+                    return Err(error);
+                }
+            };
 
         {
             let mut runtime = self.runtime.write().await;
-            runtime.pinned_relative_paths.extend(hydrated.iter().cloned());
+            runtime
+                .pinned_relative_paths
+                .extend(hydrated.iter().cloned());
         }
         self.persist_runtime().await?;
+        self.refresh_path_state_snapshot().await?;
+        self.complete_sync_activity(None).await?;
         self.append_log(format!(
             "kept {} item(s) available on this device",
             hydrated.len()
         ))
         .await;
+        self.emit_event(BackendEvent::PathStatesChanged(
+            hydrated.iter().cloned().collect(),
+        ));
         Ok(hydrated.len() as u32)
     }
 
@@ -471,6 +630,11 @@ impl RcloneBackend {
             return Ok(0);
         }
 
+        let tracked_paths = relative_paths.iter().cloned().collect::<Vec<_>>();
+        self.begin_sync_activity(SyncState::Syncing).await?;
+        self.update_selected_path_states(&tracked_paths, PathSyncState::Syncing, String::new())
+            .await?;
+
         {
             let mut runtime = self.runtime.write().await;
             for relative_path in &relative_paths {
@@ -479,18 +643,31 @@ impl RcloneBackend {
         }
 
         let cache_root = cache_root_for_remote(&self.paths, &config);
-        let removed = tokio::task::spawn_blocking(move || {
+        let removed = match tokio::task::spawn_blocking(move || {
             evict_cached_paths(&cache_root, &relative_paths)
         })
         .await
-        .context("online-only task join failed")??;
+        .context("online-only task join failed")?
+        {
+            Ok(removed) => removed,
+            Err(error) => {
+                self.update_selected_path_states(
+                    &tracked_paths,
+                    PathSyncState::Error,
+                    error.to_string(),
+                )
+                .await?;
+                self.complete_sync_activity(Some(error.to_string())).await?;
+                return Err(error);
+            }
+        };
 
         self.persist_runtime().await?;
-        self.append_log(format!(
-            "returned {} item(s) to online-only mode",
-            removed
-        ))
-        .await;
+        self.refresh_path_state_snapshot().await?;
+        self.complete_sync_activity(None).await?;
+        self.append_log(format!("returned {} item(s) to online-only mode", removed))
+            .await;
+        self.emit_event(BackendEvent::PathStatesChanged(tracked_paths));
         Ok(removed)
     }
 
@@ -507,9 +684,14 @@ impl RcloneBackend {
             backend: BACKEND_NAME.to_string(),
             remote_configured: runtime.remote_configured,
             mount_state: runtime.mount_state,
+            sync_state: runtime.sync_state,
             mount_path: config.mount_path.display().to_string(),
             cache_usage_bytes: directory_size_bytes(&self.paths.rclone_cache_dir)?,
             pinned_file_count: runtime.pinned_relative_paths.len() as u32,
+            queue_depth: runtime.queue_depth,
+            active_transfer_count: runtime.active_transfer_count,
+            last_sync_at: runtime.last_sync_at,
+            last_sync_error: runtime.last_sync_error,
             rclone_version: runtime.rclone_version,
             last_error: runtime.last_error,
             last_log_line: runtime.last_log_line,
@@ -523,6 +705,235 @@ impl RcloneBackend {
         logs.iter().skip(skip).cloned().collect()
     }
 
+    fn spawn_mount_ready_waiter(self: &Arc<Self>, mount_path: PathBuf, generation: u64) {
+        let backend = self.clone();
+        tokio::spawn(async move {
+            let checks = (DEFAULT_MOUNT_READY_TIMEOUT.as_millis() / 250) as usize;
+            for _ in 0..checks.max(1) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                let current_generation = *backend.mount_generation.lock().await;
+                if generation != current_generation {
+                    return;
+                }
+
+                match path_is_mount_point(&mount_path) {
+                    Ok(true) => {
+                        backend.set_mount_state(MountState::Mounted).await;
+                        if let Err(error) = backend.refresh_path_state_snapshot().await {
+                            backend
+                                .append_log(format!("path state refresh skipped: {error}"))
+                                .await;
+                        }
+                        if !backend.runtime.read().await.sync_paused {
+                            backend.spawn_rescan();
+                        }
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        backend.record_error(error.to_string()).await;
+                        return;
+                    }
+                }
+            }
+
+            let desired = backend.runtime.read().await.mount_desired;
+            let current_generation = *backend.mount_generation.lock().await;
+            if desired && generation == current_generation {
+                backend
+                    .record_error(
+                        "rclone mount did not become ready before the timeout".to_string(),
+                    )
+                    .await;
+            }
+        });
+    }
+
+    fn spawn_rescan(self: &Arc<Self>) {
+        let backend = self.clone();
+        tokio::spawn(async move {
+            if backend.runtime.read().await.sync_paused {
+                return;
+            }
+            if let Err(error) = backend.rescan().await {
+                backend
+                    .append_log(format!("remote rescan skipped: {error}"))
+                    .await;
+            }
+        });
+    }
+
+    async fn begin_sync_activity(&self, sync_state: SyncState) -> Result<()> {
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.sync_state = sync_state;
+            runtime.queue_depth = 1;
+            runtime.active_transfer_count = 1;
+            runtime.last_sync_error.clear();
+        }
+        self.persist_runtime().await?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        Ok(())
+    }
+
+    async fn complete_sync_activity(&self, error: Option<String>) -> Result<()> {
+        let mut error_message = None;
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.queue_depth = 0;
+            runtime.active_transfer_count = 0;
+            if let Some(error) = error {
+                runtime.sync_state = SyncState::Error;
+                runtime.last_sync_error = error.clone();
+                error_message = Some(error);
+            } else {
+                runtime.sync_state = if runtime.sync_paused {
+                    SyncState::Paused
+                } else {
+                    SyncState::Idle
+                };
+                runtime.last_sync_error.clear();
+                runtime.last_sync_at = unix_timestamp();
+            }
+        }
+        self.persist_runtime().await?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        if let Some(message) = error_message {
+            self.emit_event(BackendEvent::ErrorRaised(message));
+        }
+        Ok(())
+    }
+
+    async fn update_selected_path_states(
+        &self,
+        relative_paths: &[String],
+        state: PathSyncState,
+        error: String,
+    ) -> Result<()> {
+        if relative_paths.is_empty() {
+            return Ok(());
+        }
+
+        let existing = {
+            let store = self.path_state_store.clone();
+            let paths = relative_paths.to_vec();
+            tokio::task::spawn_blocking(move || store.get_many(&paths))
+                .await
+                .context("path-state read task join failed")??
+        };
+        let existing_map = existing
+            .into_iter()
+            .map(|path_state| (path_state.path.clone(), path_state))
+            .collect::<BTreeMap<_, _>>();
+
+        let config = self.current_config().await;
+        let pinned = self.runtime.read().await.pinned_relative_paths.clone();
+        let cache_root = cache_root_for_remote(&self.paths, &config);
+        let cache_suffixes =
+            tokio::task::spawn_blocking(move || cached_suffixes_for_root(&cache_root))
+                .await
+                .context("cache suffix task join failed")??;
+        let sync_at = unix_timestamp();
+
+        let states = relative_paths
+            .iter()
+            .map(|relative_path| {
+                let mut path_state = existing_map
+                    .get(relative_path)
+                    .cloned()
+                    .unwrap_or_else(|| fallback_path_state(&config.mount_path, relative_path));
+                path_state.state = state;
+                path_state.pinned = pinned.contains(relative_path);
+                path_state.cached = cache_suffixes.contains(relative_path);
+                path_state.error = error.clone();
+                path_state.last_sync_at = sync_at;
+                path_state
+            })
+            .collect::<Vec<_>>();
+
+        let store = self.path_state_store.clone();
+        tokio::task::spawn_blocking(move || store.upsert_many(&states))
+            .await
+            .context("path-state write task join failed")??;
+        Ok(())
+    }
+
+    async fn refresh_path_state_snapshot(&self) -> Result<()> {
+        let existing = {
+            let store = self.path_state_store.clone();
+            tokio::task::spawn_blocking(move || store.all())
+                .await
+                .context("path-state read task join failed")??
+        };
+        if existing.is_empty() {
+            return Ok(());
+        }
+
+        let config = self.current_config().await;
+        let cache_root = cache_root_for_remote(&self.paths, &config);
+        let cache_suffixes =
+            tokio::task::spawn_blocking(move || cached_suffixes_for_root(&cache_root))
+                .await
+                .context("cache suffix task join failed")??;
+        let runtime = self.runtime.read().await.clone();
+
+        let refreshed =
+            rebuild_states_from_runtime(existing, &runtime.pinned_relative_paths, &cache_suffixes);
+        let store = self.path_state_store.clone();
+        tokio::task::spawn_blocking(move || store.replace_all(&refreshed))
+            .await
+            .context("path-state write task join failed")??;
+        Ok(())
+    }
+
+    async fn scan_remote_entries(&self) -> Result<Vec<RcloneListEntry>> {
+        let config = self.current_config().await;
+        let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let output = Command::new(binary)
+            .args(build_lsjson_args(&config, &self.paths))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute rclone lsjson")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            bail!(
+                "rclone lsjson failed{}",
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {stderr}")
+                }
+            );
+        }
+
+        let payload =
+            String::from_utf8(output.stdout).context("rclone lsjson returned invalid utf-8")?;
+        serde_json::from_str::<Vec<RcloneListEntry>>(&payload)
+            .context("unable to parse rclone lsjson output")
+    }
+
+    async fn build_snapshot_from_remote_entries(
+        &self,
+        entries: &[RcloneListEntry],
+    ) -> Result<Vec<PathState>> {
+        let config = self.current_config().await;
+        let cache_root = cache_root_for_remote(&self.paths, &config);
+        let cache_suffixes =
+            tokio::task::spawn_blocking(move || cached_suffixes_for_root(&cache_root))
+                .await
+                .context("cache suffix task join failed")??;
+        let pinned = self.runtime.read().await.pinned_relative_paths.clone();
+        Ok(build_snapshot_from_remote_entries(
+            entries,
+            &pinned,
+            &cache_suffixes,
+        ))
+    }
+
     async fn refresh_rclone_version(&self) {
         let config = self.current_config().await;
         let version = resolve_rclone_binary(config.rclone_bin.as_deref())
@@ -530,6 +941,10 @@ impl RcloneBackend {
             .unwrap_or_default();
         let mut runtime = self.runtime.write().await;
         runtime.rclone_version = version;
+    }
+
+    fn emit_event(&self, event: BackendEvent) {
+        let _ = self.event_tx.send(event);
     }
 
     fn spawn_log_reader<T>(self: &Arc<Self>, reader: T, label: &'static str)
@@ -568,9 +983,14 @@ impl RcloneBackend {
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
+        self.emit_event(BackendEvent::MountStateChanged);
     }
 
-    async fn complete_connect(self: &Arc<Self>, config: AppConfig, warning: Option<String>) -> Result<()> {
+    async fn complete_connect(
+        self: &Arc<Self>,
+        config: AppConfig,
+        warning: Option<String>,
+    ) -> Result<()> {
         match has_remote_config(&self.paths.rclone_config_file, &config.remote_name)? {
             true => {
                 if let Some(warning) = warning {
@@ -580,10 +1000,14 @@ impl RcloneBackend {
                     .await;
                 }
                 self.set_remote_configured(true).await;
+                self.emit_event(BackendEvent::AuthFlowCompleted);
                 if config.auto_mount {
                     self.mount().await?;
                 } else {
                     self.set_mount_state(MountState::Unmounted).await;
+                    if !self.runtime.read().await.sync_paused {
+                        self.spawn_rescan();
+                    }
                 }
                 Ok(())
             }
@@ -626,6 +1050,7 @@ impl RcloneBackend {
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
+        self.emit_event(BackendEvent::MountStateChanged);
     }
 
     async fn record_error(&self, message: String) {
@@ -638,6 +1063,10 @@ impl RcloneBackend {
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
+        self.emit_event(BackendEvent::MountStateChanged);
+        self.emit_event(BackendEvent::ErrorRaised(
+            self.runtime.read().await.last_error.clone(),
+        ));
     }
 
     async fn append_log(&self, line: String) {
@@ -656,6 +1085,7 @@ impl RcloneBackend {
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
+        self.emit_event(BackendEvent::LogsUpdated);
     }
 
     async fn persist_runtime(&self) -> Result<()> {
@@ -663,9 +1093,15 @@ impl RcloneBackend {
         self.state_store.save(&RuntimeState {
             remote_configured: runtime.remote_configured,
             mount_state: runtime.mount_state,
+            sync_state: runtime.sync_state,
             last_error: runtime.last_error.clone(),
+            last_sync_error: runtime.last_sync_error.clone(),
             last_log_line: runtime.last_log_line.clone(),
             pinned_relative_paths: runtime.pinned_relative_paths.iter().cloned().collect(),
+            queue_depth: runtime.queue_depth,
+            active_transfer_count: runtime.active_transfer_count,
+            last_sync_at: runtime.last_sync_at,
+            sync_paused: runtime.sync_paused,
         })
     }
 
@@ -760,7 +1196,9 @@ fn collect_selected_files(
     let metadata =
         fs::metadata(path).with_context(|| format!("unable to inspect {}", path.display()))?;
     if metadata.is_dir() {
-        for entry in fs::read_dir(path).with_context(|| format!("unable to read {}", path.display()))? {
+        for entry in
+            fs::read_dir(path).with_context(|| format!("unable to read {}", path.display()))?
+        {
             let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
             collect_selected_files(mount_root, &entry.path(), files)?;
         }
@@ -781,9 +1219,12 @@ fn relative_path_for(mount_root: &Path, raw_path: &Path) -> Result<PathBuf> {
     } else {
         mount_root.join(raw_path)
     };
-    let relative = absolute
-        .strip_prefix(mount_root)
-        .with_context(|| format!("{} is outside the mounted OneDrive path", absolute.display()))?;
+    let relative = absolute.strip_prefix(mount_root).with_context(|| {
+        format!(
+            "{} is outside the mounted OneDrive path",
+            absolute.display()
+        )
+    })?;
     if relative.as_os_str().is_empty() {
         bail!("select a file or directory inside the mounted OneDrive path");
     }
@@ -813,8 +1254,8 @@ fn relative_string(path: &Path) -> String {
 fn hydrate_paths(mount_root: &Path, relative_paths: BTreeSet<String>) -> Result<BTreeSet<String>> {
     for relative_path in &relative_paths {
         let absolute = mount_root.join(relative_path);
-        let mut source =
-            fs::File::open(&absolute).with_context(|| format!("unable to open {}", absolute.display()))?;
+        let mut source = fs::File::open(&absolute)
+            .with_context(|| format!("unable to open {}", absolute.display()))?;
         let mut sink = std::io::sink();
         std::io::copy(&mut source, &mut sink)
             .with_context(|| format!("unable to cache {}", absolute.display()))?;
@@ -833,7 +1274,9 @@ fn evict_cached_paths(cache_root: &Path, relative_paths: &BTreeSet<String>) -> R
 
     let mut stack = vec![cache_root.to_path_buf()];
     while let Some(path) = stack.pop() {
-        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))?
+        {
             let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
             let entry_path = entry.path();
             let metadata = entry
@@ -867,7 +1310,9 @@ fn prune_cache_root(cache_root: &Path, pinned_relative_paths: &BTreeSet<String>)
 
     let mut stack = vec![cache_root.to_path_buf()];
     while let Some(path) = stack.pop() {
-        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))?
+        {
             let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
             let entry_path = entry.path();
             let metadata = entry
@@ -947,7 +1392,9 @@ fn remove_empty_dirs_under(root: &Path) -> Result<()> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
         dirs.push(path.clone());
-        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))?
+        {
             let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
             if entry
                 .metadata()
@@ -971,12 +1418,239 @@ fn remove_empty_dirs_under(root: &Path) -> Result<()> {
                     }
                 }
                 Err(error) => {
-                    return Err(error).with_context(|| format!("unable to inspect {}", dir.display()));
+                    return Err(error)
+                        .with_context(|| format!("unable to inspect {}", dir.display()));
                 }
             }
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RcloneListEntry {
+    #[serde(rename = "Path", default)]
+    path: String,
+    #[serde(rename = "IsDir", default)]
+    is_dir: bool,
+    #[serde(rename = "Size", default)]
+    size: u64,
+}
+
+fn fallback_path_state(mount_root: &Path, relative_path: &str) -> PathState {
+    let metadata = fs::metadata(mount_root.join(relative_path)).ok();
+    PathState {
+        path: relative_path.to_string(),
+        is_dir: metadata.as_ref().is_some_and(|metadata| metadata.is_dir()),
+        state: PathSyncState::OnlineOnly,
+        size_bytes: metadata
+            .as_ref()
+            .map(|metadata| metadata.len())
+            .unwrap_or_default(),
+        pinned: false,
+        cached: false,
+        error: String::new(),
+        last_sync_at: unix_timestamp(),
+    }
+}
+
+fn build_snapshot_from_remote_entries(
+    entries: &[RcloneListEntry],
+    pinned: &BTreeSet<String>,
+    cache_suffixes: &HashSet<String>,
+) -> Vec<PathState> {
+    let sync_at = unix_timestamp();
+    let mut states = BTreeMap::new();
+
+    for entry in entries {
+        if entry.path.is_empty() {
+            continue;
+        }
+
+        let cached = cache_suffixes.contains(&entry.path);
+        let pinned_local = pinned.contains(&entry.path);
+        states.insert(
+            entry.path.clone(),
+            PathState {
+                path: entry.path.clone(),
+                is_dir: entry.is_dir,
+                state: if entry.is_dir {
+                    PathSyncState::OnlineOnly
+                } else {
+                    derive_path_state(false, pinned_local, cached)
+                },
+                size_bytes: entry.size,
+                pinned: pinned_local,
+                cached,
+                error: String::new(),
+                last_sync_at: sync_at,
+            },
+        );
+    }
+
+    let file_states = states
+        .values()
+        .filter(|state| !state.is_dir)
+        .cloned()
+        .collect::<Vec<_>>();
+    apply_directory_states(&mut states, &file_states);
+    states.into_values().collect()
+}
+
+fn rebuild_states_from_runtime(
+    states: Vec<PathState>,
+    pinned: &BTreeSet<String>,
+    cache_suffixes: &HashSet<String>,
+) -> Vec<PathState> {
+    let sync_at = unix_timestamp();
+    let mut by_path = states
+        .into_iter()
+        .map(|mut state| {
+            if !state.is_dir {
+                state.pinned = pinned.contains(&state.path);
+                state.cached = cache_suffixes.contains(&state.path);
+                state.state =
+                    derive_path_state(!state.error.is_empty(), state.pinned, state.cached);
+                state.last_sync_at = sync_at;
+            }
+            (state.path.clone(), state)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let file_states = by_path
+        .values()
+        .filter(|state| !state.is_dir)
+        .cloned()
+        .collect::<Vec<_>>();
+    apply_directory_states(&mut by_path, &file_states);
+    by_path.into_values().collect()
+}
+
+fn apply_directory_states(states: &mut BTreeMap<String, PathState>, file_states: &[PathState]) {
+    let mut summaries = BTreeMap::<String, (PathSyncState, bool, bool)>::new();
+
+    for file_state in file_states {
+        let path = Path::new(&file_state.path);
+        let mut current = path.parent();
+        while let Some(parent) = current {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            let key = relative_string(parent);
+            let entry = summaries
+                .entry(key)
+                .or_insert((PathSyncState::OnlineOnly, false, false));
+            entry.0 = dominant_path_state(entry.0, file_state.state);
+            entry.1 |= file_state.pinned;
+            entry.2 |= file_state.cached;
+            current = parent.parent();
+        }
+    }
+
+    for (path, (state, pinned, cached)) in summaries {
+        let entry = states.entry(path.clone()).or_insert(PathState {
+            path,
+            is_dir: true,
+            state: PathSyncState::OnlineOnly,
+            size_bytes: 0,
+            pinned: false,
+            cached: false,
+            error: String::new(),
+            last_sync_at: unix_timestamp(),
+        });
+        entry.is_dir = true;
+        entry.state = state;
+        entry.pinned = pinned;
+        entry.cached = cached;
+        if state != PathSyncState::Error {
+            entry.error.clear();
+        }
+    }
+}
+
+fn dominant_path_state(current: PathSyncState, next: PathSyncState) -> PathSyncState {
+    fn rank(state: PathSyncState) -> u8 {
+        match state {
+            PathSyncState::Error => 5,
+            PathSyncState::Syncing => 4,
+            PathSyncState::PinnedLocal => 3,
+            PathSyncState::AvailableLocal => 2,
+            PathSyncState::OnlineOnly => 1,
+        }
+    }
+
+    if rank(next) > rank(current) {
+        next
+    } else {
+        current
+    }
+}
+
+fn derive_path_state(has_error: bool, pinned: bool, cached: bool) -> PathSyncState {
+    if has_error {
+        PathSyncState::Error
+    } else if pinned {
+        PathSyncState::PinnedLocal
+    } else if cached {
+        PathSyncState::AvailableLocal
+    } else {
+        PathSyncState::OnlineOnly
+    }
+}
+
+fn cached_suffixes_for_root(cache_root: &Path) -> Result<HashSet<String>> {
+    let mut suffixes = HashSet::new();
+    if !cache_root.exists() {
+        return Ok(suffixes);
+    }
+
+    let mut stack = vec![cache_root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))?
+        {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            let entry_path = entry.path();
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("unable to stat {}", entry_path.display()))?;
+            if metadata.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+
+            let relative = entry_path
+                .strip_prefix(cache_root)
+                .with_context(|| format!("unable to relativize {}", entry_path.display()))?;
+            let components = relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            for offset in 0..components.len() {
+                suffixes.insert(components[offset..].join("/"));
+            }
+        }
+    }
+
+    Ok(suffixes)
+}
+
+fn path_is_mount_point(path: &Path) -> Result<bool> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .context("unable to inspect existing mount points")?;
+    let canonical = path.to_string_lossy();
+
+    let mounted = mountinfo.lines().any(|line| {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        fields.get(4).copied() == Some(canonical.as_ref())
+    });
+
+    #[cfg(test)]
+    if !mounted && path.join(".openonedrive-mounted").exists() {
+        return Ok(true);
+    }
+
+    Ok(mounted)
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
@@ -1061,6 +1735,17 @@ pub fn build_mount_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsStrin
     ]
 }
 
+pub fn build_lsjson_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsString> {
+    vec![
+        OsString::from("lsjson"),
+        OsString::from(format!("{}:", config.remote_name)),
+        OsString::from("--config"),
+        paths.rclone_config_file.as_os_str().to_os_string(),
+        OsString::from("--recursive"),
+        OsString::from("--no-mimetype"),
+    ]
+}
+
 pub fn restart_backoff(attempt: u32) -> Duration {
     let capped = attempt.min(5);
     Duration::from_secs(2_u64.saturating_pow(capped))
@@ -1110,11 +1795,15 @@ fn directory_size_bytes(root: &Path) -> Result<u64> {
 }
 
 fn log_timestamp() -> String {
+    format!("[{}]", unix_timestamp())
+}
+
+fn unix_timestamp() -> u64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format!("[{now}]")
+    now
 }
 
 #[cfg(test)]
@@ -1174,7 +1863,11 @@ mod tests {
             .map(|value| value.to_string_lossy().to_string())
             .collect::<Vec<_>>();
 
-        assert!(rendered.windows(2).any(|pair| pair == ["config_type", "onedrive"]));
+        assert!(
+            rendered
+                .windows(2)
+                .any(|pair| pair == ["config_type", "onedrive"])
+        );
         assert!(rendered.windows(2).any(|pair| pair == ["region", "global"]));
     }
 
@@ -1202,7 +1895,10 @@ mod tests {
 
         assert_eq!(
             selected.into_iter().collect::<Vec<_>>(),
-            vec!["docs/nested/spec.txt".to_string(), "docs/readme.md".to_string()]
+            vec![
+                "docs/nested/spec.txt".to_string(),
+                "docs/readme.md".to_string()
+            ]
         );
     }
 
@@ -1213,11 +1909,9 @@ mod tests {
         fs::create_dir_all(cache_root.join("docs")).expect("cache tree");
         fs::write(cache_root.join("docs/readme.md"), "cached").expect("cached file");
 
-        let removed = evict_cached_paths(
-            &cache_root,
-            &BTreeSet::from(["docs/readme.md".to_string()]),
-        )
-        .expect("evict cache");
+        let removed =
+            evict_cached_paths(&cache_root, &BTreeSet::from(["docs/readme.md".to_string()]))
+                .expect("evict cache");
 
         assert_eq!(removed, 1);
         assert!(!cache_root.join("docs/readme.md").exists());
@@ -1232,11 +1926,8 @@ mod tests {
         fs::write(cache_root.join("docs/readme.md"), "keep").expect("cached file");
         fs::write(cache_root.join("docs/tmp.log"), "drop").expect("cached file");
 
-        prune_cache_root(
-            &cache_root,
-            &BTreeSet::from(["docs/readme.md".to_string()]),
-        )
-        .expect("prune cache");
+        prune_cache_root(&cache_root, &BTreeSet::from(["docs/readme.md".to_string()]))
+            .expect("prune cache");
 
         assert!(cache_root.join("docs/readme.md").exists());
         assert!(!cache_root.join("docs/tmp.log").exists());
@@ -1310,6 +2001,7 @@ mod tests {
             runtime_dir: root.join("run"),
             config_file: root.join("config").join("config.toml"),
             legacy_db_file: root.join("state").join("state.sqlite3"),
+            path_state_db_file: root.join("state").join("path-state.sqlite3"),
             runtime_state_file: root.join("state").join("runtime-state.toml"),
             rclone_config_dir: root.join("config").join("rclone"),
             rclone_config_file: root.join("config").join("rclone").join("rclone.conf"),
@@ -1356,7 +2048,8 @@ if [ "$cmd" = "mount" ]; then
   remote="$1"
   mount_path="$2"
   echo "mounted $remote at $mount_path"
-  trap 'exit 0' TERM INT
+  touch "$mount_path/.openonedrive-mounted"
+  trap 'rm -f "$mount_path/.openonedrive-mounted"; exit 0' TERM INT
   while true; do
     sleep 1
   done

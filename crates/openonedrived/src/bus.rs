@@ -1,5 +1,5 @@
 use crate::app::OpenOneDriveApp;
-use openonedrive_ipc_types::{MountState, StatusSnapshot};
+use openonedrive_ipc_types::{MountState, PathState, StatusSnapshot, SyncState};
 use std::sync::Arc;
 use zbus::{SignalContext, interface};
 
@@ -13,6 +13,43 @@ pub struct OpenOneDriveBus {
 impl OpenOneDriveBus {
     pub fn new(app: Arc<OpenOneDriveApp>) -> Self {
         Self { app }
+    }
+
+    pub async fn emit_mount_state_changed(
+        ctxt: &SignalContext<'_>,
+        state: MountState,
+    ) -> zbus::Result<()> {
+        Self::mount_state_changed(ctxt, state).await
+    }
+
+    pub async fn emit_sync_state_changed(
+        ctxt: &SignalContext<'_>,
+        state: SyncState,
+    ) -> zbus::Result<()> {
+        Self::sync_state_changed(ctxt, state).await
+    }
+
+    pub async fn emit_auth_flow_started(ctxt: &SignalContext<'_>) -> zbus::Result<()> {
+        Self::auth_flow_started(ctxt).await
+    }
+
+    pub async fn emit_auth_flow_completed(ctxt: &SignalContext<'_>) -> zbus::Result<()> {
+        Self::auth_flow_completed(ctxt).await
+    }
+
+    pub async fn emit_error_raised(ctxt: &SignalContext<'_>, message: &str) -> zbus::Result<()> {
+        Self::error_raised(ctxt, message).await
+    }
+
+    pub async fn emit_logs_updated(ctxt: &SignalContext<'_>) -> zbus::Result<()> {
+        Self::logs_updated(ctxt).await
+    }
+
+    pub async fn emit_path_states_changed(
+        ctxt: &SignalContext<'_>,
+        paths: Vec<String>,
+    ) -> zbus::Result<()> {
+        Self::path_states_changed(ctxt, paths).await
     }
 }
 
@@ -54,6 +91,18 @@ impl OpenOneDriveBus {
         self.app.make_online_only(&paths).await.map_err(map_error)
     }
 
+    async fn rescan(&self) -> zbus::fdo::Result<u32> {
+        self.app.rescan().await.map_err(map_error)
+    }
+
+    async fn pause_sync(&self) -> zbus::fdo::Result<()> {
+        self.app.pause_sync().await.map_err(map_error)
+    }
+
+    async fn resume_sync(&self) -> zbus::fdo::Result<()> {
+        self.app.resume_sync().await.map_err(map_error)
+    }
+
     async fn get_status(&self) -> zbus::fdo::Result<StatusSnapshot> {
         self.app.get_status().await.map_err(map_error)
     }
@@ -69,8 +118,22 @@ impl OpenOneDriveBus {
             .map_err(map_error)
     }
 
+    async fn get_path_states(&self, paths: Vec<String>) -> zbus::fdo::Result<Vec<PathState>> {
+        self.app.get_path_states(&paths).await.map_err(map_error)
+    }
+
+    async fn get_path_states_json(&self, paths: Vec<String>) -> zbus::fdo::Result<String> {
+        self.app
+            .get_path_states_json(&paths)
+            .await
+            .map_err(map_error)
+    }
+
     #[zbus(signal)]
     async fn mount_state_changed(ctxt: &SignalContext<'_>, state: MountState) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn sync_state_changed(ctxt: &SignalContext<'_>, state: SyncState) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn auth_flow_started(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
@@ -83,4 +146,7 @@ impl OpenOneDriveBus {
 
     #[zbus(signal)]
     async fn logs_updated(ctxt: &SignalContext<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn path_states_changed(ctxt: &SignalContext<'_>, paths: Vec<String>) -> zbus::Result<()>;
 }

@@ -8,6 +8,7 @@
 #include <QDBusReply>
 #include <QDesktopServices>
 #include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
@@ -40,6 +41,26 @@ QJsonObject statusObject()
     }
 
     return document.object();
+}
+
+QJsonArray pathStates(const QStringList &paths)
+{
+    if (paths.isEmpty()) {
+        return {};
+    }
+
+    QDBusInterface iface = daemonInterface();
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetPathStatesJson"), paths);
+    if (!reply.isValid()) {
+        return {};
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
+    if (!document.isArray()) {
+        return {};
+    }
+
+    return document.array();
 }
 
 QString mountRoot(const QJsonObject &status)
@@ -105,24 +126,44 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
         }
     }
 
-    QObject *actionParent = parentWidget != nullptr ? static_cast<QObject *>(parentWidget) : this;
-    auto *keepLocalAction = new QAction(QStringLiteral("Keep on this device"), actionParent);
-    QObject::connect(keepLocalAction, &QAction::triggered, this, [selectedPaths] {
-        invokePathAction(QStringLiteral("KeepLocal"), selectedPaths);
-    });
+    bool showKeepLocal = true;
+    bool showOnlineOnly = true;
+    const QJsonArray states = pathStates(selectedPaths);
+    if (!states.isEmpty()) {
+        bool anyOnlineOnly = false;
+        bool anyLocal = false;
+        for (const QJsonValue &value : states) {
+            const QString state = value.toObject().value(QStringLiteral("state")).toString();
+            anyOnlineOnly |= state == QStringLiteral("OnlineOnly");
+            anyLocal |= state == QStringLiteral("PinnedLocal") || state == QStringLiteral("AvailableLocal");
+        }
+        showKeepLocal = anyOnlineOnly;
+        showOnlineOnly = anyLocal;
+    }
 
-    auto *onlineOnlyAction = new QAction(QStringLiteral("Make online-only"), actionParent);
-    QObject::connect(onlineOnlyAction, &QAction::triggered, this, [selectedPaths] {
-        invokePathAction(QStringLiteral("MakeOnlineOnly"), selectedPaths);
-    });
+    QObject *actionParent = parentWidget != nullptr ? static_cast<QObject *>(parentWidget) : this;
+    QList<QAction *> actions;
+    if (showKeepLocal) {
+        auto *keepLocalAction = new QAction(QStringLiteral("Keep on this device"), actionParent);
+        QObject::connect(keepLocalAction, &QAction::triggered, this, [selectedPaths] {
+            invokePathAction(QStringLiteral("KeepLocal"), selectedPaths);
+        });
+        actions << keepLocalAction;
+    }
+
+    if (showOnlineOnly) {
+        auto *onlineOnlyAction = new QAction(QStringLiteral("Make online-only"), actionParent);
+        QObject::connect(onlineOnlyAction, &QAction::triggered, this, [selectedPaths] {
+            invokePathAction(QStringLiteral("MakeOnlineOnly"), selectedPaths);
+        });
+        actions << onlineOnlyAction;
+    }
 
     auto *openMountAction = new QAction(QStringLiteral("Open OneDrive Folder"), actionParent);
     QObject::connect(openMountAction, &QAction::triggered, this, [mountPath] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(mountPath));
     });
-
-    QList<QAction *> actions;
-    actions << keepLocalAction << onlineOnlyAction << openMountAction;
+    actions << openMountAction;
     return actions;
 }
 

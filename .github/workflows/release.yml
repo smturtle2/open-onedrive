@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-tools-dev-tools \
+            libkf6coreaddons-dev \
+            libkf6kirigami-dev \
+            libkf6kio-dev \
+            libkf6statusnotifieritem-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+      - name: Build release artifacts
+        run: |
+          cargo build --workspace --release
+          cmake -S ui -B build/ui-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ui-release
+          cmake -S integrations -B build/integrations-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/integrations-release
+
+      - name: Stage release payload
+        run: |
+          mkdir -p dist/open-onedrive-linux-x86_64
+          cp target/release/openonedrived dist/open-onedrive-linux-x86_64/
+          cp target/release/openonedrivectl dist/open-onedrive-linux-x86_64/
+          cp build/ui-release/open-onedrive-ui dist/open-onedrive-linux-x86_64/
+          cp build/integrations-release/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so dist/open-onedrive-linux-x86_64/
+          cp build/integrations-release/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so dist/open-onedrive-linux-x86_64/
+          cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
+          tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
+          sha256sum dist/open-onedrive-linux-x86_64.tar.gz > dist/open-onedrive-linux-x86_64.tar.gz.sha256
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/open-onedrive-linux-x86_64.tar.gz
+            dist/open-onedrive-linux-x86_64.tar.gz.sha256

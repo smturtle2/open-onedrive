@@ -1,12 +1,13 @@
 #include "ShellBackend.h"
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QWindow>
 
 int main(int argc, char *argv[])
 {
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("smturtle2"));
     app.setOrganizationDomain(QStringLiteral("github.io"));
     app.setApplicationName(QStringLiteral("open-onedrive"));
@@ -23,7 +24,9 @@ int main(int argc, char *argv[])
         []() { QCoreApplication::exit(1); },
         Qt::QueuedConnection);
     engine.load(mainUrl);
+    if (!engine.rootObjects().isEmpty()) {
+        backend.setMainWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
+    }
 
     return app.exec();
 }
-

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use openonedrive_config::{AppConfig, ProjectPaths};
-use openonedrive_ipc_types::StatusSnapshot;
-use openonedrive_rclone_backend::RcloneBackend;
+use openonedrive_ipc_types::{PathState, StatusSnapshot};
+use openonedrive_rclone_backend::{BackendEvent, RcloneBackend};
 use std::fs;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 pub struct OpenOneDriveApp {
     backend: Arc<RcloneBackend>,
@@ -51,6 +52,18 @@ impl OpenOneDriveApp {
         self.backend.make_online_only(paths).await
     }
 
+    pub async fn rescan(self: &Arc<Self>) -> Result<u32> {
+        self.backend.rescan().await
+    }
+
+    pub async fn pause_sync(&self) -> Result<()> {
+        self.backend.pause_sync().await
+    }
+
+    pub async fn resume_sync(self: &Arc<Self>) -> Result<()> {
+        self.backend.resume_sync().await
+    }
+
     pub async fn get_status(&self) -> Result<StatusSnapshot> {
         self.backend.status().await
     }
@@ -61,6 +74,18 @@ impl OpenOneDriveApp {
 
     pub async fn get_recent_log_lines(&self, limit: usize) -> Result<Vec<String>> {
         Ok(self.backend.recent_log_lines(limit).await)
+    }
+
+    pub async fn get_path_states(&self, paths: &[String]) -> Result<Vec<PathState>> {
+        self.backend.get_path_states(paths).await
+    }
+
+    pub async fn get_path_states_json(&self, paths: &[String]) -> Result<String> {
+        self.backend.get_path_states_json(paths).await
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<BackendEvent> {
+        self.backend.subscribe_events()
     }
 }
 

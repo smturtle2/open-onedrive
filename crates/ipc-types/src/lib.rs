@@ -12,14 +12,51 @@ pub enum MountState {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+pub enum SyncState {
+    #[default]
+    Idle,
+    Scanning,
+    Syncing,
+    Paused,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+pub enum PathSyncState {
+    #[default]
+    OnlineOnly,
+    AvailableLocal,
+    PinnedLocal,
+    Syncing,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+pub struct PathState {
+    pub path: String,
+    pub is_dir: bool,
+    pub state: PathSyncState,
+    pub size_bytes: u64,
+    pub pinned: bool,
+    pub cached: bool,
+    pub error: String,
+    pub last_sync_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
 pub struct StatusSnapshot {
     pub backend: String,
     pub remote_configured: bool,
     pub mount_state: MountState,
+    pub sync_state: SyncState,
     pub mount_path: String,
     pub cache_usage_bytes: u64,
     pub pinned_file_count: u32,
+    pub queue_depth: u32,
+    pub active_transfer_count: u32,
+    pub last_sync_at: u64,
+    pub last_sync_error: String,
     pub rclone_version: String,
     pub last_error: String,
     pub last_log_line: String,

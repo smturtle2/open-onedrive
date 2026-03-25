@@ -78,6 +78,7 @@ fn install() -> Result<()> {
     let service_dir = home.join(".config").join("systemd").join("user");
     let plugin_root = prefix.join("lib").join("qt6").join("plugins").join("kf6");
     let action_plugin_dir = plugin_root.join("kfileitemaction");
+    let overlay_plugin_dir = plugin_root.join("overlayicon");
 
     let mut stop_service = Command::new("systemctl");
     stop_service.args(["--user", "stop", "openonedrived.service"]);
@@ -91,6 +92,7 @@ fn install() -> Result<()> {
         &icon_dir,
         &service_dir,
         &action_plugin_dir,
+        &overlay_plugin_dir,
     ] {
         fs::create_dir_all(dir).with_context(|| format!("unable to create {}", dir.display()))?;
     }
@@ -113,6 +115,11 @@ fn install() -> Result<()> {
     install_file(
         "build/integrations/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so",
         &action_plugin_dir.join("libopen_onedrive_fileitemaction.so"),
+        false,
+    )?;
+    install_file(
+        "build/integrations/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so",
+        &overlay_plugin_dir.join("libopen_onedrive_overlayicon.so"),
         false,
     )?;
     install_file(
@@ -249,8 +256,11 @@ fn cmake_build(source_dir: &str, build_dir: &str) -> Result<()> {
         home.join(".nix-profile/include/GL/gl.h"),
         PathBuf::from("/usr/include/GL/gl.h"),
     ])
-    .and_then(|path| path.parent().and_then(|path| path.parent()).map(Path::to_path_buf))
-    {
+    .and_then(|path| {
+        path.parent()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+    }) {
         configure.arg(format!("-DOPENGL_INCLUDE_DIR={}", include_dir.display()));
     }
     if let Some(gl_library) = existing_path(&[

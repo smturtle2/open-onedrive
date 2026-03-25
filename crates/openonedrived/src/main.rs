@@ -2,8 +2,10 @@ mod app;
 mod bus;
 
 use anyhow::Result;
+use app::OpenOneDriveApp;
 use bus::{DBUS_PATH, DBUS_SERVICE, OpenOneDriveBus};
 use clap::Parser;
+use openonedrive_rclone_backend::BackendEvent;
 use tracing::info;
 use zbus::Connection;
 
@@ -32,7 +34,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let app = app::OpenOneDriveApp::load().await?;
+    let app = OpenOneDriveApp::load().await?;
+    let signal_app = app.clone();
+    let mut events = app.subscribe_events();
 
     let connection = Connection::session().await?;
     connection.request_name(DBUS_SERVICE).await?;
@@ -40,6 +44,51 @@ async fn main() -> Result<()> {
         .object_server()
         .at(DBUS_PATH, OpenOneDriveBus::new(app))
         .await?;
+
+    let signal_connection = connection.clone();
+    tokio::spawn(async move {
+        let Ok(signal_context) = zbus::SignalContext::new(&signal_connection, DBUS_PATH) else {
+            return;
+        };
+
+        while let Ok(event) = events.recv().await {
+            match event {
+                BackendEvent::MountStateChanged => {
+                    if let Ok(status) = signal_app.get_status().await {
+                        let _ = OpenOneDriveBus::emit_mount_state_changed(
+                            &signal_context,
+                            status.mount_state,
+                        )
+                        .await;
+                    }
+                }
+                BackendEvent::SyncStateChanged => {
+                    if let Ok(status) = signal_app.get_status().await {
+                        let _ = OpenOneDriveBus::emit_sync_state_changed(
+                            &signal_context,
+                            status.sync_state,
+                        )
+                        .await;
+                    }
+                }
+                BackendEvent::AuthFlowStarted => {
+                    let _ = OpenOneDriveBus::emit_auth_flow_started(&signal_context).await;
+                }
+                BackendEvent::AuthFlowCompleted => {
+                    let _ = OpenOneDriveBus::emit_auth_flow_completed(&signal_context).await;
+                }
+                BackendEvent::ErrorRaised(message) => {
+                    let _ = OpenOneDriveBus::emit_error_raised(&signal_context, &message).await;
+                }
+                BackendEvent::LogsUpdated => {
+                    let _ = OpenOneDriveBus::emit_logs_updated(&signal_context).await;
+                }
+                BackendEvent::PathStatesChanged(paths) => {
+                    let _ = OpenOneDriveBus::emit_path_states_changed(&signal_context, paths).await;
+                }
+            }
+        }
+    });
 
     info!("openonedrived ready on {DBUS_SERVICE}");
     tokio::signal::ctrl_c().await?;

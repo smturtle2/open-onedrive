@@ -3,22 +3,22 @@
   <rect x="24" y="24" width="1232" height="672" rx="32" fill="url(#panel)"/>
 
   <text x="88" y="116" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="42" font-weight="700">How open-onedrive handles on-demand files</text>
-  <text x="88" y="152" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper decides which cached files remain on the device.</text>
+  <text x="88" y="152" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper caches path state, tray status, and which files remain on the device.</text>
 
   <g filter="url(#shadow)">
     <rect x="88" y="214" width="284" height="204" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <rect x="88" y="214" width="284" height="8" rx="4" fill="#4B7CFF"/>
     <text x="122" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">1. Bootstrap</text>
     <text x="122" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">curl | bash</text>
-    <text x="122" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Downloads the repo, installs rclone if needed, then runs a local source build.</text>
+    <text x="122" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Downloads a signed release asset, installs rclone if needed, and stages the KDE desktop integration.</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="414" y="214" width="452" height="204" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <rect x="414" y="214" width="452" height="8" rx="4" fill="#22A565"/>
     <text x="448" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">2. openonedrived</text>
-    <text x="448" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Mount supervision + residency policy</text>
-    <text x="448" y="348" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Keeps runtime state, D-Bus methods, retry flow, pinned file list, and cache pruning under XDG paths.</text>
+    <text x="448" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Mount supervision + path-state cache</text>
+    <text x="448" y="348" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Keeps runtime state, D-Bus methods, retry flow, SQLite path states, pinned file list, and cache pruning under XDG paths.</text>
     <rect x="448" y="372" width="168" height="32" rx="16" fill="#16314D"/>
     <text x="474" y="393" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="15">KeepLocal(paths)</text>
     <rect x="632" y="372" width="188" height="32" rx="16" fill="#16314D"/>
@@ -30,7 +30,7 @@
     <rect x="908" y="214" width="284" height="8" rx="4" fill="#F1B44C"/>
     <text x="942" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">3. rclone mount</text>
     <text x="942" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Remote tree + file bytes</text>
-    <text x="942" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Provides the visible OneDrive directory and fetches file contents into the app-owned VFS cache on demand.</text>
+    <text x="942" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Provides the visible OneDrive directory, fetches file contents on demand, and lists remote paths for cache refresh.</text>
   </g>
 
   <g stroke="#496A91" stroke-width="6" stroke-linecap="round">
@@ -46,7 +46,7 @@
     <rect x="88" y="470" width="540" height="168" rx="28" fill="#0C1828" stroke="#243B5B"/>
     <text x="122" y="522" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Explorer-visible workflow</text>
     <text x="122" y="560" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Dolphin sees the mounted tree immediately.</text>
-    <text x="122" y="590" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="18">Right-click files to keep them on disk or return them to online-only mode later.</text>
+    <text x="122" y="590" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="18">Overlay icons show path state, and context actions keep files local or return them to online-only mode.</text>
 
     <rect x="392" y="526" width="198" height="34" rx="17" fill="#16314D"/>
     <text x="422" y="548" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="16">Keep on this device</text>
@@ -59,7 +59,7 @@
     <text x="694" y="522" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">XDG-owned state</text>
     <text x="694" y="560" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/rclone/rclone.conf</text>
     <text x="694" y="590" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">state/open-onedrive/runtime-state.toml</text>
-    <text x="694" y="620" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">cache/open-onedrive/rclone/vfs</text>
+    <text x="694" y="620" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">state/open-onedrive/path-state.sqlite3 + cache/open-onedrive/rclone/vfs</text>
   </g>
 
   <defs>

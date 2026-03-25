@@ -7,12 +7,12 @@
   <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive residency workflow</text>
 
   <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">Mount once, decide file residency later.</text>
-  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper keeps pinned files on disk and sends others back to online-only mode.</text>
+  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper caches path state, drives the tray, keeps pinned files on disk, and sends others back to online-only mode.</text>
 
   <g filter="url(#shadow)">
     <rect x="88" y="244" width="470" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dashboard</text>
-    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Mount control, cache size, pinned file count, and diagnostics stay together.</text>
+    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Mount control, sync state, cache size, pinned file count, and diagnostics stay together.</text>
 
     <rect x="124" y="356" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="356" width="180" height="8" rx="4" fill="#4B7CFF"/>
@@ -28,24 +28,24 @@
 
     <rect x="124" y="494" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="494" width="180" height="8" rx="4" fill="#7D67FF"/>
-    <text x="146" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Pinned files</text>
-    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">18</text>
-    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">kept on this device</text>
+    <text x="146" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Sync state</text>
+    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Scanning</text>
+    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">remote state refreshed</text>
 
     <rect x="322" y="494" width="200" height="118" rx="22" fill="#12233A"/>
     <rect x="322" y="494" width="200" height="8" rx="4" fill="#89A64B"/>
-    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Cache</text>
-    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">2.4 GB</text>
-    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">wrapper-owned VFS data</text>
+    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Pinned files</text>
+    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">18</text>
+    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">kept on this device</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="592" y="244" width="264" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <text x="626" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dolphin</text>
-    <text x="626" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">The file explorer becomes the per-file control surface.</text>
+    <text x="626" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">The file explorer becomes the per-file control surface with overlays.</text>
 
     <rect x="626" y="360" width="196" height="188" rx="24" fill="#13243B"/>
-    <text x="648" y="396" fill="#C9D8ED" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf</text>
+    <text x="648" y="396" fill="#C9D8ED" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf   overlay: pinned</text>
     <rect x="648" y="420" width="152" height="36" rx="18" fill="#1C3350"/>
     <text x="668" y="443" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Keep on this device</text>
     <rect x="648" y="468" width="152" height="36" rx="18" fill="#1C3350"/>
@@ -55,21 +55,21 @@
 
     <rect x="626" y="572" width="196" height="36" rx="18" fill="#153454"/>
     <circle cx="650" cy="590" r="6" fill="#4FD18B"/>
-    <text x="666" y="596" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="16">Context menu drives file residency.</text>
+    <text x="666" y="596" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="16">Overlay + context menu drive file residency.</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="888" y="244" width="304" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
-    <text x="922" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recent activity</text>
-    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Every residency change is visible in the wrapper state and logs.</text>
+    <text x="922" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recent activity + tray</text>
+    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Residency changes update the wrapper state, logs, and tray status.</text>
 
     <rect x="922" y="360" width="236" height="74" rx="20" fill="#12233A"/>
-    <text x="944" y="392" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398132] keep-local</text>
-    <text x="944" y="418" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf hydrated into cache</text>
+    <text x="944" y="392" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398132] rescan</text>
+    <text x="944" y="418" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">SQLite path-state cache refreshed from rclone lsjson</text>
 
     <rect x="922" y="448" width="236" height="74" rx="20" fill="#12233A"/>
-    <text x="944" y="480" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398190] online-only</text>
-    <text x="944" y="506" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Design/mockup.png evicted from cache</text>
+    <text x="944" y="480" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398190] tray</text>
+    <text x="944" y="506" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Close-to-tray keeps the daemon controls resident</text>
 
     <rect x="922" y="542" width="236" height="58" rx="20" fill="#14314D"/>
     <text x="944" y="577" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="17">Logs and retry stay visible during recovery.</text>
