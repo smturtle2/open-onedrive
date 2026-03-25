@@ -6,7 +6,8 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 if command -v pgrep >/dev/null 2>&1; then
-  if ! pgrep -u "$USER" -f "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1; then
+  launcher_user="${USER:-$(id -un)}"
+  if ! pgrep -u "$launcher_user" -f "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1; then
     "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1 &
     disown || true
   fi
