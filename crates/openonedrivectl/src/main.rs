@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use openonedrive_ipc_types::{ItemSnapshot, StatusSnapshot};
+use openonedrive_ipc_types::StatusSnapshot;
 use zbus::Proxy;
 
 const DBUS_SERVICE: &str = "io.github.smturtle2.OpenOneDrive1";
@@ -18,13 +18,13 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Status,
-    Login { client_id: String },
+    BeginConnect,
+    Disconnect,
     SetMountPath { path: String },
-    Pin { paths: Vec<String> },
-    Evict { paths: Vec<String> },
-    Pause,
-    Resume,
-    List { paths: Vec<String> },
+    Mount,
+    Unmount,
+    RetryMount,
+    Logs { #[arg(default_value_t = 50)] limit: u32 },
 }
 
 #[tokio::main]
@@ -38,31 +38,31 @@ async fn main() -> Result<()> {
             let status: StatusSnapshot = proxy.call("GetStatus", &()).await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
-        Command::Login { client_id } => {
-            let url: String = proxy.call("Login", &(client_id)).await?;
-            println!("{url}");
+        Command::BeginConnect => {
+            proxy.call::<_, _, ()>("BeginConnect", &()).await?;
+        }
+        Command::Disconnect => {
+            proxy.call::<_, _, ()>("Disconnect", &()).await?;
         }
         Command::SetMountPath { path } => {
             proxy.call::<_, _, ()>("SetMountPath", &(path)).await?;
         }
-        Command::Pin { paths } => {
-            proxy.call::<_, _, ()>("Pin", &(paths)).await?;
+        Command::Mount => {
+            proxy.call::<_, _, ()>("Mount", &()).await?;
         }
-        Command::Evict { paths } => {
-            proxy.call::<_, _, ()>("Evict", &(paths)).await?;
+        Command::Unmount => {
+            proxy.call::<_, _, ()>("Unmount", &()).await?;
         }
-        Command::Pause => {
-            proxy.call::<_, _, ()>("PauseSync", &()).await?;
+        Command::RetryMount => {
+            proxy.call::<_, _, ()>("RetryMount", &()).await?;
         }
-        Command::Resume => {
-            proxy.call::<_, _, ()>("ResumeSync", &()).await?;
-        }
-        Command::List { paths } => {
-            let items: Vec<ItemSnapshot> = proxy.call("GetItems", &(paths)).await?;
-            println!("{}", serde_json::to_string_pretty(&items)?);
+        Command::Logs { limit } => {
+            let lines: Vec<String> = proxy.call("GetRecentLogLines", &(limit)).await?;
+            for line in lines {
+                println!("{line}");
+            }
         }
     }
 
     Ok(())
 }
-

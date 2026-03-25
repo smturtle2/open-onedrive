@@ -1,5 +1,5 @@
 [package]
-name = "openonedrive-state"
+name = "openonedrive-rclone-backend"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,9 +7,11 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+openonedrive-config = { path = "../config" }
 openonedrive-ipc-types = { path = "../ipc-types" }
-serde.workspace = true
-toml.workspace = true
+openonedrive-state = { path = "../state" }
+tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -9,4 +9,5 @@ if [[ -f "$HOME/.cargo/env" ]]; then
   source "$HOME/.cargo/env"
 fi
 
+"$ROOT_DIR/scripts/install-rclone.sh"
 cargo run -p xtask -- install

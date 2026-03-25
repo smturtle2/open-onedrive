@@ -15,8 +15,8 @@ Kirigami.ApplicationWindow {
 
     Loader {
         anchors.fill: parent
-        source: shellBackend.accountConnected
-                  ? "qrc:/qml/pages/DashboardPage.qml"
+        source: shellBackend.dashboardReady
+                  ? "qrc:/qml/pages/DashboardShell.qml"
                   : "qrc:/qml/pages/SetupPage.qml"
     }
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=open-onedrive background daemon
+Description=open-onedrive rclone mount supervisor
 After=default.target
 
 [Service]

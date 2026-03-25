@@ -21,4 +21,3 @@ find_package(KF6CoreAddons REQUIRED)
 find_package(KF6KIO REQUIRED)
 
 add_subdirectory(dolphin-actions)
-add_subdirectory(overlay-icons)

@@ -2,79 +2,73 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 class QTimer;
 
 class ShellBackend : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(bool configured READ configured NOTIFY configuredChanged)
-    Q_PROPERTY(bool accountConnected READ accountConnected NOTIFY accountConnectedChanged)
-    Q_PROPERTY(bool clientIdConfigured READ clientIdConfigured NOTIFY clientIdConfiguredChanged)
-    Q_PROPERTY(bool authPending READ authPending NOTIFY authPendingChanged)
-    Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
-    Q_PROPERTY(QString accountLabel READ accountLabel NOTIFY accountLabelChanged)
+    Q_PROPERTY(bool remoteConfigured READ remoteConfigured NOTIFY remoteConfiguredChanged)
+    Q_PROPERTY(bool dashboardReady READ dashboardReady NOTIFY dashboardReadyChanged)
+    Q_PROPERTY(bool customClientIdConfigured READ customClientIdConfigured NOTIFY customClientIdConfiguredChanged)
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
-    Q_PROPERTY(QString syncState READ syncState NOTIFY syncStateChanged)
     Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QString cacheUsageLabel READ cacheUsageLabel NOTIFY cacheUsageLabelChanged)
-    Q_PROPERTY(QString indexedItemsLabel READ indexedItemsLabel NOTIFY indexedItemsLabelChanged)
+    Q_PROPERTY(QString rcloneVersion READ rcloneVersion NOTIFY rcloneVersionChanged)
+    Q_PROPERTY(QString lastLogLine READ lastLogLine NOTIFY lastLogLineChanged)
+    Q_PROPERTY(QStringList recentLogs READ recentLogs NOTIFY recentLogsChanged)
 
 public:
     explicit ShellBackend(QObject *parent = nullptr);
 
-    bool configured() const;
-    bool accountConnected() const;
-    bool clientIdConfigured() const;
-    bool authPending() const;
-    QString clientId() const;
-    QString accountLabel() const;
+    bool remoteConfigured() const;
+    bool dashboardReady() const;
+    bool customClientIdConfigured() const;
     QString mountPath() const;
-    QString syncState() const;
     QString mountState() const;
     QString statusMessage() const;
     QString cacheUsageLabel() const;
-    QString indexedItemsLabel() const;
+    QString rcloneVersion() const;
+    QString lastLogLine() const;
+    QStringList recentLogs() const;
 
-    void setClientId(const QString &clientId);
     void setMountPath(const QString &mountPath);
 
-    Q_INVOKABLE void completeSetup();
-    Q_INVOKABLE void pauseSync();
-    Q_INVOKABLE void resumeSync();
+    Q_INVOKABLE void beginConnect();
+    Q_INVOKABLE void disconnectRemote();
+    Q_INVOKABLE void mountRemote();
+    Q_INVOKABLE void unmountRemote();
+    Q_INVOKABLE void retryMount();
     Q_INVOKABLE void openMountLocation();
-    Q_INVOKABLE void freeUpSpace();
     Q_INVOKABLE void refreshStatus();
+    Q_INVOKABLE void refreshLogs();
 
 Q_SIGNALS:
-    void configuredChanged();
-    void accountConnectedChanged();
-    void clientIdConfiguredChanged();
-    void authPendingChanged();
-    void clientIdChanged();
-    void accountLabelChanged();
+    void remoteConfiguredChanged();
+    void dashboardReadyChanged();
+    void customClientIdConfiguredChanged();
     void mountPathChanged();
-    void syncStateChanged();
     void mountStateChanged();
     void statusMessageChanged();
     void cacheUsageLabelChanged();
-    void indexedItemsLabelChanged();
+    void rcloneVersionChanged();
+    void lastLogLineChanged();
+    void recentLogsChanged();
 
 private:
     void applyStatusJson(const QString &jsonPayload);
     void updateStatusMessage(const QString &message);
 
     QTimer *m_refreshTimer = nullptr;
-    bool m_accountConnected = false;
-    bool m_clientIdConfigured = false;
-    bool m_authPending = false;
-    QString m_clientId;
-    QString m_accountLabel;
+    bool m_remoteConfigured = false;
+    bool m_customClientIdConfigured = false;
     QString m_mountPath;
-    QString m_syncState = QStringLiteral("needs-setup");
-    QString m_mountState = QStringLiteral("unmounted");
-    QString m_statusMessage = QStringLiteral("Choose a mount folder, then sign in with Microsoft.");
+    QString m_mountState = QStringLiteral("Disconnected");
+    QString m_statusMessage = QStringLiteral("Choose a mount folder, then start the OneDrive browser sign-in.");
     QString m_cacheUsageLabel = QStringLiteral("Cache usage: pending daemon data");
-    QString m_indexedItemsLabel = QStringLiteral("0 items indexed");
+    QString m_rcloneVersion;
+    QString m_lastLogLine;
+    QStringList m_recentLogs;
 };

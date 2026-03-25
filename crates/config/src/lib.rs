@@ -15,7 +15,11 @@ pub struct ProjectPaths {
     pub cache_dir: PathBuf,
     pub runtime_dir: PathBuf,
     pub config_file: PathBuf,
-    pub db_file: PathBuf,
+    pub legacy_db_file: PathBuf,
+    pub runtime_state_file: PathBuf,
+    pub rclone_config_dir: PathBuf,
+    pub rclone_config_file: PathBuf,
+    pub rclone_cache_dir: PathBuf,
 }
 
 impl ProjectPaths {
@@ -32,14 +36,20 @@ impl ProjectPaths {
             .runtime_dir()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| state_dir.join("run"));
+        let rclone_config_dir = config_dir.join("rclone");
+        let rclone_cache_dir = cache_dir.join("rclone");
 
         Ok(Self {
             config_file: config_dir.join("config.toml"),
-            db_file: state_dir.join("state.sqlite3"),
+            legacy_db_file: state_dir.join("state.sqlite3"),
+            runtime_state_file: state_dir.join("runtime-state.toml"),
+            rclone_config_file: rclone_config_dir.join("rclone.conf"),
             config_dir,
             state_dir,
             cache_dir,
             runtime_dir,
+            rclone_config_dir,
+            rclone_cache_dir,
         })
     }
 
@@ -49,6 +59,8 @@ impl ProjectPaths {
             &self.state_dir,
             &self.cache_dir,
             &self.runtime_dir,
+            &self.rclone_config_dir,
+            &self.rclone_cache_dir,
         ] {
             fs::create_dir_all(dir)
                 .with_context(|| format!("unable to create directory {}", dir.display()))?;
@@ -58,24 +70,25 @@ impl ProjectPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct AppConfig {
-    pub client_id: Option<String>,
-    pub mount_path: Option<PathBuf>,
-    pub poll_min_sec: u64,
-    pub poll_max_sec: u64,
-    pub auto_start: bool,
+    pub rclone_bin: Option<PathBuf>,
+    pub mount_path: PathBuf,
+    pub remote_name: String,
     pub cache_limit_gb: u64,
+    pub auto_mount: bool,
+    pub custom_client_id: Option<String>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            client_id: None,
-            mount_path: None,
-            poll_min_sec: 15,
-            poll_max_sec: 300,
-            auto_start: true,
+            rclone_bin: None,
+            mount_path: Self::default_mount_hint(),
+            remote_name: Self::default_remote_name(),
             cache_limit_gb: 10,
+            auto_mount: true,
+            custom_client_id: None,
         }
     }
 }
@@ -110,6 +123,10 @@ impl AppConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join("OneDrive")
+    }
+
+    pub fn default_remote_name() -> String {
+        "openonedrive".to_string()
     }
 }
 
@@ -170,6 +187,11 @@ mod tests {
     }
 
     #[test]
+    fn default_remote_name_matches_wrapper_remote() {
+        assert_eq!(AppConfig::default_remote_name(), "openonedrive");
+    }
+
+    #[test]
     fn validates_empty_directory() {
         let dir = tempdir().expect("tempdir");
         validate_mount_path(dir.path()).expect("empty directory should validate");
@@ -186,6 +208,7 @@ mod tests {
     fn discovers_paths() {
         let paths = ProjectPaths::discover().expect("discover xdg paths");
         assert!(paths.config_file.ends_with("config.toml"));
-        assert!(paths.db_file.ends_with("state.sqlite3"));
+        assert!(paths.legacy_db_file.ends_with("state.sqlite3"));
+        assert!(paths.rclone_config_file.ends_with("rclone/rclone.conf"));
     }
 }

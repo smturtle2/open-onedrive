@@ -30,48 +30,30 @@ ShellBackend::ShellBackend(QObject *parent)
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setInterval(3000);
     connect(m_refreshTimer, &QTimer::timeout, this, &ShellBackend::refreshStatus);
+    connect(m_refreshTimer, &QTimer::timeout, this, &ShellBackend::refreshLogs);
     m_refreshTimer->start();
     QTimer::singleShot(0, this, &ShellBackend::refreshStatus);
+    QTimer::singleShot(0, this, &ShellBackend::refreshLogs);
 }
 
-bool ShellBackend::configured() const
+bool ShellBackend::remoteConfigured() const
 {
-    return m_accountConnected;
+    return m_remoteConfigured;
 }
 
-bool ShellBackend::accountConnected() const
+bool ShellBackend::dashboardReady() const
 {
-    return m_accountConnected;
+    return m_remoteConfigured && m_mountState != QStringLiteral("Error");
 }
 
-bool ShellBackend::clientIdConfigured() const
+bool ShellBackend::customClientIdConfigured() const
 {
-    return m_clientIdConfigured || !m_clientId.trimmed().isEmpty();
-}
-
-bool ShellBackend::authPending() const
-{
-    return m_authPending;
-}
-
-QString ShellBackend::clientId() const
-{
-    return m_clientId;
-}
-
-QString ShellBackend::accountLabel() const
-{
-    return m_accountLabel;
+    return m_customClientIdConfigured;
 }
 
 QString ShellBackend::mountPath() const
 {
     return m_mountPath;
-}
-
-QString ShellBackend::syncState() const
-{
-    return m_syncState;
 }
 
 QString ShellBackend::mountState() const
@@ -89,20 +71,19 @@ QString ShellBackend::cacheUsageLabel() const
     return m_cacheUsageLabel;
 }
 
-QString ShellBackend::indexedItemsLabel() const
+QString ShellBackend::rcloneVersion() const
 {
-    return m_indexedItemsLabel;
+    return m_rcloneVersion;
 }
 
-void ShellBackend::setClientId(const QString &clientId)
+QString ShellBackend::lastLogLine() const
 {
-    if (m_clientId == clientId) {
-        return;
-    }
+    return m_lastLogLine;
+}
 
-    m_clientId = clientId;
-    emit clientIdChanged();
-    emit clientIdConfiguredChanged();
+QStringList ShellBackend::recentLogs() const
+{
+    return m_recentLogs;
 }
 
 void ShellBackend::setMountPath(const QString &mountPath)
@@ -115,10 +96,10 @@ void ShellBackend::setMountPath(const QString &mountPath)
     emit mountPathChanged();
 }
 
-void ShellBackend::completeSetup()
+void ShellBackend::beginConnect()
 {
     if (m_mountPath.trimmed().isEmpty()) {
-        updateStatusMessage(QStringLiteral("Choose a mount path before signing in."));
+        updateStatusMessage(QStringLiteral("Choose a mount path before connecting."));
         return;
     }
 
@@ -128,34 +109,24 @@ void ShellBackend::completeSetup()
         return;
     }
 
-    const QDBusReply<void> mountReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath.trimmed());
-    if (!mountReply.isValid()) {
-        updateStatusMessage(QStringLiteral("Mount path update failed: %1").arg(mountReply.error().message()));
+    const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath.trimmed());
+    if (!pathReply.isValid()) {
+        updateStatusMessage(QStringLiteral("Mount path update failed: %1").arg(pathReply.error().message()));
         return;
     }
 
-    const QString requestedClientId = m_clientId.trimmed();
-    if (requestedClientId.isEmpty() && !m_clientIdConfigured) {
-        updateStatusMessage(QStringLiteral("No Microsoft OAuth Client ID is configured. Expand Advanced and paste one, or set OPEN_ONEDRIVE_CLIENT_ID."));
+    const QDBusReply<void> connectReply = iface.call(QStringLiteral("BeginConnect"));
+    if (!connectReply.isValid()) {
+        updateStatusMessage(QStringLiteral("Connect failed: %1").arg(connectReply.error().message()));
         return;
     }
 
-    const QDBusReply<QString> loginReply = iface.call(QStringLiteral("Login"), requestedClientId);
-    if (!loginReply.isValid()) {
-        updateStatusMessage(QStringLiteral("Login setup failed: %1").arg(loginReply.error().message()));
-        return;
-    }
-
-    QDesktopServices::openUrl(QUrl(loginReply.value()));
-    if (!m_authPending) {
-        m_authPending = true;
-        emit authPendingChanged();
-    }
-    updateStatusMessage(QStringLiteral("Opened browser for Microsoft sign-in. Finish the login in your browser."));
+    updateStatusMessage(QStringLiteral("Started the rclone browser sign-in flow. Finish the Microsoft login in your browser."));
     refreshStatus();
+    refreshLogs();
 }
 
-void ShellBackend::pauseSync()
+void ShellBackend::disconnectRemote()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
@@ -163,16 +134,17 @@ void ShellBackend::pauseSync()
         return;
     }
 
-    const QDBusReply<void> reply = iface.call(QStringLiteral("PauseSync"));
+    const QDBusReply<void> reply = iface.call(QStringLiteral("Disconnect"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Pause failed: %1").arg(reply.error().message()));
+        updateStatusMessage(QStringLiteral("Disconnect failed: %1").arg(reply.error().message()));
         return;
     }
 
     refreshStatus();
+    refreshLogs();
 }
 
-void ShellBackend::resumeSync()
+void ShellBackend::mountRemote()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
@@ -180,9 +152,43 @@ void ShellBackend::resumeSync()
         return;
     }
 
-    const QDBusReply<void> reply = iface.call(QStringLiteral("ResumeSync"));
+    const QDBusReply<void> reply = iface.call(QStringLiteral("Mount"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Resume failed: %1").arg(reply.error().message()));
+        updateStatusMessage(QStringLiteral("Mount failed: %1").arg(reply.error().message()));
+        return;
+    }
+
+    refreshStatus();
+}
+
+void ShellBackend::unmountRemote()
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        return;
+    }
+
+    const QDBusReply<void> reply = iface.call(QStringLiteral("Unmount"));
+    if (!reply.isValid()) {
+        updateStatusMessage(QStringLiteral("Unmount failed: %1").arg(reply.error().message()));
+        return;
+    }
+
+    refreshStatus();
+}
+
+void ShellBackend::retryMount()
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        return;
+    }
+
+    const QDBusReply<void> reply = iface.call(QStringLiteral("RetryMount"));
+    if (!reply.isValid()) {
+        updateStatusMessage(QStringLiteral("Retry failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -197,11 +203,6 @@ void ShellBackend::openMountLocation()
     }
 
     QDesktopServices::openUrl(QUrl::fromLocalFile(QDir::cleanPath(m_mountPath)));
-}
-
-void ShellBackend::freeUpSpace()
-{
-    updateStatusMessage(QStringLiteral("Per-file evict lives in the Dolphin plugin scaffold."));
 }
 
 void ShellBackend::refreshStatus()
@@ -221,6 +222,24 @@ void ShellBackend::refreshStatus()
     applyStatusJson(reply.value());
 }
 
+void ShellBackend::refreshLogs()
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        return;
+    }
+
+    const QDBusReply<QStringList> reply = iface.call(QStringLiteral("GetRecentLogLines"), 100U);
+    if (!reply.isValid()) {
+        return;
+    }
+
+    if (reply.value() != m_recentLogs) {
+        m_recentLogs = reply.value();
+        emit recentLogsChanged();
+    }
+}
+
 void ShellBackend::applyStatusJson(const QString &jsonPayload)
 {
     const QJsonDocument document = QJsonDocument::fromJson(jsonPayload.toUtf8());
@@ -230,46 +249,30 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     const QJsonObject object = document.object();
+    const bool remoteConfigured = object.value(QStringLiteral("remote_configured")).toBool();
     const QString mountPath = object.value(QStringLiteral("mount_path")).toString();
-    const QString syncState = object.value(QStringLiteral("sync_state")).toString();
     const QString mountState = object.value(QStringLiteral("mount_state")).toString();
     const QString lastError = object.value(QStringLiteral("last_error")).toString();
-    const QString accountLabel = object.value(QStringLiteral("account_label")).toString();
-    const bool clientIdConfigured = object.value(QStringLiteral("client_id_configured")).toBool();
-    const bool accountConnected = object.value(QStringLiteral("account_connected")).toBool();
-    const bool authPending = object.value(QStringLiteral("auth_pending")).toBool();
+    const QString lastLogLine = object.value(QStringLiteral("last_log_line")).toString();
+    const QString rcloneVersion = object.value(QStringLiteral("rclone_version")).toString();
+    const bool customClientIdConfigured = object.value(QStringLiteral("custom_client_id_configured")).toBool();
     const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
-    const qint64 itemsIndexed = object.value(QStringLiteral("items_indexed")).toInteger();
 
-    if (!mountPath.isEmpty() && mountPath != m_mountPath) {
+    const bool wasDashboardReady = dashboardReady();
+
+    if (mountPath != m_mountPath && !mountPath.isEmpty()) {
         m_mountPath = mountPath;
         emit mountPathChanged();
     }
 
-    if (clientIdConfigured != m_clientIdConfigured) {
-        m_clientIdConfigured = clientIdConfigured;
-        emit clientIdConfiguredChanged();
+    if (remoteConfigured != m_remoteConfigured) {
+        m_remoteConfigured = remoteConfigured;
+        emit remoteConfiguredChanged();
     }
 
-    if (accountConnected != m_accountConnected) {
-        m_accountConnected = accountConnected;
-        emit accountConnectedChanged();
-        emit configuredChanged();
-    }
-
-    if (authPending != m_authPending) {
-        m_authPending = authPending;
-        emit authPendingChanged();
-    }
-
-    if (accountLabel != m_accountLabel) {
-        m_accountLabel = accountLabel;
-        emit accountLabelChanged();
-    }
-
-    if (!syncState.isEmpty() && syncState != m_syncState) {
-        m_syncState = syncState;
-        emit syncStateChanged();
+    if (customClientIdConfigured != m_customClientIdConfigured) {
+        m_customClientIdConfigured = customClientIdConfigured;
+        emit customClientIdConfiguredChanged();
     }
 
     if (!mountState.isEmpty() && mountState != m_mountState) {
@@ -283,10 +286,18 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit cacheUsageLabelChanged();
     }
 
-    const QString indexedLabel = QStringLiteral("%1 items indexed").arg(itemsIndexed);
-    if (indexedLabel != m_indexedItemsLabel) {
-        m_indexedItemsLabel = indexedLabel;
-        emit indexedItemsLabelChanged();
+    if (rcloneVersion != m_rcloneVersion) {
+        m_rcloneVersion = rcloneVersion;
+        emit rcloneVersionChanged();
+    }
+
+    if (lastLogLine != m_lastLogLine) {
+        m_lastLogLine = lastLogLine;
+        emit lastLogLineChanged();
+    }
+
+    if (wasDashboardReady != dashboardReady()) {
+        emit dashboardReadyChanged();
     }
 
     if (!lastError.isEmpty()) {
@@ -294,24 +305,32 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         return;
     }
 
-    if (m_authPending) {
-        updateStatusMessage(QStringLiteral("Waiting for Microsoft sign-in to complete in the browser."));
+    if (!m_remoteConfigured) {
+        updateStatusMessage(QStringLiteral("Choose a mount folder, then start the OneDrive browser sign-in."));
         return;
     }
 
-    if (m_accountConnected) {
-        const QString label = m_accountLabel.isEmpty() ? QStringLiteral("Microsoft account") : m_accountLabel;
-        updateStatusMessage(QStringLiteral("Signed in as %1. %2, %3.").arg(label, m_syncState, m_indexedItemsLabel));
+    if (m_mountState == QStringLiteral("Connecting")) {
+        updateStatusMessage(QStringLiteral("Browser sign-in is in progress. Finish the Microsoft login flow."));
         return;
     }
 
-    if (!m_clientIdConfigured && m_clientId.trimmed().isEmpty()) {
-        updateStatusMessage(
-            QStringLiteral("Sign in requires a Microsoft Client ID. Add one in Advanced Settings or set OPEN_ONEDRIVE_CLIENT_ID."));
+    if (m_mountState == QStringLiteral("Mounted")) {
+        updateStatusMessage(QStringLiteral("rclone mount is active at %1.").arg(m_mountPath));
         return;
     }
 
-    updateStatusMessage(QStringLiteral("Ready to sign in with Microsoft."));
+    if (m_mountState == QStringLiteral("Mounting")) {
+        updateStatusMessage(QStringLiteral("Starting rclone mount."));
+        return;
+    }
+
+    if (m_mountState == QStringLiteral("Unmounted")) {
+        updateStatusMessage(QStringLiteral("OneDrive is configured but currently unmounted."));
+        return;
+    }
+
+    updateStatusMessage(QStringLiteral("Review recent logs and reconnect if needed."));
 }
 
 void ShellBackend::updateStatusMessage(const QString &message)

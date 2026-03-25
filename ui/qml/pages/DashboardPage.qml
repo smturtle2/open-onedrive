@@ -29,18 +29,13 @@ Kirigami.ScrollablePage {
             }
 
             Button {
-                text: "Pause"
-                onClicked: shellBackend.pauseSync()
-            }
-
-            Button {
                 text: "Refresh"
                 onClicked: shellBackend.refreshStatus()
             }
 
             Button {
-                text: "Resume"
-                onClicked: shellBackend.resumeSync()
+                text: "Unmount"
+                onClicked: shellBackend.unmountRemote()
             }
         }
 
@@ -52,15 +47,15 @@ Kirigami.ScrollablePage {
 
             StatusCard {
                 Layout.fillWidth: true
-                title: "Account"
-                value: shellBackend.accountLabel
-                description: "Microsoft account connected to this daemon"
+                title: "Backend"
+                value: "rclone"
+                description: shellBackend.rcloneVersion.length > 0 ? shellBackend.rcloneVersion : "Version pending"
             }
 
             StatusCard {
                 Layout.fillWidth: true
-                title: "Sync State"
-                value: shellBackend.syncState
+                title: "Mount State"
+                value: shellBackend.mountState
                 description: shellBackend.statusMessage
             }
 
@@ -68,21 +63,14 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 title: "Mount Path"
                 value: shellBackend.mountPath
-                description: shellBackend.mountState
+                description: "Host filesystem path exposed by rclone mount"
             }
 
             StatusCard {
                 Layout.fillWidth: true
                 title: "Cache"
                 value: shellBackend.cacheUsageLabel
-                description: "Daemon-reported cache usage"
-            }
-
-            StatusCard {
-                Layout.fillWidth: true
-                title: "Index"
-                value: shellBackend.indexedItemsLabel
-                description: "Remote OneDrive metadata indexed into the mount"
+                description: "App-owned rclone VFS cache usage"
             }
         }
 
@@ -107,9 +95,23 @@ Kirigami.ScrollablePage {
                     }
 
                     Button {
-                        text: "Free Up Space"
-                        onClicked: shellBackend.freeUpSpace()
+                        text: "Retry Mount"
+                        onClicked: shellBackend.retryMount()
                     }
+
+                    Button {
+                        text: "Disconnect"
+                        onClicked: shellBackend.disconnectRemote()
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: shellBackend.lastLogLine.length > 0
+                          ? shellBackend.lastLogLine
+                          : "Recent rclone output will appear here."
                 }
             }
         }

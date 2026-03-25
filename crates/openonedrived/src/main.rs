@@ -1,11 +1,9 @@
 mod app;
 mod bus;
-mod mount;
 
 use anyhow::Result;
 use bus::{DBUS_PATH, DBUS_SERVICE, OpenOneDriveBus};
 use clap::Parser;
-use openonedrive_config::{AppConfig, ProjectPaths};
 use tracing::info;
 use zbus::Connection;
 
@@ -28,14 +26,13 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     if args.print_config {
-        let paths = ProjectPaths::discover()?;
-        let config = AppConfig::load_or_create(&paths)?;
+        let paths = openonedrive_config::ProjectPaths::discover()?;
+        let config = openonedrive_config::AppConfig::load_or_create(&paths)?;
         println!("{}", toml::to_string_pretty(&config)?);
         return Ok(());
     }
 
     let app = app::OpenOneDriveApp::load().await?;
-    app.startup_mount().await?;
 
     let connection = Connection::session().await?;
     connection.request_name(DBUS_SERVICE).await?;

@@ -57,6 +57,7 @@ fn bootstrap() -> Result<()> {
 
 fn install() -> Result<()> {
     bootstrap()?;
+    ensure_rclone_installed()?;
     cargo(&["build", "--workspace"])?;
     cmake_build("ui", "build/ui")?;
     cmake_build("integrations", "build/integrations")?;
@@ -77,7 +78,6 @@ fn install() -> Result<()> {
     let service_dir = home.join(".config").join("systemd").join("user");
     let plugin_root = prefix.join("lib").join("qt6").join("plugins").join("kf6");
     let action_plugin_dir = plugin_root.join("kfileitemaction");
-    let overlay_plugin_dir = plugin_root.join("overlayicon");
 
     let mut stop_service = Command::new("systemctl");
     stop_service.args(["--user", "stop", "openonedrived.service"]);
@@ -91,7 +91,6 @@ fn install() -> Result<()> {
         &icon_dir,
         &service_dir,
         &action_plugin_dir,
-        &overlay_plugin_dir,
     ] {
         fs::create_dir_all(dir)
             .with_context(|| format!("unable to create {}", dir.display()))?;
@@ -111,11 +110,6 @@ fn install() -> Result<()> {
     install_file(
         "build/integrations/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so",
         &action_plugin_dir.join("libopen_onedrive_fileitemaction.so"),
-        false,
-    )?;
-    install_file(
-        "build/integrations/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so",
-        &overlay_plugin_dir.join("libopen_onedrive_overlayicon.so"),
         false,
     )?;
     install_file(
@@ -176,6 +170,35 @@ fn install() -> Result<()> {
     println!("Installed open-onedrive into {}", prefix.display());
     println!("Launch from your app menu or run: {}", bin_dir.join("open-onedrive").display());
     println!("Daemon service: systemctl --user status openonedrived.service");
+    Ok(())
+}
+
+fn ensure_rclone_installed() -> Result<()> {
+    if has_binary("rclone") {
+        return Ok(());
+    }
+
+    println!("rclone not found. Attempting automatic installation...");
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("unable to determine repository root")?;
+    let script = repo_root.join("scripts").join("install-rclone.sh");
+    if !script.exists() {
+        bail!("missing helper script: {}", script.display());
+    }
+
+    let mut command = Command::new("bash");
+    command.arg(&script);
+    run_command(command, "automatic rclone install")?;
+
+    if env::var("OPEN_ONEDRIVE_DRY_RUN").as_deref() == Ok("1") {
+        return Ok(());
+    }
+
+    if !has_binary("rclone") {
+        bail!("automatic rclone installation finished, but rclone is still not in PATH");
+    }
+
     Ok(())
 }
 
