@@ -698,7 +698,7 @@ pub fn build_connect_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsStr
         OsString::from(&config.remote_name),
         OsString::from("onedrive"),
         OsString::from("config_type"),
-        OsString::from("personal"),
+        OsString::from("onedrive"),
         OsString::from("region"),
         OsString::from("global"),
     ];
@@ -792,7 +792,8 @@ fn log_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        RcloneBackend, build_mount_args, resolve_rclone_binary_with_path, restart_backoff,
+        RcloneBackend, build_connect_args, build_mount_args, resolve_rclone_binary_with_path,
+        restart_backoff,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::MountState;
@@ -832,6 +833,20 @@ mod tests {
         assert!(rendered.contains(&paths.rclone_config_file.display().to_string()));
         assert!(rendered.contains(&paths.rclone_cache_dir.display().to_string()));
         assert!(rendered.contains(&"42G".to_string()));
+    }
+
+    #[test]
+    fn connect_args_target_current_onedrive_config_flow() {
+        let dir = tempdir().expect("tempdir");
+        let paths = build_paths(dir.path());
+        let args = build_connect_args(&AppConfig::default(), &paths);
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(rendered.windows(2).any(|pair| pair == ["config_type", "onedrive"]));
+        assert!(rendered.windows(2).any(|pair| pair == ["region", "global"]));
     }
 
     #[test]
