@@ -79,6 +79,11 @@ fn install() -> Result<()> {
     let action_plugin_dir = plugin_root.join("kfileitemaction");
     let overlay_plugin_dir = plugin_root.join("overlayicon");
 
+    let mut stop_service = Command::new("systemctl");
+    stop_service.args(["--user", "stop", "openonedrived.service"]);
+    run_optional(stop_service, "systemctl --user stop openonedrived.service");
+    stop_repo_daemon_if_present()?;
+
     for dir in [
         &bin_dir,
         &libexec_dir,
@@ -146,12 +151,6 @@ fn install() -> Result<()> {
         )?,
         false,
     )?;
-
-    let mut stop_service = Command::new("systemctl");
-    stop_service.args(["--user", "stop", "openonedrived.service"]);
-    run_optional(stop_service, "systemctl --user stop openonedrived.service");
-
-    stop_repo_daemon_if_present()?;
 
     let mut daemon_reload = Command::new("systemctl");
     daemon_reload.args(["--user", "daemon-reload"]);
@@ -234,9 +233,12 @@ fn install_file(src: &str, dst: &Path, executable: bool) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("unable to create {}", parent.display()))?;
     }
-    fs::copy(src_path, dst)
-        .with_context(|| format!("unable to copy {} to {}", src_path.display(), dst.display()))?;
-    set_mode(dst, executable)?;
+    let temp_path = dst.with_extension("tmp");
+    fs::copy(src_path, &temp_path)
+        .with_context(|| format!("unable to copy {} to {}", src_path.display(), temp_path.display()))?;
+    set_mode(&temp_path, executable)?;
+    fs::rename(&temp_path, dst)
+        .with_context(|| format!("unable to replace {} with {}", dst.display(), temp_path.display()))?;
     Ok(())
 }
 
