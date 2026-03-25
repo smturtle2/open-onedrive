@@ -16,8 +16,10 @@ openonedrive-ipc-types = { path = "../ipc-types" }
 openonedrive-state = { path = "../state" }
 openonedrive-vfs = { path = "../vfs" }
 serde_json.workspace = true
+time.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
 zbus.workspace = true
