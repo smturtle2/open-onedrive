@@ -15,22 +15,8 @@ Kirigami.ApplicationWindow {
 
     Loader {
         anchors.fill: parent
-        sourceComponent: shellBackend.configured ? dashboardPage : setupPage
-    }
-
-    Component {
-        id: setupPage
-
-        SetupPage {
-            anchors.fill: parent
-        }
-    }
-
-    Component {
-        id: dashboardPage
-
-        DashboardPage {
-            anchors.fill: parent
-        }
+        source: shellBackend.configured
+                  ? "qrc:/qml/pages/DashboardPage.qml"
+                  : "qrc:/qml/pages/SetupPage.qml"
     }
 }
