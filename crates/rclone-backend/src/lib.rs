@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use openonedrive_config::{AppConfig, ProjectPaths, validate_mount_path};
 use openonedrive_ipc_types::{MountState, StatusSnapshot};
 use openonedrive_state::{RuntimeState, StateStore};
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -27,6 +27,7 @@ struct Runtime {
     mount_state: MountState,
     last_error: String,
     last_log_line: String,
+    pinned_relative_paths: BTreeSet<String>,
     rclone_version: String,
     mount_desired: bool,
     restart_attempt: u32,
@@ -51,6 +52,7 @@ impl Runtime {
             mount_state,
             last_error: state.last_error,
             last_log_line: state.last_log_line,
+            pinned_relative_paths: state.pinned_relative_paths.into_iter().collect(),
             rclone_version: String::new(),
             mount_desired: false,
             restart_attempt: 0,
@@ -90,6 +92,9 @@ impl RcloneBackend {
         });
 
         backend.refresh_rclone_version().await;
+        if let Err(error) = backend.prune_cache_to_pins().await {
+            backend.append_log(format!("cache prune skipped: {error}")).await;
+        }
 
         if backend.current_config().await.auto_mount && remote_configured {
             if let Err(error) = backend.mount().await {
@@ -255,6 +260,7 @@ impl RcloneBackend {
             runtime.restart_attempt = 0;
             runtime.last_error.clear();
             runtime.last_log_line.clear();
+            runtime.pinned_relative_paths.clear();
         }
         self.recent_logs.lock().await.clear();
         self.persist_runtime().await?;
@@ -409,6 +415,7 @@ impl RcloneBackend {
             MountState::Disconnected
         };
         self.set_mount_state(mount_state).await;
+        self.prune_cache_to_pins().await?;
         Ok(())
     }
 
@@ -420,6 +427,71 @@ impl RcloneBackend {
         }
         self.persist_runtime().await?;
         self.mount().await
+    }
+
+    pub async fn keep_local(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
+        self.ensure_mounted().await?;
+        let config = self.current_config().await;
+        let selected_paths = expand_selected_paths(&config.mount_path, raw_paths)?;
+        if selected_paths.is_empty() {
+            bail!("select at least one file or directory inside the mounted OneDrive path");
+        }
+
+        let mount_root = config.mount_path.clone();
+        let hydrated = tokio::task::spawn_blocking(move || {
+            hydrate_paths(&mount_root, selected_paths)
+        })
+        .await
+        .context("keep-local task join failed")??;
+
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.pinned_relative_paths.extend(hydrated.iter().cloned());
+        }
+        self.persist_runtime().await?;
+        self.append_log(format!(
+            "kept {} item(s) available on this device",
+            hydrated.len()
+        ))
+        .await;
+        Ok(hydrated.len() as u32)
+    }
+
+    pub async fn make_online_only(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
+        self.ensure_mounted().await?;
+        let config = self.current_config().await;
+        let selected_paths = expand_selected_paths(&config.mount_path, raw_paths)?;
+        if selected_paths.is_empty() {
+            bail!("select at least one file or directory inside the mounted OneDrive path");
+        }
+
+        let relative_paths = selected_paths;
+
+        if relative_paths.is_empty() {
+            return Ok(0);
+        }
+
+        {
+            let mut runtime = self.runtime.write().await;
+            for relative_path in &relative_paths {
+                runtime.pinned_relative_paths.remove(relative_path);
+            }
+        }
+
+        let cache_root = cache_root_for_remote(&self.paths, &config);
+        let removed = tokio::task::spawn_blocking(move || {
+            evict_cached_paths(&cache_root, &relative_paths)
+        })
+        .await
+        .context("online-only task join failed")??;
+
+        self.persist_runtime().await?;
+        self.append_log(format!(
+            "returned {} item(s) to online-only mode",
+            removed
+        ))
+        .await;
+        Ok(removed)
     }
 
     pub async fn status(&self) -> Result<StatusSnapshot> {
@@ -437,6 +509,7 @@ impl RcloneBackend {
             mount_state: runtime.mount_state,
             mount_path: config.mount_path.display().to_string(),
             cache_usage_bytes: directory_size_bytes(&self.paths.rclone_cache_dir)?,
+            pinned_file_count: runtime.pinned_relative_paths.len() as u32,
             rclone_version: runtime.rclone_version,
             last_error: runtime.last_error,
             last_log_line: runtime.last_log_line,
@@ -592,6 +665,7 @@ impl RcloneBackend {
             mount_state: runtime.mount_state,
             last_error: runtime.last_error.clone(),
             last_log_line: runtime.last_log_line.clone(),
+            pinned_relative_paths: runtime.pinned_relative_paths.iter().cloned().collect(),
         })
     }
 
@@ -630,6 +704,23 @@ impl RcloneBackend {
             }
         });
     }
+
+    async fn ensure_mounted(&self) -> Result<()> {
+        let runtime = self.runtime.read().await;
+        if runtime.mount_state != MountState::Mounted {
+            bail!("mount the OneDrive remote before changing device retention");
+        }
+        Ok(())
+    }
+
+    async fn prune_cache_to_pins(&self) -> Result<()> {
+        let config = self.current_config().await;
+        let cache_root = cache_root_for_remote(&self.paths, &config);
+        let pinned = self.runtime.read().await.pinned_relative_paths.clone();
+        tokio::task::spawn_blocking(move || prune_cache_root(&cache_root, &pinned))
+            .await
+            .context("cache prune task join failed")?
+    }
 }
 
 fn has_remote_config(config_file: &Path, remote_name: &str) -> Result<bool> {
@@ -648,6 +739,243 @@ fn clear_directory(path: &Path) -> Result<()> {
         fs::remove_dir_all(path).with_context(|| format!("unable to remove {}", path.display()))?;
     }
     fs::create_dir_all(path).with_context(|| format!("unable to create {}", path.display()))?;
+    Ok(())
+}
+
+fn expand_selected_paths(mount_root: &Path, raw_paths: &[String]) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    for raw_path in raw_paths {
+        let relative = relative_path_for(mount_root, Path::new(raw_path))?;
+        let absolute = mount_root.join(&relative);
+        collect_selected_files(mount_root, &absolute, &mut files)?;
+    }
+    Ok(files)
+}
+
+fn collect_selected_files(
+    mount_root: &Path,
+    path: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("unable to inspect {}", path.display()))?;
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path).with_context(|| format!("unable to read {}", path.display()))? {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            collect_selected_files(mount_root, &entry.path(), files)?;
+        }
+        return Ok(());
+    }
+
+    if metadata.is_file() {
+        let relative = relative_path_for(mount_root, path)?;
+        files.insert(relative_string(&relative));
+    }
+
+    Ok(())
+}
+
+fn relative_path_for(mount_root: &Path, raw_path: &Path) -> Result<PathBuf> {
+    let absolute = if raw_path.is_absolute() {
+        raw_path.to_path_buf()
+    } else {
+        mount_root.join(raw_path)
+    };
+    let relative = absolute
+        .strip_prefix(mount_root)
+        .with_context(|| format!("{} is outside the mounted OneDrive path", absolute.display()))?;
+    if relative.as_os_str().is_empty() {
+        bail!("select a file or directory inside the mounted OneDrive path");
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(value) => normalized.push(value),
+            std::path::Component::CurDir => {}
+            _ => bail!("unsupported path outside the mounted OneDrive path"),
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        bail!("select a file or directory inside the mounted OneDrive path");
+    }
+    Ok(normalized)
+}
+
+fn relative_string(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn hydrate_paths(mount_root: &Path, relative_paths: BTreeSet<String>) -> Result<BTreeSet<String>> {
+    for relative_path in &relative_paths {
+        let absolute = mount_root.join(relative_path);
+        let mut source =
+            fs::File::open(&absolute).with_context(|| format!("unable to open {}", absolute.display()))?;
+        let mut sink = std::io::sink();
+        std::io::copy(&mut source, &mut sink)
+            .with_context(|| format!("unable to cache {}", absolute.display()))?;
+    }
+    Ok(relative_paths)
+}
+
+fn cache_root_for_remote(paths: &ProjectPaths, config: &AppConfig) -> PathBuf {
+    paths.rclone_cache_dir.join("vfs").join(&config.remote_name)
+}
+
+fn evict_cached_paths(cache_root: &Path, relative_paths: &BTreeSet<String>) -> Result<u32> {
+    if !cache_root.exists() {
+        return Ok(relative_paths.len() as u32);
+    }
+
+    let mut stack = vec![cache_root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            let entry_path = entry.path();
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("unable to stat {}", entry_path.display()))?;
+            if metadata.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+
+            let candidate = entry_path
+                .strip_prefix(cache_root)
+                .with_context(|| format!("unable to relativize {}", entry_path.display()))?;
+            if relative_paths
+                .iter()
+                .any(|relative_path| cache_path_matches(candidate, Path::new(relative_path)))
+            {
+                fs::remove_file(&entry_path)
+                    .with_context(|| format!("unable to remove {}", entry_path.display()))?;
+                remove_empty_parent_dirs(&entry_path, cache_root)?;
+            }
+        }
+    }
+    Ok(relative_paths.len() as u32)
+}
+
+fn prune_cache_root(cache_root: &Path, pinned_relative_paths: &BTreeSet<String>) -> Result<()> {
+    if !cache_root.exists() {
+        return Ok(());
+    }
+
+    let mut stack = vec![cache_root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            let entry_path = entry.path();
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("unable to stat {}", entry_path.display()))?;
+            if metadata.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+
+            let relative = entry_path
+                .strip_prefix(cache_root)
+                .with_context(|| format!("unable to relativize {}", entry_path.display()))?;
+            if !pinned_relative_paths
+                .iter()
+                .any(|pinned| cache_path_matches(relative, Path::new(pinned)))
+            {
+                fs::remove_file(&entry_path)
+                    .with_context(|| format!("unable to remove {}", entry_path.display()))?;
+            }
+        }
+    }
+
+    remove_empty_dirs_under(cache_root)?;
+    Ok(())
+}
+
+fn remove_empty_parent_dirs(path: &Path, stop_at: &Path) -> Result<()> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir == stop_at {
+            break;
+        }
+        match fs::read_dir(dir) {
+            Ok(entries) => {
+                let mut entries = entries;
+                if entries.next().is_none() {
+                    fs::remove_dir(dir)
+                        .with_context(|| format!("unable to remove {}", dir.display()))?;
+                    current = dir.parent();
+                    continue;
+                }
+                break;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("unable to inspect {}", dir.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cache_path_matches(candidate: &Path, selected: &Path) -> bool {
+    let candidate_components = candidate
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    let selected_components = selected
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+
+    if selected_components.len() > candidate_components.len() {
+        return false;
+    }
+
+    let offset = candidate_components.len() - selected_components.len();
+    candidate_components[offset..] == selected_components
+}
+
+fn remove_empty_dirs_under(root: &Path) -> Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    let mut dirs = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        dirs.push(path.clone());
+        for entry in fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))? {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            if entry
+                .metadata()
+                .with_context(|| format!("unable to stat {}", entry.path().display()))?
+                .is_dir()
+            {
+                stack.push(entry.path());
+            }
+        }
+    }
+
+    dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for dir in dirs {
+        if dir != root {
+            match fs::read_dir(&dir) {
+                Ok(entries) => {
+                    let mut entries = entries;
+                    if entries.next().is_none() {
+                        fs::remove_dir(&dir)
+                            .with_context(|| format!("unable to remove {}", dir.display()))?;
+                    }
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| format!("unable to inspect {}", dir.display()));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -792,11 +1120,12 @@ fn log_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        RcloneBackend, build_connect_args, build_mount_args, resolve_rclone_binary_with_path,
-        restart_backoff,
+        RcloneBackend, build_connect_args, build_mount_args, evict_cached_paths,
+        expand_selected_paths, prune_cache_root, resolve_rclone_binary_with_path, restart_backoff,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::MountState;
+    use std::collections::BTreeSet;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
@@ -855,6 +1184,62 @@ mod tests {
         assert_eq!(restart_backoff(2), Duration::from_secs(4));
         assert_eq!(restart_backoff(5), Duration::from_secs(32));
         assert_eq!(restart_backoff(8), Duration::from_secs(32));
+    }
+
+    #[test]
+    fn expands_selected_directories_into_relative_files() {
+        let dir = tempdir().expect("tempdir");
+        let mount_root = dir.path().join("mount");
+        fs::create_dir_all(mount_root.join("docs/nested")).expect("mount tree");
+        fs::write(mount_root.join("docs/readme.md"), "a").expect("write file");
+        fs::write(mount_root.join("docs/nested/spec.txt"), "b").expect("write file");
+
+        let selected = expand_selected_paths(
+            &mount_root,
+            &[mount_root.join("docs").display().to_string()],
+        )
+        .expect("expand selected paths");
+
+        assert_eq!(
+            selected.into_iter().collect::<Vec<_>>(),
+            vec!["docs/nested/spec.txt".to_string(), "docs/readme.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn evicts_selected_cached_paths() {
+        let dir = tempdir().expect("tempdir");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(cache_root.join("docs")).expect("cache tree");
+        fs::write(cache_root.join("docs/readme.md"), "cached").expect("cached file");
+
+        let removed = evict_cached_paths(
+            &cache_root,
+            &BTreeSet::from(["docs/readme.md".to_string()]),
+        )
+        .expect("evict cache");
+
+        assert_eq!(removed, 1);
+        assert!(!cache_root.join("docs/readme.md").exists());
+        assert!(!cache_root.join("docs").exists());
+    }
+
+    #[test]
+    fn prune_cache_root_keeps_only_pinned_files() {
+        let dir = tempdir().expect("tempdir");
+        let cache_root = dir.path().join("cache");
+        fs::create_dir_all(cache_root.join("docs")).expect("cache tree");
+        fs::write(cache_root.join("docs/readme.md"), "keep").expect("cached file");
+        fs::write(cache_root.join("docs/tmp.log"), "drop").expect("cached file");
+
+        prune_cache_root(
+            &cache_root,
+            &BTreeSet::from(["docs/readme.md".to_string()]),
+        )
+        .expect("prune cache");
+
+        assert!(cache_root.join("docs/readme.md").exists());
+        assert!(!cache_root.join("docs/tmp.log").exists());
     }
 
     #[tokio::test]

@@ -21,6 +21,7 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString mountStateLabel READ mountStateLabel NOTIFY mountStateChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QString cacheUsageLabel READ cacheUsageLabel NOTIFY cacheUsageLabelChanged)
+    Q_PROPERTY(int pinnedFileCount READ pinnedFileCount NOTIFY pinnedFileCountChanged)
     Q_PROPERTY(QString rcloneVersion READ rcloneVersion NOTIFY rcloneVersionChanged)
     Q_PROPERTY(QString lastLogLine READ lastLogLine NOTIFY lastLogLineChanged)
     Q_PROPERTY(QStringList recentLogs READ recentLogs NOTIFY recentLogsChanged)
@@ -41,6 +42,7 @@ public:
     QString mountStateLabel() const;
     QString statusMessage() const;
     QString cacheUsageLabel() const;
+    int pinnedFileCount() const;
     QString rcloneVersion() const;
     QString lastLogLine() const;
     QStringList recentLogs() const;
@@ -72,6 +74,7 @@ Q_SIGNALS:
     void mountStateChanged();
     void statusMessageChanged();
     void cacheUsageLabelChanged();
+    void pinnedFileCountChanged();
     void rcloneVersionChanged();
     void lastLogLineChanged();
     void recentLogsChanged();
@@ -91,6 +94,7 @@ private:
     QString m_mountState = QStringLiteral("Disconnected");
     QString m_statusMessage = QStringLiteral("Choose a mount folder, then start the OneDrive browser sign-in.");
     QString m_cacheUsageLabel = QStringLiteral("Cache usage: pending daemon data");
+    int m_pinnedFileCount = 0;
     QString m_rcloneVersion;
     QString m_lastLogLine;
     QStringList m_recentLogs;

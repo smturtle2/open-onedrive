@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  자체 동기화 엔진 대신 <code>rclone mount</code>를 감독하는 Linux용 OneDrive 데스크톱 셸.
+  <code>rclone mount</code>는 원격 트리와 파일 바이트를 제공하고, 로컬 보존 정책은 래퍼가 직접 관리하는 Linux용 OneDrive 데스크톱 셸.
 </p>
 
 <p align="center">
@@ -17,31 +17,31 @@
 
 <p align="center">
   <a href="./README.md">English</a> ·
-  <a href="#highlights">주요 기능</a> ·
-  <a href="#quick-start">빠른 시작</a> ·
-  <a href="#configuration">설정</a> ·
-  <a href="#how-it-works">동작 방식</a> ·
-  <a href="#development">개발</a>
+  <a href="#주요-기능">주요 기능</a> ·
+  <a href="#빠른-시작">빠른 시작</a> ·
+  <a href="#설정">설정</a> ·
+  <a href="#동작-방식">동작 방식</a> ·
+  <a href="#개발">개발</a>
 </p>
 
 <p align="center">
   <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive dashboard preview" width="100%">
 </p>
 
-## Overview
+## 개요
 
-`open-onedrive`는 Linux 데스크톱용 `rclone` wrapper입니다. 앱 전용 `rclone.conf`를 관리하고, foreground mount 프로세스를 daemon으로 감독하며, Qt6/Kirigami UI와 D-Bus CLI를 통해 상태 확인과 복구를 제공합니다. mount 오류가 발생해도 dashboard와 logs 화면을 계속 유지하는 쪽에 초점을 맞췄습니다.
+`open-onedrive`는 Linux 데스크톱용 `rclone` 래퍼이지, 자체 동기화 엔진이 아닙니다. daemon이 앱 전용 `rclone.conf`, `rclone mount`, 로그, 상태, 파일 보존 정책을 관리하고, `rclone`은 마운트된 원격 트리와 파일 바이트를 가져오는 역할만 맡습니다. 어떤 파일을 장치에 계속 남길지, 어떤 파일을 다시 온라인 전용으로 돌릴지는 래퍼가 결정합니다.
 
-## Highlights
+## 주요 기능
 
-- `curl ... | bash` 한 줄로 설치
+- 저장소를 내려받아 로컬에서 바로 빌드하는 `curl ... | bash` 부트스트랩
 - `~/.config/rclone/rclone.conf`와 분리된 앱 전용 `rclone.conf`
-- restart backoff와 최근 로그 수집이 포함된 daemon-managed `rclone mount`
-- 오류 상태에서도 유지되는 dashboard와 logs 기반 복구 흐름
-- Qt6/Kirigami UI와 `openonedrivectl` CLI
-- KDE Dolphin용 가벼운 연동 제공
+- restart backoff, 최근 로그 수집, 캐시 사용량 집계를 포함한 daemon-managed `rclone mount`
+- Dolphin에서 바로 쓰는 파일별 `Keep on this device` / `Make online-only`
+- 앱 전용 `rclone` VFS 캐시 위에서 동작하는 래퍼 주도 보존 정책
+- 진단과 파일 보존 제어에 쓸 수 있는 Qt6/Kirigami UI와 `openonedrivectl`
 
-## Quick Start
+## 빠른 시작
 
 GitHub에서 바로 설치:
 
@@ -49,19 +49,28 @@ GitHub에서 바로 설치:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-특정 브랜치나 태그 고정:
+특정 태그나 브랜치 고정:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=main bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.0 bash
 ```
 
-설치 스크립트가 하는 일:
+이 부트스트랩이 실제로 하는 일:
 
 - 저장소 payload를 임시 디렉터리로 내려받음
 - `rclone`이 없으면 자동 설치 시도
-- Rust workspace, Qt UI, KDE integration 빌드
+- Rust workspace, Qt UI, KDE 통합 플러그인을 로컬에서 소스 빌드
 - launcher, desktop entry, icon, `openonedrived.service` 설치
 - 설치가 끝나면 임시 checkout 삭제
+
+`curl | bash` 흐름에 필요한 빌드 전제:
+
+- `cargo`
+- `cmake` 또는 `qt-cmake`
+- `ninja` 또는 `make`
+- `pkg-config`
+- `qml`
+- 배포판에 맞는 Qt6, KF6, Kirigami 개발 패키지
 
 실행과 확인:
 
@@ -71,14 +80,29 @@ systemctl --user status openonedrived.service
 openonedrivectl status
 ```
 
-## Requirements
+처음 쓰는 흐름:
+
+1. `~/OneDrive` 같은 빈 디렉터리를 마운트 위치로 선택합니다.
+2. `rclone`이 연 브라우저에서 Microsoft 로그인을 마칩니다.
+3. Dolphin에서 마운트된 폴더를 엽니다.
+4. 파일을 우클릭해서 `Keep on this device` 또는 `Make online-only`를 고릅니다.
+
+CLI에서도 같은 작업을 할 수 있습니다:
+
+```bash
+openonedrivectl keep-local ~/OneDrive/Documents/report.pdf
+openonedrivectl make-online-only ~/OneDrive/Documents/report.pdf
+```
+
+## 요구 사항
 
 - Linux 데스크톱 환경
-- 필수 런타임 의존성인 `rclone`
-- 주 타깃 환경: KDE Plasma 6 + Qt6/Kirigami
-- 현재 wrapper 흐름은 OneDrive Personal 기준
+- 런타임 의존성인 `rclone`
+- 주 타깃 환경: KDE Plasma 6, Qt6/Kirigami, Dolphin
+- 부트스트랩 설치를 위한 로컬 빌드 도구체인: Rust, CMake, Qt 툴링, C++ 컴파일러
+- 현재 래퍼 흐름은 OneDrive Personal 기준
 
-## Configuration
+## 설정
 
 앱 설정은 보통 다음 XDG 경로 아래에 저장됩니다.
 
@@ -102,53 +126,56 @@ auto_mount = true
 
 설계상 보장하는 점:
 
-- wrapper는 `~/.config/rclone/rclone.conf`에 쓰지 않음
-- runtime state는 사용자 설정 파일과 분리해 저장
-- `openonedrived --print-config`는 설정 파일이 없어도 읽기 전용으로 동작
+- 래퍼는 `~/.config/rclone/rclone.conf`에 쓰지 않습니다.
+- runtime state는 사용자 설정 파일과 분리해 저장합니다.
+- pinned 상태는 사용자의 기본 `rclone` 표면이 아니라 래퍼 runtime state 안에 저장됩니다.
+- `openonedrived --print-config`는 설정 파일이 없어도 읽기 전용으로 동작합니다.
 
-## UI Notes
+## UI 흐름
 
-- Setup은 mount 디렉터리 선택과 브라우저 인증 시작에 집중합니다.
-- Dashboard는 mount 제어, 최신 상태, 진단 정보를 한 곳에 모읍니다.
-- 오류가 나도 Logs 탭이 남아 있어서 setup으로 되돌아가지 않고 복구할 수 있습니다.
+- Setup은 빈 마운트 디렉터리 선택과 브라우저 인증 시작에 집중합니다.
+- Dashboard는 mount 제어, 캐시 크기, pinned 파일 수, 진단 정보를 한 화면에 모읍니다.
+- 오류가 나도 Logs 탭이 살아 있어서 setup으로 돌아가지 않고 복구할 수 있습니다.
+- 파일별 제어는 Dolphin에서 합니다. 마운트된 항목을 우클릭해서 장치 유지 또는 온라인 전용 전환을 실행합니다.
 
-## How It Works
+## 동작 방식
 
 <p align="center">
   <img src="./assets/docs/flow-overview.svg" alt="open-onedrive architecture overview" width="100%">
 </p>
 
-- `openonedrived`가 runtime 상태, D-Bus 메서드, mount supervision을 담당합니다.
-- Microsoft 인증, mount 실행, VFS cache는 `rclone`이 처리합니다.
-- UI와 `openonedrivectl`는 둘 다 세션 버스의 daemon과 통신합니다.
+- `openonedrived`가 runtime 상태, D-Bus 메서드, mount supervision, 보존 정책을 관리합니다.
+- `rclone mount`는 파일 탐색기에서 보이는 원격 트리를 제공하고, 필요할 때 파일 바이트를 가져옵니다.
+- 래퍼는 pinned 파일 목록을 기록하고 앱 전용 VFS 캐시를 그 집합 기준으로 정리합니다.
+- Dolphin 액션과 `openonedrivectl`는 둘 다 daemon에 요청해서 개별 파일을 hydrate 하거나 evict 합니다.
 - 앱은 사용자의 기본 `rclone` 설정을 공유하지 않고, 자기 XDG 경로 안에서만 동작합니다.
 
-## Project Layout
+## 프로젝트 구성
 
-| Path | 설명 |
+| 경로 | 역할 |
 | --- | --- |
 | `install.sh` | `curl ... | bash`용 bootstrap 진입점 |
 | `crates/openonedrived` | daemon 진입점과 D-Bus 표면 |
-| `crates/openonedrivectl` | daemon 제어와 상태 확인용 CLI |
-| `crates/rclone-backend` | `rclone` 탐색, 설정 소유, mount 감독, 로그 수집 |
+| `crates/openonedrivectl` | daemon 제어, 상태 확인, 보존 정책용 CLI |
+| `crates/rclone-backend` | `rclone` 탐색, 설정 소유, mount 감독, 캐시 정책, 로그 수집 |
 | `crates/config` | XDG 경로, 앱 설정, mount path 검증 |
 | `crates/ipc-types` | 공유 D-Bus 상태 타입 |
 | `crates/state` | 경량 runtime 상태 저장 |
 | `ui/` | Qt6/Kirigami 셸 |
-| `integrations/` | Dolphin 액션 |
+| `integrations/` | Dolphin 파일 액션 |
 | `packaging/` | launcher, desktop entry, user service 템플릿 |
 | `xtask/` | bootstrap, build, test, install 자동화 |
 
-## Non-goals
+## 비목표
 
-- Microsoft OAuth 직접 구현, Graph delta sync, SQLite item index, 자체 FUSE/VFS 엔진 없음
+- Microsoft OAuth 직접 구현, Graph delta sync, 자체 sync 엔진 없음
 - 사용자의 기본 `~/.config/rclone/rclone.conf`에 쓰지 않음
-- 이번 릴리스에 placeholder badge, per-file pin/evict, overlay state 없음
+- 이번 릴리스에 Finder 스타일 placeholder badge나 cloud overlay icon 없음
 - legacy direct-engine 호환 레이어 없음
 
 legacy direct-engine 상태는 startup 시 제거됩니다.
 
-## Development
+## 개발
 
 일상적인 개발 명령:
 
@@ -168,6 +195,6 @@ cargo run -p xtask -- build-integrations
 cargo run -p xtask -- install
 ```
 
-## License
+## 라이선스
 
 MIT. 자세한 내용은 [LICENSE](./LICENSE)를 참고하세요.

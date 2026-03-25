@@ -126,7 +126,7 @@ Kirigami.ScrollablePage {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 720 ? 4 : 1
+            columns: width > 840 ? 5 : width > 600 ? 2 : 1
             columnSpacing: Kirigami.Units.largeSpacing
             rowSpacing: Kirigami.Units.largeSpacing
 
@@ -161,6 +161,14 @@ Kirigami.ScrollablePage {
                 description: qsTr("App-owned rclone VFS cache usage")
                 accentColor: "#6f8b42"
             }
+
+            StatusCard {
+                Layout.fillWidth: true
+                title: qsTr("Pinned files")
+                value: shellBackend.pinnedFileCount.toString()
+                description: qsTr("Files kept on this device from Dolphin actions")
+                accentColor: "#9b6bff"
+            }
         }
 
         MountPathEditor {
@@ -186,6 +194,13 @@ Kirigami.ScrollablePage {
                     text: shellBackend.lastLogLine.length > 0
                           ? shellBackend.lastLogLine
                           : qsTr("Recent rclone output will appear here.")
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("Use the Dolphin context menu on mounted files to keep them on this device or return them to online-only mode.")
                 }
             }
         }

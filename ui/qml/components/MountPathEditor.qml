@@ -67,7 +67,7 @@ Frame {
             visible: helperText.length > 0
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.neutralTextColor
-            text: helperText
+            text: helperText + qsTr(" Choose an empty directory; existing files or folders are rejected to avoid mounting over real data.")
         }
     }
 }

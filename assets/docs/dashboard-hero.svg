@@ -1,69 +1,87 @@
 <svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1280" height="720" rx="36" fill="#08111F"/>
-  <rect x="24" y="24" width="1232" height="672" rx="28" fill="url(#bg)"/>
-  <circle cx="100" cy="96" r="10" fill="#FF6B6B"/>
-  <circle cx="136" cy="96" r="10" fill="#F7B267"/>
-  <circle cx="172" cy="96" r="10" fill="#6DD47E"/>
-  <text x="226" y="103" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="22">open-onedrive dashboard</text>
+  <rect width="1280" height="720" rx="40" fill="#07111B"/>
+  <rect x="20" y="20" width="1240" height="680" rx="32" fill="url(#surface)"/>
+  <circle cx="104" cy="92" r="10" fill="#FF7B7B"/>
+  <circle cx="140" cy="92" r="10" fill="#FFBE6B"/>
+  <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
+  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive residency workflow</text>
 
-  <g opacity="0.9">
-    <rect x="88" y="150" width="1104" height="132" rx="26" fill="#0C1830" stroke="#1E3357"/>
-    <text x="132" y="206" fill="white" font-family="Arial, sans-serif" font-size="42" font-weight="700">OneDrive mount control</text>
-    <text x="132" y="244" fill="#A4B4D0" font-family="Arial, sans-serif" font-size="22">Foreground rclone mount with logs, retry flow, and app-owned config.</text>
-    <rect x="982" y="182" width="156" height="48" rx="24" fill="#1F7A4D"/>
-    <text x="1020" y="212" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">Mounted</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">Mount once, decide file residency later.</text>
+  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper keeps pinned files on disk and sends others back to online-only mode.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="88" y="244" width="470" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dashboard</text>
+    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Mount control, cache size, pinned file count, and diagnostics stay together.</text>
+
+    <rect x="124" y="356" width="180" height="118" rx="22" fill="#12233A"/>
+    <rect x="124" y="356" width="180" height="8" rx="4" fill="#4B7CFF"/>
+    <text x="146" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Backend</text>
+    <text x="146" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">rclone</text>
+    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">mounted and supervised</text>
+
+    <rect x="322" y="356" width="200" height="118" rx="22" fill="#12233A"/>
+    <rect x="322" y="356" width="200" height="8" rx="4" fill="#26A269"/>
+    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Mount state</text>
+    <text x="344" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Mounted</text>
+    <text x="344" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">healthy session</text>
+
+    <rect x="124" y="494" width="180" height="118" rx="22" fill="#12233A"/>
+    <rect x="124" y="494" width="180" height="8" rx="4" fill="#7D67FF"/>
+    <text x="146" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Pinned files</text>
+    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">18</text>
+    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">kept on this device</text>
+
+    <rect x="322" y="494" width="200" height="118" rx="22" fill="#12233A"/>
+    <rect x="322" y="494" width="200" height="8" rx="4" fill="#89A64B"/>
+    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Cache</text>
+    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">2.4 GB</text>
+    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">wrapper-owned VFS data</text>
   </g>
 
-  <g>
-    <rect x="88" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
-    <rect x="88" y="320" width="248" height="8" rx="4" fill="#4F7CFF"/>
-    <text x="118" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Backend</text>
-    <text x="118" y="416" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">rclone</text>
-    <text x="118" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Version detected and supervised by daemon</text>
+  <g filter="url(#shadow)">
+    <rect x="592" y="244" width="264" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <text x="626" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dolphin</text>
+    <text x="626" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">The file explorer becomes the per-file control surface.</text>
+
+    <rect x="626" y="360" width="196" height="188" rx="24" fill="#13243B"/>
+    <text x="648" y="396" fill="#C9D8ED" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf</text>
+    <rect x="648" y="420" width="152" height="36" rx="18" fill="#1C3350"/>
+    <text x="668" y="443" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Keep on this device</text>
+    <rect x="648" y="468" width="152" height="36" rx="18" fill="#1C3350"/>
+    <text x="665" y="491" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Make online-only</text>
+    <rect x="648" y="516" width="122" height="36" rx="18" fill="#1C3350"/>
+    <text x="676" y="539" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Open folder</text>
+
+    <rect x="626" y="572" width="196" height="36" rx="18" fill="#153454"/>
+    <circle cx="650" cy="590" r="6" fill="#4FD18B"/>
+    <text x="666" y="596" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="16">Context menu drives file residency.</text>
   </g>
 
-  <g>
-    <rect x="352" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
-    <rect x="352" y="320" width="248" height="8" rx="4" fill="#1F7A4D"/>
-    <text x="382" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Mount state</text>
-    <text x="382" y="416" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">Healthy</text>
-    <text x="382" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Readable status plus recovery actions</text>
-  </g>
+  <g filter="url(#shadow)">
+    <rect x="888" y="244" width="304" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <text x="922" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recent activity</text>
+    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Every residency change is visible in the wrapper state and logs.</text>
 
-  <g>
-    <rect x="616" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
-    <rect x="616" y="320" width="248" height="8" rx="4" fill="#3A5A78"/>
-    <text x="646" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Mount path</text>
-    <text x="646" y="416" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">~/OneDrive</text>
-    <text x="646" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Empty directory managed by the wrapper</text>
-  </g>
+    <rect x="922" y="360" width="236" height="74" rx="20" fill="#12233A"/>
+    <text x="944" y="392" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398132] keep-local</text>
+    <text x="944" y="418" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf hydrated into cache</text>
 
-  <g>
-    <rect x="880" y="320" width="312" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
-    <rect x="880" y="320" width="312" height="8" rx="4" fill="#6F8B42"/>
-    <text x="910" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Recent log</text>
-    <text x="910" y="408" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">[1711398132] mount stderr:</text>
-    <text x="910" y="440" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">vfs cache warm and ready</text>
-  </g>
+    <rect x="922" y="448" width="236" height="74" rx="20" fill="#12233A"/>
+    <text x="944" y="480" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398190] online-only</text>
+    <text x="944" y="506" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Design/mockup.png evicted from cache</text>
 
-  <g>
-    <rect x="88" y="506" width="760" height="136" rx="24" fill="#0C1830" stroke="#1E3357"/>
-    <text x="118" y="554" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recovery stays visible</text>
-    <text x="118" y="590" fill="#A4B4D0" font-family="Arial, sans-serif" font-size="20">Logs, retry, disconnect, and mount path edits remain available even when the daemon reports an error.</text>
-  </g>
-
-  <g>
-    <rect x="876" y="506" width="316" height="136" rx="24" fill="#0C1830" stroke="#1E3357"/>
-    <rect x="908" y="544" width="120" height="40" rx="20" fill="#4F7CFF"/>
-    <text x="942" y="570" fill="white" font-family="Arial, sans-serif" font-size="18" font-weight="700">Mount</text>
-    <rect x="1042" y="544" width="120" height="40" rx="20" fill="#22324B"/>
-    <text x="1071" y="570" fill="#D7E0EE" font-family="Arial, sans-serif" font-size="18" font-weight="700">Retry</text>
+    <rect x="922" y="542" width="236" height="58" rx="20" fill="#14314D"/>
+    <text x="944" y="577" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="17">Logs and retry stay visible during recovery.</text>
   </g>
 
   <defs>
-    <linearGradient id="bg" x1="96" y1="58" x2="1190" y2="666" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#13233E"/>
-      <stop offset="1" stop-color="#0A1322"/>
+    <linearGradient id="surface" x1="70" y1="32" x2="1196" y2="688" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#11213A"/>
+      <stop offset="1" stop-color="#091421"/>
     </linearGradient>
+    <filter id="shadow" x="68" y="228" width="1144" height="428" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#02060C" flood-opacity="0.42"/>
+    </filter>
   </defs>
 </svg>

@@ -1,61 +1,74 @@
 <svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1280" height="720" rx="36" fill="#0B1320"/>
-  <rect x="28" y="28" width="1224" height="664" rx="28" fill="#101C2E"/>
-  <text x="88" y="118" fill="white" font-family="Arial, sans-serif" font-size="40" font-weight="700">How open-onedrive works</text>
-  <text x="88" y="156" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="22">Installer, daemon, UI, and rclone stay separated so the wrapper can recover cleanly.</text>
+  <rect width="1280" height="720" rx="40" fill="#09111A"/>
+  <rect x="24" y="24" width="1232" height="672" rx="32" fill="url(#panel)"/>
 
-  <g>
-    <rect x="88" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
-    <rect x="88" y="224" width="250" height="8" rx="4" fill="#4F7CFF"/>
-    <text x="120" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">1. Bootstrap</text>
-    <text x="120" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">curl | bash</text>
-    <text x="120" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Downloads the repo payload, installs rclone if needed, then runs xtask install.</text>
+  <text x="88" y="116" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="42" font-weight="700">How open-onedrive handles on-demand files</text>
+  <text x="88" y="152" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="22">rclone mount exposes the remote tree. The wrapper decides which cached files remain on the device.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="88" y="214" width="284" height="204" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <rect x="88" y="214" width="284" height="8" rx="4" fill="#4B7CFF"/>
+    <text x="122" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">1. Bootstrap</text>
+    <text x="122" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">curl | bash</text>
+    <text x="122" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Downloads the repo, installs rclone if needed, then runs a local source build.</text>
   </g>
 
-  <g>
-    <rect x="394" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
-    <rect x="394" y="224" width="250" height="8" rx="4" fill="#F7B267"/>
-    <text x="426" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">2. Daemon</text>
-    <text x="426" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">openonedrived</text>
-    <text x="426" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Owns D-Bus methods, runtime state, restart backoff, and app-specific config directories.</text>
+  <g filter="url(#shadow)">
+    <rect x="414" y="214" width="452" height="204" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <rect x="414" y="214" width="452" height="8" rx="4" fill="#22A565"/>
+    <text x="448" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">2. openonedrived</text>
+    <text x="448" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Mount supervision + residency policy</text>
+    <text x="448" y="348" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Keeps runtime state, D-Bus methods, retry flow, pinned file list, and cache pruning under XDG paths.</text>
+    <rect x="448" y="372" width="168" height="32" rx="16" fill="#16314D"/>
+    <text x="474" y="393" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="15">KeepLocal(paths)</text>
+    <rect x="632" y="372" width="188" height="32" rx="16" fill="#16314D"/>
+    <text x="653" y="393" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="15">MakeOnlineOnly(paths)</text>
   </g>
 
-  <g>
-    <rect x="700" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
-    <rect x="700" y="224" width="250" height="8" rx="4" fill="#1F7A4D"/>
-    <text x="732" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">3. Clients</text>
-    <text x="732" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">Qt shell and CLI</text>
-    <text x="732" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">The Kirigami UI and openonedrivectl talk to the daemon over the session bus.</text>
+  <g filter="url(#shadow)">
+    <rect x="908" y="214" width="284" height="204" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
+    <rect x="908" y="214" width="284" height="8" rx="4" fill="#F1B44C"/>
+    <text x="942" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">3. rclone mount</text>
+    <text x="942" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Remote tree + file bytes</text>
+    <text x="942" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Provides the visible OneDrive directory and fetches file contents into the app-owned VFS cache on demand.</text>
   </g>
 
-  <g>
-    <rect x="1006" y="224" width="186" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
-    <rect x="1006" y="224" width="186" height="8" rx="4" fill="#6F8B42"/>
-    <text x="1038" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">4. rclone</text>
-    <text x="1038" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">Auth and mount</text>
-    <text x="1038" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Microsoft login, mount execution, cache behavior.</text>
+  <g stroke="#496A91" stroke-width="6" stroke-linecap="round">
+    <path d="M372 316H394"/>
+    <path d="M866 316H888"/>
+  </g>
+  <g fill="#496A91">
+    <path d="M386 304L404 316L386 328V304Z"/>
+    <path d="M880 304L898 316L880 328V304Z"/>
   </g>
 
-  <g stroke="#48678D" stroke-width="6" stroke-linecap="round">
-    <path d="M338 314H382"/>
-    <path d="M644 314H688"/>
-    <path d="M950 314H992"/>
-  </g>
-  <g fill="#48678D">
-    <path d="M376 302L394 314L376 326V302Z"/>
-    <path d="M682 302L700 314L682 326V302Z"/>
-    <path d="M986 302L1004 314L986 326V302Z"/>
+  <g filter="url(#shadow)">
+    <rect x="88" y="470" width="540" height="168" rx="28" fill="#0C1828" stroke="#243B5B"/>
+    <text x="122" y="522" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Explorer-visible workflow</text>
+    <text x="122" y="560" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">Dolphin sees the mounted tree immediately.</text>
+    <text x="122" y="590" fill="#A8B8D3" font-family="Arial, sans-serif" font-size="18">Right-click files to keep them on disk or return them to online-only mode later.</text>
+
+    <rect x="392" y="526" width="198" height="34" rx="17" fill="#16314D"/>
+    <text x="422" y="548" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="16">Keep on this device</text>
+    <rect x="392" y="572" width="180" height="34" rx="17" fill="#16314D"/>
+    <text x="421" y="594" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="16">Make online-only</text>
   </g>
 
-  <g>
-    <rect x="88" y="466" width="1104" height="156" rx="28" fill="#0A1627" stroke="#22395F"/>
-    <text x="124" y="518" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">XDG-owned surface area</text>
-    <text x="124" y="554" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/config.toml</text>
-    <text x="124" y="584" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/rclone/rclone.conf</text>
-    <text x="124" y="614" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">state/open-onedrive/runtime-state.toml and cache/open-onedrive/rclone</text>
-
-    <rect x="792" y="504" width="364" height="84" rx="20" fill="#12233A"/>
-    <text x="826" y="538" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">Key property</text>
-    <text x="826" y="570" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">The wrapper never writes to ~/.config/rclone/rclone.conf.</text>
+  <g filter="url(#shadow)">
+    <rect x="660" y="470" width="532" height="168" rx="28" fill="#0C1828" stroke="#243B5B"/>
+    <text x="694" y="522" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">XDG-owned state</text>
+    <text x="694" y="560" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/rclone/rclone.conf</text>
+    <text x="694" y="590" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">state/open-onedrive/runtime-state.toml</text>
+    <text x="694" y="620" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">cache/open-onedrive/rclone/vfs</text>
   </g>
+
+  <defs>
+    <linearGradient id="panel" x1="84" y1="28" x2="1184" y2="676" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#11203B"/>
+      <stop offset="1" stop-color="#09131F"/>
+    </linearGradient>
+    <filter id="shadow" x="72" y="202" width="1136" height="452" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#02060C" flood-opacity="0.4"/>
+    </filter>
+  </defs>
 </svg>

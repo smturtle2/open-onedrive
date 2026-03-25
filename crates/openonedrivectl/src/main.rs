@@ -26,6 +26,12 @@ enum Command {
     Mount,
     Unmount,
     RetryMount,
+    KeepLocal {
+        paths: Vec<String>,
+    },
+    MakeOnlineOnly {
+        paths: Vec<String>,
+    },
     Logs {
         #[arg(default_value_t = 50)]
         limit: u32,
@@ -60,6 +66,14 @@ async fn main() -> Result<()> {
         }
         Command::RetryMount => {
             proxy.call::<_, _, ()>("RetryMount", &()).await?;
+        }
+        Command::KeepLocal { paths } => {
+            let count: u32 = proxy.call("KeepLocal", &(paths)).await?;
+            println!("kept {count} item(s) on this device");
+        }
+        Command::MakeOnlineOnly { paths } => {
+            let count: u32 = proxy.call("MakeOnlineOnly", &(paths)).await?;
+            println!("returned {count} item(s) to online-only mode");
         }
         Command::Logs { limit } => {
             let lines: Vec<String> = proxy.call("GetRecentLogLines", &(limit)).await?;

@@ -111,6 +111,11 @@ QString ShellBackend::cacheUsageLabel() const
     return m_cacheUsageLabel;
 }
 
+int ShellBackend::pinnedFileCount() const
+{
+    return m_pinnedFileCount;
+}
+
 QString ShellBackend::rcloneVersion() const
 {
     return m_rcloneVersion;
@@ -365,6 +370,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const QString rcloneVersion = object.value(QStringLiteral("rclone_version")).toString();
     const bool customClientIdConfigured = object.value(QStringLiteral("custom_client_id_configured")).toBool();
     const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
+    const int pinnedFileCount = object.value(QStringLiteral("pinned_file_count")).toInt();
 
     const bool wasDashboardReady = dashboardReady();
     const bool pendingBefore = mountPathPending();
@@ -400,6 +406,11 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     if (cacheLabel != m_cacheUsageLabel) {
         m_cacheUsageLabel = cacheLabel;
         emit cacheUsageLabelChanged();
+    }
+
+    if (pinnedFileCount != m_pinnedFileCount) {
+        m_pinnedFileCount = pinnedFileCount;
+        emit pinnedFileCountChanged();
     }
 
     if (rcloneVersion != m_rcloneVersion) {

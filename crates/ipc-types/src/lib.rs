@@ -19,6 +19,7 @@ pub struct StatusSnapshot {
     pub mount_state: MountState,
     pub mount_path: String,
     pub cache_usage_bytes: u64,
+    pub pinned_file_count: u32,
     pub rclone_version: String,
     pub last_error: String,
     pub last_log_line: String,

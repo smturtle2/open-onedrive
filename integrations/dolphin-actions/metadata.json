@@ -2,9 +2,8 @@
     "KPlugin": {
         "Id": "open_onedrive_fileitemaction",
         "Name": "open-onedrive Actions",
-        "Description": "Placeholder context menu actions for open-onedrive items",
+        "Description": "Device retention actions for open-onedrive mounted items",
         "Version": "0.1.0",
         "License": "MIT"
     }
 }
-

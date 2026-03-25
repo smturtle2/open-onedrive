@@ -12,6 +12,7 @@ pub struct RuntimeState {
     pub mount_state: MountState,
     pub last_error: String,
     pub last_log_line: String,
+    pub pinned_relative_paths: Vec<String>,
 }
 
 pub struct StateStore {
@@ -121,6 +122,7 @@ mod tests {
             mount_state: MountState::Mounted,
             last_error: "boom".into(),
             last_log_line: "mounted".into(),
+            pinned_relative_paths: vec!["dir/hello.txt".into()],
         };
 
         store.save(&snapshot).expect("save");

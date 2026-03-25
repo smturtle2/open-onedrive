@@ -46,6 +46,14 @@ impl OpenOneDriveBus {
         self.app.retry_mount().await.map_err(map_error)
     }
 
+    async fn keep_local(&self, paths: Vec<String>) -> zbus::fdo::Result<u32> {
+        self.app.keep_local(&paths).await.map_err(map_error)
+    }
+
+    async fn make_online_only(&self, paths: Vec<String>) -> zbus::fdo::Result<u32> {
+        self.app.make_online_only(&paths).await.map_err(map_error)
+    }
+
     async fn get_status(&self) -> zbus::fdo::Result<StatusSnapshot> {
         self.app.get_status().await.map_err(map_error)
     }

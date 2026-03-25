@@ -43,6 +43,14 @@ impl OpenOneDriveApp {
         self.backend.retry_mount().await
     }
 
+    pub async fn keep_local(self: &Arc<Self>, paths: &[String]) -> Result<u32> {
+        self.backend.keep_local(paths).await
+    }
+
+    pub async fn make_online_only(self: &Arc<Self>, paths: &[String]) -> Result<u32> {
+        self.backend.make_online_only(paths).await
+    }
+
     pub async fn get_status(&self) -> Result<StatusSnapshot> {
         self.backend.status().await
     }
