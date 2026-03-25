@@ -61,6 +61,7 @@ What the installer does:
 - installs `rclone` automatically if it is missing
 - builds the Rust workspace, Qt shell, and KDE integrations
 - installs the launcher, desktop entry, icon, and `openonedrived.service`
+- removes the temporary checkout after installation finishes
 
 Launch and verify:
 
@@ -68,14 +69,6 @@ Launch and verify:
 open-onedrive
 systemctl --user status openonedrived.service
 openonedrivectl status
-```
-
-Source-based local install still works:
-
-```bash
-git clone https://github.com/smturtle2/open-onedrive.git
-cd open-onedrive
-./scripts/install.sh
 ```
 
 ## Requirements

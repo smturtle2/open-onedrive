@@ -61,6 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 - `rclone`이 없으면 자동 설치 시도
 - Rust workspace, Qt UI, KDE integration 빌드
 - launcher, desktop entry, icon, `openonedrived.service` 설치
+- 설치가 끝나면 임시 checkout 삭제
 
 실행과 확인:
 
@@ -68,14 +69,6 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 open-onedrive
 systemctl --user status openonedrived.service
 openonedrivectl status
-```
-
-소스 기반 로컬 설치도 그대로 지원:
-
-```bash
-git clone https://github.com/smturtle2/open-onedrive.git
-cd open-onedrive
-./scripts/install.sh
 ```
 
 ## Requirements
