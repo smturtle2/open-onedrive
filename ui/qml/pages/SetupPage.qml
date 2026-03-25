@@ -7,6 +7,7 @@ import "../components"
 Kirigami.ScrollablePage {
     id: page
     title: shellBackend.remoteConfigured ? qsTr("Recover Filesystem") : qsTr("Set Up")
+    property var requestDisconnect: null
 
     ColumnLayout {
         width: Math.min(parent.width, 760)
@@ -32,8 +33,12 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            type: Kirigami.MessageType.Information
-            text: qsTr("open-onedrive keeps its own rclone profile under XDG config paths and leaves your default ~/.config/rclone/rclone.conf untouched.")
+            type: shellBackend.daemonReachable
+                  ? Kirigami.MessageType.Information
+                  : Kirigami.MessageType.Warning
+            text: shellBackend.daemonReachable
+                  ? qsTr("open-onedrive keeps its own rclone profile under XDG config paths and leaves your default ~/.config/rclone/rclone.conf untouched.")
+                  : qsTr("The daemon is not reachable yet. You can still review the root path and return to Logs while the service comes back.")
         }
 
         MountPathEditor {
@@ -68,7 +73,9 @@ Kirigami.ScrollablePage {
             Button {
                 text: shellBackend.remoteConfigured ? qsTr("Retry Filesystem") : qsTr("Connect OneDrive")
                 icon.name: shellBackend.remoteConfigured ? "view-refresh" : "network-connect"
-                enabled: shellBackend.mountPath.length > 0
+                enabled: shellBackend.remoteConfigured
+                         ? shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                         : shellBackend.daemonReachable && shellBackend.mountPath.length > 0
                 onClicked: shellBackend.remoteConfigured ? shellBackend.retryMount() : shellBackend.beginConnect()
             }
 
@@ -83,7 +90,7 @@ Kirigami.ScrollablePage {
                 text: qsTr("Disconnect")
                 icon.name: "network-disconnect"
                 enabled: shellBackend.remoteConfigured
-                onClicked: shellBackend.disconnectRemote()
+                onClicked: requestDisconnect ? requestDisconnect() : shellBackend.disconnectRemote()
             }
 
             Button {

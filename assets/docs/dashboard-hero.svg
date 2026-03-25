@@ -4,39 +4,39 @@
   <circle cx="104" cy="92" r="10" fill="#FF7B7B"/>
   <circle cx="140" cy="92" r="10" fill="#FFBE6B"/>
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
-  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive residency workflow</text>
+  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive overview surface</text>
 
-  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">Expose one folder, hydrate files only when needed.</text>
-  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">A custom FUSE layer exposes the OneDrive root. rclone lists remote state, downloads cold files, uploads edits, and leaves residency policy to the wrapper.</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">One local folder, explicit recovery, on-demand bytes.</text>
+  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">The overview shell keeps connection, filesystem, sync, queue, and diagnostics in one place while the custom FUSE layer exposes the visible OneDrive root.</text>
 
   <g filter="url(#shadow)">
     <rect x="88" y="244" width="470" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
-    <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dashboard</text>
-    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Filesystem control, sync state, backing usage, pinned count, conflict count, and diagnostics stay together.</text>
+    <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Overview</text>
+    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Setup, recovery, file controls, and runtime details stay on the same KDE surface.</text>
 
     <rect x="124" y="356" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="356" width="180" height="8" rx="4" fill="#4B7CFF"/>
-    <text x="146" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Backend</text>
-    <text x="146" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">rclone</text>
-    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">lsjson + copyto primitives</text>
+    <text x="146" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Connection</text>
+    <text x="146" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Ready</text>
+    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">app-owned remote is configured</text>
 
     <rect x="322" y="356" width="200" height="118" rx="22" fill="#12233A"/>
     <rect x="322" y="356" width="200" height="8" rx="4" fill="#26A269"/>
-    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Filesystem state</text>
+    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Filesystem</text>
     <text x="344" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Running</text>
     <text x="344" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">visible root is active</text>
 
     <rect x="124" y="494" width="180" height="118" rx="22" fill="#12233A"/>
     <rect x="124" y="494" width="180" height="8" rx="4" fill="#7D67FF"/>
     <text x="146" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Sync state</text>
-    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Scanning</text>
-    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">remote state refreshed</text>
+    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Paused</text>
+    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">reads work, writes stay queued</text>
 
     <rect x="322" y="494" width="200" height="118" rx="22" fill="#12233A"/>
     <rect x="322" y="494" width="200" height="8" rx="4" fill="#89A64B"/>
-    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Pinned files</text>
-    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">18</text>
-    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">kept on this device</text>
+    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Recovery</text>
+    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Logs + retry</text>
+    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">stay visible on the same page</text>
   </g>
 
   <g filter="url(#shadow)">
@@ -61,7 +61,7 @@
   <g filter="url(#shadow)">
     <rect x="888" y="244" width="304" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
     <text x="922" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recent activity + tray</text>
-    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Residency changes update the wrapper state, logs, and tray status.</text>
+    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Errors notify only when the window is backgrounded, while logs stay available in the shell.</text>
 
     <rect x="922" y="360" width="236" height="74" rx="20" fill="#12233A"/>
     <text x="944" y="392" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398132] rescan</text>

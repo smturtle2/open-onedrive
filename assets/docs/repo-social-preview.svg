@@ -1,0 +1,54 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" rx="36" fill="#07111B"/>
+  <rect x="20" y="20" width="1240" height="600" rx="28" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="68" y="68" width="576" height="504" rx="30" fill="#0E1B2C" stroke="#243B5B"/>
+    <text x="112" y="142" fill="#AFC1DD" font-family="Arial, sans-serif" font-size="24">open-onedrive</text>
+    <text x="112" y="214" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="54" font-weight="700">OneDrive as a normal KDE folder.</text>
+    <text x="112" y="284" fill="#C2D1E6" font-family="Arial, sans-serif" font-size="24">Custom FUSE root, rclone primitives, on-demand hydration, per-file residency controls, Dolphin overlays, tray, and recovery-aware logs.</text>
+
+    <rect x="112" y="344" width="198" height="42" rx="21" fill="#153454"/>
+    <text x="140" y="371" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="18">KDE Plasma 6 + Dolphin</text>
+
+    <rect x="112" y="404" width="170" height="42" rx="21" fill="#153454"/>
+    <text x="150" y="431" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="18">curl | bash</text>
+
+    <rect x="112" y="464" width="220" height="42" rx="21" fill="#153454"/>
+    <text x="145" y="491" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="18">Keep local / online-only</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="698" y="92" width="502" height="456" rx="32" fill="#0D1725" stroke="#243B5B"/>
+    <rect x="734" y="130" width="430" height="10" rx="5" fill="#1F7A4D"/>
+    <text x="734" y="182" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Overview</text>
+    <text x="734" y="214" fill="#AFC1DD" font-family="Arial, sans-serif" font-size="18">Connection, filesystem, sync, quick file controls, and runtime details stay together.</text>
+
+    <rect x="734" y="250" width="186" height="110" rx="22" fill="#12233A"/>
+    <rect x="734" y="250" width="186" height="8" rx="4" fill="#4B7CFF"/>
+    <text x="758" y="292" fill="#90A6C8" font-family="Arial, sans-serif" font-size="16">Connection</text>
+    <text x="758" y="330" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Ready</text>
+
+    <rect x="946" y="250" width="218" height="110" rx="22" fill="#12233A"/>
+    <rect x="946" y="250" width="218" height="8" rx="4" fill="#26A269"/>
+    <text x="970" y="292" fill="#90A6C8" font-family="Arial, sans-serif" font-size="16">Filesystem</text>
+    <text x="970" y="330" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Running</text>
+
+    <rect x="734" y="388" width="430" height="78" rx="20" fill="#12233A"/>
+    <text x="758" y="422" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">Quick file controls</text>
+    <text x="758" y="450" fill="#C2D1E6" font-family="Arial, sans-serif" font-size="16">Keep on device, make online-only, and retry transfer from the same surface.</text>
+
+    <rect x="734" y="490" width="430" height="26" rx="13" fill="#153454"/>
+    <text x="756" y="508" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="15">Errors notify in the tray only when the window is backgrounded.</text>
+  </g>
+
+  <defs>
+    <linearGradient id="bg" x1="84" y1="30" x2="1204" y2="610" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#11213A"/>
+      <stop offset="1" stop-color="#091421"/>
+    </linearGradient>
+    <filter id="shadow" x="52" y="56" width="1164" height="528" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#02060C" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+</svg>

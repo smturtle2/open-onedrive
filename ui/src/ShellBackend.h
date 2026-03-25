@@ -17,6 +17,8 @@ class ShellBackend : public QObject
     Q_OBJECT
     Q_PROPERTY(bool remoteConfigured READ remoteConfigured NOTIFY remoteConfiguredChanged)
     Q_PROPERTY(bool dashboardReady READ dashboardReady NOTIFY dashboardReadyChanged)
+    Q_PROPERTY(bool daemonReachable READ daemonReachable NOTIFY daemonReachableChanged)
+    Q_PROPERTY(QString appState READ appState NOTIFY appStateChanged)
     Q_PROPERTY(bool customClientIdConfigured READ customClientIdConfigured NOTIFY customClientIdConfiguredChanged)
     Q_PROPERTY(QString connectionState READ connectionState NOTIFY connectionStateChanged)
     Q_PROPERTY(QString connectionStateLabel READ connectionStateLabel NOTIFY connectionStateChanged)
@@ -52,6 +54,8 @@ public:
 
     bool remoteConfigured() const;
     bool dashboardReady() const;
+    bool daemonReachable() const;
+    QString appState() const;
     bool customClientIdConfigured() const;
     QString connectionState() const;
     QString connectionStateLabel() const;
@@ -84,6 +88,7 @@ public:
 
     void setMountPath(const QString &mountPath);
     void setMainWindow(QWindow *window);
+    void activateMainWindow();
 
     Q_INVOKABLE void beginConnect();
     Q_INVOKABLE void disconnectRemote();
@@ -106,6 +111,8 @@ public:
 Q_SIGNALS:
     void remoteConfiguredChanged();
     void dashboardReadyChanged();
+    void daemonReachableChanged();
+    void appStateChanged();
     void customClientIdConfiguredChanged();
     void connectionStateChanged();
     void mountPathChanged();
@@ -152,6 +159,7 @@ private:
     QString m_statusMessage = QStringLiteral("Choose a OneDrive root folder, then start the browser sign-in.");
     QString m_cacheUsageLabel = QStringLiteral("Backing store usage: pending daemon data");
     QString m_backingDirName = QStringLiteral(".openonedrive-cache");
+    bool m_daemonReachable = false;
     int m_pinnedFileCount = 0;
     int m_pendingDownloads = 0;
     int m_pendingUploads = 0;

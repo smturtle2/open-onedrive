@@ -18,6 +18,7 @@ if(TARGET OpenGL::OpenGL AND NOT TARGET OpenGL::GL)
     target_link_libraries(OpenGL::GL INTERFACE OpenGL::OpenGL)
 endif()
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus QuickDialogs2 Widgets)
+find_package(KF6DBusAddons REQUIRED)
 find_package(KF6Kirigami REQUIRED)
 find_package(KF6StatusNotifierItem REQUIRED)
 
@@ -40,6 +41,7 @@ target_link_libraries(open-onedrive-ui
         Qt6::DBus
         Qt6::QuickDialogs2
         Qt6::Widgets
+        KF6::DBusAddons
         KF6::Kirigami
         KF6::StatusNotifierItem
 )

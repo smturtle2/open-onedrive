@@ -378,44 +378,53 @@ impl RcloneBackend {
         }
         self.persist_runtime().await?;
         self.emit_event(BackendEvent::FilesystemStateChanged);
+        let result: Result<()> = async {
+            if !self.runtime.read().await.sync_paused {
+                self.rescan().await?;
+            } else {
+                self.refresh_virtual_snapshot()?;
+            }
 
-        if !self.runtime.read().await.sync_paused {
-            self.rescan().await?;
-        } else {
-            self.refresh_virtual_snapshot()?;
+            let root_handle = File::open(&config.root_path)
+                .with_context(|| format!("unable to open {}", config.root_path.display()))?;
+            *self.underlay_root.lock().expect("underlay root poisoned") = Some(root_handle);
+
+            let provider: Arc<dyn Provider> = Arc::new(FuseBridge {
+                backend: Arc::downgrade(self),
+            });
+            let session = OpenOneDriveFs::mount(self.snapshot.clone(), provider, &config.root_path)
+                .with_context(|| {
+                    format!(
+                        "unable to mount filesystem at {}",
+                        config.root_path.display()
+                    )
+                })?;
+            *self
+                .filesystem_session
+                .lock()
+                .expect("filesystem session poisoned") = Some(session);
+
+            {
+                let mut runtime = self.runtime.write().await;
+                runtime.filesystem_state = FilesystemState::Running;
+                runtime.connection_state = ConnectionState::Ready;
+                runtime.last_error.clear();
+            }
+            self.persist_runtime().await?;
+            self.emit_event(BackendEvent::FilesystemStateChanged);
+            self.emit_event(BackendEvent::ConnectionStateChanged);
+            if !self.runtime.read().await.sync_paused {
+                self.restart_rescan_loop().await;
+            }
+            Ok(())
+        }
+        .await;
+
+        if let Err(error) = &result {
+            self.fail_filesystem_start(error.to_string()).await?;
         }
 
-        let root_handle = File::open(&config.root_path)
-            .with_context(|| format!("unable to open {}", config.root_path.display()))?;
-        *self.underlay_root.lock().expect("underlay root poisoned") = Some(root_handle);
-
-        let provider: Arc<dyn Provider> = Arc::new(FuseBridge {
-            backend: Arc::downgrade(self),
-        });
-        let session = OpenOneDriveFs::mount(self.snapshot.clone(), provider, &config.root_path)
-            .with_context(|| {
-                format!(
-                    "unable to mount filesystem at {}",
-                    config.root_path.display()
-                )
-            })?;
-        *self
-            .filesystem_session
-            .lock()
-            .expect("filesystem session poisoned") = Some(session);
-
-        {
-            let mut runtime = self.runtime.write().await;
-            runtime.filesystem_state = FilesystemState::Running;
-            runtime.connection_state = ConnectionState::Ready;
-        }
-        self.persist_runtime().await?;
-        self.emit_event(BackendEvent::FilesystemStateChanged);
-        self.emit_event(BackendEvent::ConnectionStateChanged);
-        if !self.runtime.read().await.sync_paused {
-            self.restart_rescan_loop().await;
-        }
-        Ok(())
+        result
     }
 
     pub async fn mount(self: &Arc<Self>) -> Result<()> {
@@ -1010,6 +1019,31 @@ impl RcloneBackend {
         self.emit_event(BackendEvent::ErrorRaised(message));
     }
 
+    async fn fail_filesystem_start(&self, message: String) -> Result<()> {
+        self.filesystem_session
+            .lock()
+            .expect("filesystem session poisoned")
+            .take();
+        self.underlay_root
+            .lock()
+            .expect("underlay root poisoned")
+            .take();
+
+        {
+            let mut runtime = self.runtime.write().await;
+            apply_filesystem_start_failure(
+                &mut runtime,
+                message.clone(),
+            );
+        }
+        self.persist_runtime().await?;
+        self.append_log(message.clone());
+        self.emit_event(BackendEvent::FilesystemStateChanged);
+        self.emit_event(BackendEvent::ConnectionStateChanged);
+        self.emit_event(BackendEvent::ErrorRaised(message));
+        Ok(())
+    }
+
     fn append_log(&self, line: String) {
         let stamped_line = format!("{} {}", log_timestamp(), line);
         {
@@ -1213,6 +1247,36 @@ impl RcloneBackend {
         self.emit_path_state_refresh(&[relative_path.to_string()]);
     }
 
+    fn set_path_download_error_sync(&self, relative_path: &str, message: String) {
+        let mut states = self
+            .path_state_store
+            .get_many(&[relative_path.to_string()])
+            .unwrap_or_default();
+        let mut state = states.pop().unwrap_or_else(|| PathState {
+            path: relative_path.to_string(),
+            is_dir: false,
+            state: PathSyncState::Error,
+            size_bytes: 0,
+            pinned: false,
+            hydrated: false,
+            dirty: false,
+            error: String::new(),
+            last_sync_at: unix_timestamp(),
+            base_revision: String::new(),
+            conflict_reason: String::new(),
+        });
+        state.hydrated = false;
+        state.error = message.clone();
+        state.conflict_reason.clear();
+        state.dirty = false;
+        state.state = PathSyncState::Error;
+        state.last_sync_at = unix_timestamp();
+        let _ = self.path_state_store.upsert_many(&[state]);
+        let _ = self.rebuild_path_state_snapshot_sync();
+        self.append_log(message.clone());
+        self.emit_path_state_refresh(&[relative_path.to_string()]);
+    }
+
     fn hydrate_relative_path_sync(&self, relative_path: &str) -> Result<PathBuf> {
         let current = self
             .path_state_store
@@ -1239,37 +1303,53 @@ impl RcloneBackend {
         }
         let _ = futures_block_on(self.persist_runtime());
         self.emit_event(BackendEvent::SyncStateChanged);
+        let result = (|| -> Result<PathBuf> {
+            let config = self.config.blocking_read().clone();
+            let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+            let status = std::process::Command::new(binary)
+                .args(build_download_args(
+                    &config,
+                    &self.paths,
+                    relative_path,
+                    &local_path,
+                ))
+                .status()
+                .context("failed to execute rclone copyto")?;
+            if !status.success() {
+                bail!("rclone copyto failed for {relative_path}");
+            }
 
-        let config = self.config.blocking_read().clone();
-        let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-        let status = std::process::Command::new(binary)
-            .args(build_download_args(
-                &config,
-                &self.paths,
-                relative_path,
-                &local_path,
-            ))
-            .status()
-            .context("failed to execute rclone copyto")?;
+            let mut state = current;
+            state.hydrated = true;
+            state.error.clear();
+            state.state = derive_path_state(&state);
+            state.last_sync_at = unix_timestamp();
+            state.size_bytes = fs::metadata(&local_path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(state.size_bytes);
+            self.path_state_store.upsert_many(&[state])?;
+            Ok(local_path.clone())
+        })();
         {
             let mut runtime = self.runtime.blocking_write();
             runtime.pending_downloads = runtime.pending_downloads.saturating_sub(1);
+            if runtime.pending_downloads == 0 && runtime.pending_uploads == 0 {
+                runtime.sync_state = if runtime.sync_paused {
+                    SyncState::Paused
+                } else {
+                    SyncState::Idle
+                };
+            }
         }
         let _ = futures_block_on(self.persist_runtime());
         self.emit_event(BackendEvent::SyncStateChanged);
-        if !status.success() {
-            bail!("rclone copyto failed for {relative_path}");
+
+        if let Err(error) = &result {
+            let _ = remove_file_if_exists(&local_path);
+            self.set_path_download_error_sync(relative_path, error.to_string());
         }
 
-        let mut state = current;
-        state.hydrated = true;
-        state.state = derive_path_state(&state);
-        state.last_sync_at = unix_timestamp();
-        state.size_bytes = fs::metadata(&local_path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(state.size_bytes);
-        self.path_state_store.upsert_many(&[state])?;
-        Ok(local_path)
+        result
     }
 
     fn evict_relative_path_sync(&self, relative_path: &str) -> Result<()> {
@@ -1435,35 +1515,38 @@ impl RcloneBackend {
             .get_many(&[relative_path.to_string()])?
             .into_iter()
             .next();
-        let local_path = self.backing_file_path(relative_path)?;
-        if local_path.exists() {
-            if is_dir {
-                fs::remove_dir_all(&local_path)
-                    .with_context(|| format!("unable to remove {}", local_path.display()))?;
+        let remote_backed = state
+            .as_ref()
+            .is_some_and(|existing| !existing.base_revision.is_empty());
+
+        if remote_backed {
+            let config = self.config.blocking_read().clone();
+            let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+            let args = if is_dir {
+                build_rmdir_args(&config, &self.paths, relative_path)
             } else {
-                fs::remove_file(&local_path)
-                    .with_context(|| format!("unable to remove {}", local_path.display()))?;
+                build_deletefile_args(&config, &self.paths, relative_path)
+            };
+            let status = std::process::Command::new(binary)
+                .args(args)
+                .status()
+                .context("failed to execute rclone delete")?;
+            if !status.success() {
+                bail!("rclone delete failed for {}", relative_path);
             }
         }
 
-        if let Some(existing) = state {
-            if !existing.base_revision.is_empty() {
-                let config = self.config.blocking_read().clone();
-                let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-                let args = if is_dir {
-                    build_rmdir_args(&config, &self.paths, relative_path)
-                } else {
-                    build_deletefile_args(&config, &self.paths, relative_path)
-                };
-                let status = std::process::Command::new(binary)
-                    .args(args)
-                    .status()
-                    .context("failed to execute rclone delete")?;
-                if !status.success() {
-                    bail!("rclone delete failed for {}", relative_path);
-                }
+        let local_path = self.backing_file_path(relative_path)?;
+        let local_cleanup_error = if remote_backed {
+            match remove_local_backing_path(&local_path, is_dir) {
+                Ok(()) => None,
+                Err(error) if should_ignore_missing_local_path(&error) => None,
+                Err(error) => Some(error),
             }
-        }
+        } else {
+            remove_local_backing_path(&local_path, is_dir)?;
+            None
+        };
 
         let remaining = self
             .path_state_store
@@ -1474,6 +1557,11 @@ impl RcloneBackend {
             })
             .collect::<Vec<_>>();
         self.path_state_store.replace_all(&remaining)?;
+        if let Some(error) = local_cleanup_error {
+            self.append_log(format!(
+                "remote delete succeeded for {relative_path}, but local cleanup needs attention: {error:#}"
+            ));
+        }
         Ok(())
     }
 
@@ -1484,19 +1572,9 @@ impl RcloneBackend {
             .into_iter()
             .next()
             .with_context(|| format!("unknown path {}", from))?;
-        let source_local = self.backing_file_path(from)?;
-        let target_local = self.ensure_backing_parent(to)?;
-        if source_local.exists() {
-            fs::rename(&source_local, &target_local).with_context(|| {
-                format!(
-                    "unable to rename {} to {}",
-                    source_local.display(),
-                    target_local.display()
-                )
-            })?;
-        }
+        let remote_backed = !state.base_revision.is_empty();
 
-        if !state.base_revision.is_empty() {
+        if remote_backed {
             let config = self.config.blocking_read().clone();
             let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
             let status = std::process::Command::new(binary)
@@ -1508,6 +1586,19 @@ impl RcloneBackend {
             }
         }
 
+        let source_local = self.backing_file_path(from)?;
+        let target_local = self.ensure_backing_parent(to)?;
+        let local_rename_error = if remote_backed {
+            match rename_local_backing_path(&source_local, &target_local) {
+                Ok(()) => None,
+                Err(error) if should_ignore_missing_local_path(&error) => None,
+                Err(error) => Some(error),
+            }
+        } else {
+            rename_local_backing_path(&source_local, &target_local)?;
+            None
+        };
+
         let mut all = self.path_state_store.all()?;
         for item in &mut all {
             if item.path == from {
@@ -1517,6 +1608,11 @@ impl RcloneBackend {
             }
         }
         self.path_state_store.replace_all(&all)?;
+        if let Some(error) = local_rename_error {
+            self.append_log(format!(
+                "remote rename succeeded from {from} to {to}, but local cleanup needs attention: {error:#}"
+            ));
+        }
         Ok(())
     }
 
@@ -1824,6 +1920,34 @@ fn remove_empty_parent_dirs(path: &Path, stop_at: &Path) -> Result<()> {
     Ok(())
 }
 
+fn remove_local_backing_path(path: &Path, is_dir: bool) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if is_dir {
+        fs::remove_dir_all(path).with_context(|| format!("unable to remove {}", path.display()))?;
+    } else {
+        fs::remove_file(path).with_context(|| format!("unable to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn rename_local_backing_path(source: &Path, target: &Path) -> Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+
+    fs::rename(source, target)
+        .with_context(|| format!("unable to rename {} to {}", source.display(), target.display()))
+}
+
+fn should_ignore_missing_local_path(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<io::Error>()
+        .is_some_and(|inner| inner.kind() == io::ErrorKind::NotFound)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct RcloneListEntry {
     #[serde(rename = "Path", default)]
@@ -1834,10 +1958,28 @@ struct RcloneListEntry {
     size: u64,
     #[serde(rename = "ModTime", default)]
     mod_time: String,
+    #[serde(rename = "Hashes", default)]
+    hashes: BTreeMap<String, String>,
 }
 
 fn revision_for_entry(entry: &RcloneListEntry) -> String {
-    format!("{}:{}", entry.size, entry.mod_time)
+    let hash_fragment = entry
+        .hashes
+        .iter()
+        .find(|(_, value)| !value.is_empty())
+        .map(|(name, value)| format!(":{name}={value}"))
+        .unwrap_or_default();
+    format!("{}:{}{}", entry.size, entry.mod_time, hash_fragment)
+}
+
+fn apply_filesystem_start_failure(runtime: &mut Runtime, message: String) {
+    runtime.filesystem_state = FilesystemState::Error;
+    runtime.connection_state = if runtime.remote_configured {
+        ConnectionState::Ready
+    } else {
+        ConnectionState::Disconnected
+    };
+    runtime.last_error = message;
 }
 
 fn derive_path_state(state: &PathState) -> PathSyncState {
@@ -2047,6 +2189,7 @@ pub fn build_lsjson_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsStri
         OsString::from("--config"),
         paths.rclone_config_file.as_os_str().to_os_string(),
         OsString::from("--recursive"),
+        OsString::from("--hash"),
         OsString::from("--no-mimetype"),
     ]
 }
@@ -2063,6 +2206,7 @@ fn build_lsjson_single_args(
         paths.rclone_config_file.as_os_str().to_os_string(),
         OsString::from("--files-only"),
         OsString::from("--recursive"),
+        OsString::from("--hash"),
         OsString::from("--no-mimetype"),
     ]
 }
@@ -2219,13 +2363,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        affected_relative_paths, build_connect_args, build_deletefile_args, build_download_args,
-        build_lsjson_args, build_moveto_args, build_rmdir_args, build_upload_args,
-        derive_path_state, expand_retry_paths, expand_selected_paths,
-        normalize_path_state_snapshot, relative_path_for, resolve_rclone_binary_with_path,
+        RcloneListEntry, Runtime, affected_relative_paths, apply_filesystem_start_failure,
+        build_connect_args, build_deletefile_args, build_download_args, build_lsjson_args,
+        build_moveto_args, build_rmdir_args, build_upload_args, derive_path_state,
+        expand_retry_paths, expand_selected_paths, normalize_path_state_snapshot,
+        relative_path_for, resolve_rclone_binary_with_path, revision_for_entry,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
-    use openonedrive_ipc_types::{PathState, PathSyncState};
+    use openonedrive_ipc_types::{ConnectionState, FilesystemState, PathState, PathSyncState};
+    use openonedrive_state::RuntimeState;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -2279,10 +2426,48 @@ mod tests {
         let config = AppConfig::default();
         let local_path = dir.path().join("file.txt");
         assert!(!build_upload_args(&config, &paths, "Docs/file.txt", &local_path).is_empty());
-        assert!(!build_lsjson_args(&config, &paths).is_empty());
+        let lsjson = build_lsjson_args(&config, &paths)
+            .into_iter()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(!lsjson.is_empty());
+        assert!(lsjson.contains(&"--hash".to_string()));
         assert!(!build_deletefile_args(&config, &paths, "Docs/file.txt").is_empty());
         assert!(!build_rmdir_args(&config, &paths, "Docs").is_empty());
         assert!(!build_moveto_args(&config, &paths, "Docs/a.txt", "Docs/b.txt").is_empty());
+    }
+
+    #[test]
+    fn revision_tokens_prefer_hashes_when_available() {
+        let mut hashes = BTreeMap::new();
+        hashes.insert("QuickXorHash".into(), "abc123".into());
+        let entry = RcloneListEntry {
+            path: "Docs/file.txt".into(),
+            is_dir: false,
+            size: 42,
+            mod_time: "2026-03-25T00:00:00Z".into(),
+            hashes,
+        };
+        assert_eq!(
+            revision_for_entry(&entry),
+            "42:2026-03-25T00:00:00Z:QuickXorHash=abc123"
+        );
+    }
+
+    #[test]
+    fn filesystem_start_failure_sets_error_state() {
+        let mut runtime = Runtime::from_state(
+            RuntimeState::default(),
+            true,
+        );
+        runtime.filesystem_state = FilesystemState::Starting;
+        runtime.connection_state = ConnectionState::Ready;
+
+        apply_filesystem_start_failure(&mut runtime, "mount failed".into());
+
+        assert_eq!(runtime.filesystem_state, FilesystemState::Error);
+        assert_eq!(runtime.connection_state, ConnectionState::Ready);
+        assert_eq!(runtime.last_error, "mount failed");
     }
 
     #[test]

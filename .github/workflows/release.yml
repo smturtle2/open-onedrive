@@ -27,6 +27,7 @@ jobs:
             extra-cmake-modules \
             fuse3 \
             git \
+            kdbusaddons \
             ninja \
             pkgconf \
             qt6-base \
@@ -61,6 +62,51 @@ jobs:
           cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
           tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
           (cd dist && sha256sum open-onedrive-linux-x86_64.tar.gz > open-onedrive-linux-x86_64.tar.gz.sha256)
+
+      - name: Smoke test installer
+        run: |
+          smoke_home="$(mktemp -d)"
+          fake_bin="$(mktemp -d)"
+          bootstrap_bin="$(mktemp -d)"
+          cat > "${fake_bin}/sudo" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "-v" ]]; then
+            exit 0
+          fi
+          exec "$@"
+          EOF
+          cat > "${fake_bin}/pacman" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          for arg in "$@"; do
+            if [[ "$arg" == "rclone" ]]; then
+              cat > "${OPEN_ONEDRIVE_SMOKE_RCLONE}" <<'EOS'
+          #!/usr/bin/env bash
+          exit 0
+          EOS
+              chmod +x "${OPEN_ONEDRIVE_SMOKE_RCLONE}"
+              break
+            fi
+          done
+          exit 0
+          EOF
+          chmod +x "${fake_bin}/sudo" "${fake_bin}/pacman"
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          OPEN_ONEDRIVE_SMOKE_RCLONE="${bootstrap_bin}/rclone" \
+          OPEN_ONEDRIVE_RELEASE_BASE_URL="file://${PWD}/dist" \
+          OPEN_ONEDRIVE_SKIP_FUSE_CHECK=1 \
+          bash ./install.sh
+
+          test -x "${bootstrap_bin}/rclone"
+          test -x "${smoke_home}/.local/bin/open-onedrive"
+          test -x "${smoke_home}/.local/bin/openonedrived"
+          test -x "${smoke_home}/.local/bin/openonedrivectl"
+          test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+          test -f "${smoke_home}/.config/systemd/user/openonedrived.service"
+          test -f "${smoke_home}/.local/share/applications/io.github.smturtle2.OpenOneDrive.desktop"
+          test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so"
+          test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so"
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2

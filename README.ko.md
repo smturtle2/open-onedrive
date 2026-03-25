@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  KDE Plasma 6와 Dolphin을 위한 정식 안정판 0.1.2: 일반 로컬 폴더처럼 보이는 OneDrive 루트, 투명한 on-demand hydrate, 파일별 장치 유지 또는 online-only 전환, Dolphin 오버레이, tray/dashboard 셸을 제공하는 Linux OneDrive 클라이언트입니다.
+  <strong>KDE Plasma 6 + Dolphin</strong> 전용 정식 안정판 <strong>v1.0.0</strong>. 일반 로컬 폴더처럼 보이는 OneDrive 루트, on-demand hydrate, 파일별 장치 유지 / online-only 전환, tray, CLI, Dolphin 통합을 한 daemon 상태 위에 올린 Linux OneDrive 클라이언트입니다.
 </p>
 
 <p align="center">
@@ -21,57 +21,74 @@
   <a href="./README.md">English</a> ·
   <a href="#주요-특징">주요 특징</a> ·
   <a href="#빠른-시작">빠른 시작</a> ·
-  <a href="#설정">설정</a> ·
+  <a href="#지원-범위">지원 범위</a> ·
   <a href="#동작-방식">동작 방식</a> ·
   <a href="#개발">개발</a>
 </p>
 
 <p align="center">
-  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive dashboard preview" width="100%">
+  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
 </p>
 
-> `v0.1.2`는 Linux `KDE Plasma 6 + Dolphin`을 위한 첫 정식 지원 릴리스 라인입니다. 이번 릴리스는 시작 시 최신 상태 반영, 로컬 파일 작업 직후 상태 전파, 더 단순한 사용자 로컬 설치 흐름에 초점을 둡니다.
+> `v1.0.0`은 첫 안정판입니다. 범위는 의도적으로 좁게 유지합니다. 공식 지원은 `Linux x86_64`, `KDE Plasma 6`, `Dolphin`에 한정합니다.
 
 ## 개요
 
-`open-onedrive`는 Linux `KDE Plasma 6 + Dolphin`을 1차 타깃으로 하며, `~/OneDrive` 같은 일반 폴더에 커스텀 FUSE 파일시스템을 올려 OneDrive를 노출합니다.
-
-`rclone mount`는 사용하지 않습니다.
+`open-onedrive`는 `~/OneDrive` 같은 보이는 폴더를 제공하지만 `rclone mount`는 사용하지 않습니다.
 
 대신:
 
-- `rclone`은 원격 인증, 디렉터리 목록 조회, 파일 전송 primitive를 담당합니다
-- daemon은 on-demand 파일시스템, 전송 큐, path-state cache, conflict, tray 상태, Dolphin 통합을 직접 소유합니다
-- hydrate된 바이트는 기본적으로 `.openonedrive-cache`라는 숨김 backing 디렉터리에 저장됩니다
+- `rclone`은 인증, 원격 목록, 업로드/다운로드 primitive만 담당합니다
+- `openonedrived`는 커스텀 FUSE 파일시스템, on-demand hydrate, 업로드 큐, path-state cache, conflict, retry 흐름을 직접 소유합니다
+- Qt/Kirigami 셸, tray, CLI, Dolphin 플러그인은 모두 같은 daemon 상태를 읽습니다
 
-그래서 KDE 앱뿐 아니라 일반 Linux 앱도 평범한 로컬 경로처럼 사용할 수 있습니다.
+즉, 일반 Linux 앱에는 평범한 로컬 경로처럼 보이면서도, 파일별 residency 제어는 wrapper가 직접 책임집니다.
 
 ## 주요 특징
 
-- `~/OneDrive` 같은 보이는 루트 폴더를 제공하는 커스텀 FUSE 파일시스템
-- KDE 앱 전용이 아니라 일반 Linux 앱에서도 동작하는 on-demand hydrate
+- 커스텀 FUSE 위에 올린 보이는 OneDrive 루트 폴더
+- 일반 Linux 앱에서도 동작하는 on-demand hydrate
 - 파일별 `Keep on this device` / `Make online-only`
 - `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`
-- SQLite 기반 path-state cache와 업로드/다운로드 큐
-- Dolphin overlay icon과 context action
-- 파일시스템 상태, 전송 큐, conflict, 로그를 보여주는 Qt6/Kirigami dashboard
-- 안정판용 `curl ... | bash` 설치 경로와 GitHub Release artifact
+- Dolphin overlay와 context action을 통한 탐색기 안 residency 제어
+- tray + overview shell + logs page + CLI가 하나의 daemon 상태를 공유
+- release archive 검증과 smoke test가 포함된 `curl ... | bash` 설치 경로
+
+## 지원 범위
+
+| 영역 | 상태 |
+| --- | --- |
+| OS / 아키텍처 | Linux `x86_64` |
+| 데스크톱 | `KDE Plasma 6` |
+| 파일 관리자 통합 | `Dolphin` |
+| OneDrive backend | `rclone` auth/list/upload/download primitive |
+| 로컬 파일시스템 모델 | `openonedrived`가 소유하는 커스텀 FUSE mount |
+| 안정판 설치 경로 | `~/.local` 사용자 로컬 설치 |
+
+`v1.0.0`의 비목표:
+
+- `rclone mount`
+- GNOME / Nautilus 지원
+- KIO 전용 탐색
+- Windows Cloud Files 수준의 placeholder parity
+- custom Microsoft OAuth stack
+- 자동 cache eviction
 
 ## 빠른 시작
 
-최신 release 설치:
+최신 안정판 설치:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-특정 tag 설치:
+정확한 tag로 완전히 고정된 설치:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.2 bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.0/install.sh | bash
 ```
 
-소스 빌드 bootstrap 강제:
+release artifact 대신 source 설치:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
@@ -79,8 +96,8 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 
 release installer가 하는 일:
 
-- Linux `x86_64` release archive와 SHA256 파일 다운로드
-- archive 검증 후 압축 해제
+- Linux release archive와 SHA256 파일 다운로드
+- checksum 검증 후 압축 해제
 - 바이너리, KDE plugin, icon, launcher, user service를 홈 디렉터리에 설치
 - `rclone`이 없으면 자동 설치 시도
 - FUSE 3 런타임이 없으면 경고 출력
@@ -96,11 +113,13 @@ openonedrivectl status
 
 첫 실행 흐름:
 
-1. `~/OneDrive` 같은 루트 폴더를 고릅니다.
+1. `~/OneDrive` 같은 빈 루트 폴더를 고릅니다.
 2. `rclone`이 시작한 Microsoft 브라우저 로그인 과정을 끝냅니다.
-3. 필요하면 앱에서 파일시스템을 시작합니다.
-4. Dolphin, 터미널, LibreOffice, VS Code 같은 일반 앱에서 루트 폴더를 엽니다.
-5. dashboard, tray, CLI, Dolphin action으로 파일을 로컬 유지하거나 다시 online-only로 전환합니다.
+3. 필요하면 파일시스템을 시작합니다.
+4. Dolphin, 터미널, VS Code, LibreOffice 같은 일반 앱에서 루트 폴더를 엽니다.
+5. overview shell, tray, CLI, Dolphin action으로 파일을 로컬 유지하거나 다시 online-only로 되돌립니다.
+
+## 일상 제어
 
 CLI 예시:
 
@@ -113,19 +132,15 @@ openonedrivectl retry-transfer ~/OneDrive/Documents/report.pdf
 openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 ```
 
-## 요구 사항
+복구 표면:
 
-- Linux `x86_64`
-- `rclone`
-- `/dev/fuse`가 포함된 FUSE 3 런타임
-- 1차 타깃: `KDE Plasma 6` + `Dolphin`
-- release installer 기준 사용자 로컬 설치 경로: `~/.local`
-- source build 경로: Rust, CMake, Qt6 tooling, KF6 development package, fuse3 development package, C++ compiler
-- 이번 릴리스에서 지원하는 파일 관리자 통합: `Dolphin`
+- overview shell은 daemon이 불안정해도 setup, 제어, logs 진입점을 같이 유지합니다
+- tray 알림은 백그라운드의 actionable error 중심으로만 보냅니다
+- Dolphin overlay는 daemon signal로 cache를 무효화해 local-only 추정치에 의존하지 않습니다
 
 ## 설정
 
-앱은 보통 다음 XDG 경로를 사용합니다:
+앱은 XDG 경로 아래에 자체 상태를 저장합니다:
 
 - `~/.config/open-onedrive/config.toml`
 - `~/.config/open-onedrive/rclone/rclone.conf`
@@ -144,24 +159,15 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
-# cache_limit_gb 는 0.1.2에서 예약만 되어 있고 아직 강제되지 않습니다
+# cache_limit_gb 는 v1.0.0에서 예약만 되어 있고 아직 강제되지 않습니다
 ```
 
 보장 사항:
 
-- wrapper는 `~/.config/rclone/rclone.conf`를 절대 수정하지 않습니다
-- 보이는 루트 폴더는 일반 앱 접근용입니다
-- hydrate된 바이트는 숨김 backing 디렉터리에 저장됩니다
-- dashboard, tray, CLI, Dolphin 통합은 모두 같은 daemon 상태를 공유합니다
-- 숨김 backing 디렉터리는 구현 디테일이므로 직접 수정하면 안 됩니다
-- 이 안정판은 `KDE Plasma 6 + Dolphin`만 지원합니다
-
-## UI 메모
-
-- Setup 화면은 보이는 루트 폴더 선택과 브라우저 인증 시작에 집중합니다.
-- Dashboard는 connection 상태, filesystem 상태, sync 상태, pending transfer, conflict, backing storage 사용량, pinned file 수, 최근 진단 로그를 보여줍니다.
-- Tray는 filesystem, transfer, error 상태를 반영하고 창을 닫아도 앱을 상주시킵니다.
-- Dolphin overlay와 action은 숨김 backing 디렉터리를 무시하고 보이는 루트 경로만 다룹니다.
+- wrapper는 `~/.config/rclone/rclone.conf`를 수정하지 않습니다
+- hydrate된 바이트는 보이는 루트 안의 숨김 backing 디렉터리에 저장됩니다
+- daemon, tray, CLI, Dolphin 통합은 모두 같은 path-state view를 읽습니다
+- disconnect는 OneDrive 온라인 파일이 아니라 app-owned 로컬 상태와 backing byte만 지웁니다
 
 ## 동작 방식
 
@@ -169,48 +175,24 @@ backing_dir_name = ".openonedrive-cache"
   <img src="./assets/docs/flow-overview.svg" alt="open-onedrive architecture overview" width="100%">
 </p>
 
-- `openonedrived`가 runtime state, D-Bus method, 커스텀 FUSE 파일시스템, queue, conflict, residency policy를 소유합니다
-- 보이는 루트 폴더는 daemon이 직접 mount하며 `rclone mount`를 쓰지 않습니다
-- `rclone lsjson`이 원격 메타데이터를 갱신합니다
-- `rclone copyto`가 필요할 때 다운로드와 업로드를 수행합니다
-- 숨김 backing 디렉터리가 hydrate 또는 pinned 바이트를 유지합니다
-- Dolphin overlay plugin은 daemon 상태를 비동기로 조회하고 signal로 자체 캐시를 무효화합니다
+- `openonedrived`가 runtime state, D-Bus method, 커스텀 FUSE mount, queue, conflict, residency policy를 소유합니다
+- `rclone lsjson --hash`가 원격 메타데이터와 revision token을 새로 읽습니다
+- `rclone copyto`가 첫 open에서 cold file을 내려받고 dirty local write를 업로드합니다
+- 숨김 backing 디렉터리가 hydrate byte를 보관하고, visible root는 깔끔하게 유지됩니다
+- Dolphin overlay와 action은 visible root만 대상으로 하고 숨김 backing 디렉터리는 무시합니다
 
-## 프로젝트 구성
+## 왜 `rclone mount`가 아닌가?
 
-| Path | 역할 |
-| --- | --- |
-| `install.sh` | release 우선 `curl ... | bash` 진입점 |
-| `scripts/install.sh` | 개발자용 source install 경로 |
-| `crates/openonedrived` | daemon 진입점과 D-Bus 표면 |
-| `crates/openonedrivectl` | 제어, 상태, rescan, path-state 조회용 CLI |
-| `crates/rclone-backend` | 커스텀 FUSE sync engine, transfer queue, path-state cache, 로그, `rclone` primitive |
-| `crates/config` | XDG 경로, 앱 설정, 보이는 루트 경로 검증 |
-| `crates/ipc-types` | 공용 D-Bus 상태 및 path-state 타입 |
-| `crates/state` | 가벼운 runtime state 영속화 |
-| `ui/` | Qt6/Kirigami 셸과 KDE tray 통합 |
-| `integrations/` | Dolphin file action과 overlay plugin |
-| `xtask/` | 개발자용 source build 자동화 |
+이 프로젝트가 wrapper 쪽에서 직접 책임져야 하는 동작이 있기 때문입니다:
 
-## 비목표
-
-- `rclone mount`
-- KIO 전용 탐색 모델
-- Windows Cloud Files 수준의 placeholder parity
-- 이번 릴리스에서 GNOME/Nautilus 지원
-- custom Microsoft OAuth stack
-- `v0.1.2`에서 자동 cache eviction
-
-## 문제 해결
-
-- `D-Bus`에서 daemon에 연결되지 않음: `open-onedrive`를 한 번 실행하거나 `systemctl --user status openonedrived.service`를 확인하세요.
-- FUSE 시작 실패: `/dev/fuse`가 존재하는지, `fusermount3` 또는 `mount.fuse3`가 `PATH`에 있는지 확인하세요.
-- 설치 후 Dolphin action 또는 overlay가 보이지 않음: `kbuildsycoca6`를 실행하고 Dolphin을 다시 시작한 뒤, plugin이 `~/.local/lib/qt6/plugins/kf6/` 아래에 설치됐는지 확인하세요.
-- 동기화 일시정지 상태: on-demand 읽기는 계속 동작하지만, 로컬에서 수정한 내용은 dashboard, tray, CLI에서 동기화를 다시 시작할 때까지 업로드 대기열에 남습니다.
+- 파일별 residency 상태
+- UI, tray, CLI, Dolphin이 공유하는 daemon 상태
+- visible root 중심의 local retry / conflict 처리
+- 일반 Linux 앱이 특수 브라우징 표면이 아닌 평범한 폴더 경로로 접근하는 모델
 
 ## 개발
 
-일상적인 repo 명령:
+일상 명령:
 
 ```bash
 ./scripts/dev.sh bootstrap
@@ -219,7 +201,7 @@ backing_dir_name = ".openonedrive-cache"
 ./scripts/dev.sh test
 ```
 
-workspace 작업:
+워크스페이스 작업:
 
 ```bash
 cargo run -p xtask -- check
@@ -228,6 +210,13 @@ cargo run -p xtask -- build-integrations
 cargo run -p xtask -- install
 ```
 
-## 라이선스
+## 트러블슈팅
 
-MIT. 자세한 내용은 [LICENSE](./LICENSE).
+- `Daemon not reachable on D-Bus`: `open-onedrive`를 한 번 실행하거나 `systemctl --user status openonedrived.service`를 확인합니다.
+- 파일시스템 시작 실패: `/dev/fuse` 존재 여부와 `fusermount3` 또는 `mount.fuse3`가 `PATH`에 있는지 확인합니다.
+- Dolphin action/overlay가 보이지 않음: `kbuildsycoca6` 실행 후 Dolphin을 재시작하고, `~/.local/lib/qt6/plugins/kf6/` 아래 plugin이 설치되었는지 확인합니다.
+- sync가 paused 또는 degraded 상태: on-demand read는 계속 동작하지만 dirty write는 resume 전까지 큐에 남습니다.
+
+## License
+
+MIT. 자세한 내용은 [LICENSE](./LICENSE)를 참고하세요.

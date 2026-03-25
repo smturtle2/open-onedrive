@@ -7,6 +7,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDBusConnection>
+#include <QDBusError>
 #include <QDBusInterface>
 #include <QDBusReply>
 #include <QDateTime>
@@ -40,6 +41,20 @@ QString defaultMountPath()
 {
     return QDir::cleanPath(QStringLiteral("%1/OneDrive").arg(qEnvironmentVariable("HOME")));
 }
+
+bool isDaemonUnavailableError(const QDBusError &error)
+{
+    switch (error.type()) {
+    case QDBusError::ServiceUnknown:
+    case QDBusError::NoReply:
+    case QDBusError::Disconnected:
+    case QDBusError::UnknownObject:
+    case QDBusError::UnknownInterface:
+        return true;
+    default:
+        return false;
+    }
+}
 }
 
 ShellBackend::ShellBackend(QObject *parent)
@@ -60,7 +75,41 @@ bool ShellBackend::remoteConfigured() const
 
 bool ShellBackend::dashboardReady() const
 {
-    return m_remoteConfigured;
+    return m_daemonReachable && m_remoteConfigured;
+}
+
+bool ShellBackend::daemonReachable() const
+{
+    return m_daemonReachable;
+}
+
+QString ShellBackend::appState() const
+{
+    if (!m_daemonReachable) {
+        return QStringLiteral("daemon-unavailable");
+    }
+    if (!m_remoteConfigured) {
+        return QStringLiteral("welcome");
+    }
+    if (m_connectionState == QStringLiteral("Connecting")) {
+        return QStringLiteral("connecting");
+    }
+    if (m_mountState == QStringLiteral("Starting")
+        || m_syncState == QStringLiteral("Scanning")
+        || m_syncState == QStringLiteral("Syncing")) {
+        return QStringLiteral("connecting");
+    }
+    if (m_connectionState == QStringLiteral("Error")
+        || m_mountState == QStringLiteral("Error")
+        || m_mountState == QStringLiteral("Degraded")
+        || m_syncState == QStringLiteral("Error")
+        || m_conflictCount > 0) {
+        return QStringLiteral("recovery");
+    }
+    if (m_mountState == QStringLiteral("Running")) {
+        return QStringLiteral("running");
+    }
+    return QStringLiteral("ready");
 }
 
 bool ShellBackend::customClientIdConfigured() const
@@ -221,7 +270,8 @@ QStringList ShellBackend::recentLogs() const
 
 bool ShellBackend::canMount() const
 {
-    return m_remoteConfigured
+    return m_daemonReachable
+           && m_remoteConfigured
            && m_connectionState == QStringLiteral("Ready")
            && m_mountState != QStringLiteral("Running")
            && m_mountState != QStringLiteral("Starting");
@@ -229,12 +279,15 @@ bool ShellBackend::canMount() const
 
 bool ShellBackend::canUnmount() const
 {
-    return m_mountState == QStringLiteral("Running") || m_mountState == QStringLiteral("Starting");
+    return m_daemonReachable
+           && (m_mountState == QStringLiteral("Running")
+               || m_mountState == QStringLiteral("Starting"));
 }
 
 bool ShellBackend::canRetry() const
 {
-    return m_remoteConfigured
+    return m_daemonReachable
+           && m_remoteConfigured
            && (m_mountState == QStringLiteral("Error")
                || m_mountState == QStringLiteral("Stopped")
                || m_connectionState == QStringLiteral("Error"));
@@ -242,12 +295,12 @@ bool ShellBackend::canRetry() const
 
 bool ShellBackend::canPauseSync() const
 {
-    return m_remoteConfigured && m_syncState != QStringLiteral("Paused");
+    return m_daemonReachable && m_remoteConfigured && m_syncState != QStringLiteral("Paused");
 }
 
 bool ShellBackend::canResumeSync() const
 {
-    return m_remoteConfigured && m_syncState == QStringLiteral("Paused");
+    return m_daemonReachable && m_remoteConfigured && m_syncState == QStringLiteral("Paused");
 }
 
 void ShellBackend::setMountPath(const QString &mountPath)
@@ -282,6 +335,17 @@ void ShellBackend::setMainWindow(QWindow *window)
     if (m_tray != nullptr) {
         m_tray->setAssociatedWindow(m_mainWindow);
     }
+    updateTray();
+}
+
+void ShellBackend::activateMainWindow()
+{
+    if (m_mainWindow == nullptr) {
+        return;
+    }
+    m_mainWindow->show();
+    m_mainWindow->raise();
+    m_mainWindow->requestActivate();
     updateTray();
 }
 
@@ -521,16 +585,55 @@ void ShellBackend::copyRecentLogsToClipboard()
 
 void ShellBackend::refreshStatus()
 {
+    const QString previousAppState = appState();
+    const bool wasDashboardReady = dashboardReady();
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(tr("Daemon not reachable on D-Bus. UI is waiting for the background service."));
+        if (m_daemonReachable) {
+            m_daemonReachable = false;
+            emit daemonReachableChanged();
+            emit mountStateChanged();
+            emit syncStateChanged();
+        }
+        updateStatusMessage(
+            tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
+        if (previousAppState != appState()) {
+            emit appStateChanged();
+        }
+        if (wasDashboardReady != dashboardReady()) {
+            emit dashboardReadyChanged();
+        }
         updateTray();
         return;
     }
 
     const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
     if (!reply.isValid()) {
-        updateStatusMessage(tr("Status refresh failed: %1").arg(reply.error().message()));
+        const QDBusError error = reply.error();
+        if (isDaemonUnavailableError(error)) {
+            if (m_daemonReachable) {
+                m_daemonReachable = false;
+                emit daemonReachableChanged();
+                emit mountStateChanged();
+                emit syncStateChanged();
+            }
+            updateStatusMessage(
+                tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
+        } else {
+            if (!m_daemonReachable) {
+                m_daemonReachable = true;
+                emit daemonReachableChanged();
+                emit mountStateChanged();
+                emit syncStateChanged();
+            }
+            updateStatusMessage(tr("Daemon status refresh failed: %1").arg(error.message()));
+        }
+        if (previousAppState != appState()) {
+            emit appStateChanged();
+        }
+        if (wasDashboardReady != dashboardReady()) {
+            emit dashboardReadyChanged();
+        }
         updateTray();
         return;
     }
@@ -558,10 +661,19 @@ void ShellBackend::refreshLogs()
 
 void ShellBackend::applyStatusJson(const QString &jsonPayload)
 {
+    const QString previousAppState = appState();
+    const bool wasDashboardReady = dashboardReady();
     const QJsonDocument document = QJsonDocument::fromJson(jsonPayload.toUtf8());
     if (!document.isObject()) {
         updateStatusMessage(tr("Daemon returned malformed status JSON."));
         return;
+    }
+
+    if (!m_daemonReachable) {
+        m_daemonReachable = true;
+        emit daemonReachableChanged();
+        emit mountStateChanged();
+        emit syncStateChanged();
     }
 
     const QJsonObject object = document.object();
@@ -584,8 +696,6 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const qint64 lastSyncAt = object.value(QStringLiteral("last_sync_at")).toInteger();
     const int queueDepth = pendingDownloads + pendingUploads;
     const int activeTransferCount = pendingDownloads + pendingUploads;
-
-    const bool wasDashboardReady = dashboardReady();
     const bool pendingBefore = mountPathPending();
     const bool preserveDraftPath = pendingBefore;
 
@@ -696,6 +806,9 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
 
     if (wasDashboardReady != dashboardReady()) {
         emit dashboardReadyChanged();
+    }
+    if (previousAppState != appState()) {
+        emit appStateChanged();
     }
 
     if (!lastError.isEmpty()) {
@@ -857,12 +970,7 @@ void ShellBackend::initializeTray()
     m_quitAction = m_trayMenu->addAction(tr("Quit"));
 
     connect(m_showWindowAction, &QAction::triggered, this, [this]() {
-        if (m_mainWindow == nullptr) {
-            return;
-        }
-        m_mainWindow->show();
-        m_mainWindow->raise();
-        m_mainWindow->requestActivate();
+        activateMainWindow();
     });
     connect(m_mountAction, &QAction::triggered, this, &ShellBackend::mountRemote);
     connect(m_unmountAction, &QAction::triggered, this, &ShellBackend::unmountRemote);
@@ -880,9 +988,7 @@ void ShellBackend::initializeTray()
         if (m_mainWindow->isVisible()) {
             m_mainWindow->hide();
         } else {
-            m_mainWindow->show();
-            m_mainWindow->raise();
-            m_mainWindow->requestActivate();
+            activateMainWindow();
         }
         updateTray();
     });
@@ -946,13 +1052,16 @@ void ShellBackend::updateTray()
                                     : tr("Open Dashboard"));
     m_mountAction->setEnabled(canMount());
     m_unmountAction->setEnabled(canUnmount());
-    m_rescanAction->setEnabled(m_remoteConfigured);
+    m_rescanAction->setEnabled(m_daemonReachable && m_remoteConfigured);
     m_pauseSyncAction->setEnabled(canPauseSync());
     m_resumeSyncAction->setEnabled(canResumeSync());
 
     auto trayStatus = KStatusNotifierItem::Active;
     QString overlayIcon;
-    if (m_mountState == QStringLiteral("Error")
+    if (!m_daemonReachable) {
+        trayStatus = KStatusNotifierItem::NeedsAttention;
+        overlayIcon = QStringLiteral("network-disconnect");
+    } else if (m_mountState == QStringLiteral("Error")
         || m_connectionState == QStringLiteral("Error")
         || m_syncState == QStringLiteral("Error")
         || m_conflictCount > 0) {
@@ -1039,7 +1148,11 @@ void ShellBackend::onLogsUpdated()
 
 void ShellBackend::onErrorRaised(const QString &message)
 {
-    if (m_tray != nullptr) {
+    const bool shouldNotify = m_tray != nullptr
+                              && (m_mainWindow == nullptr
+                                  || !m_mainWindow->isVisible()
+                                  || !m_mainWindow->isActive());
+    if (shouldNotify) {
         m_tray->showMessage(QStringLiteral("open-onedrive"),
                             message,
                             QStringLiteral("dialog-error"),

@@ -25,6 +25,7 @@ jobs:
             extra-cmake-modules \
             fuse3 \
             git \
+            kdbusaddons \
             ninja \
             pkgconf \
             qt6-base \

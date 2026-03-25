@@ -1,5 +1,7 @@
 #include "ShellBackend.h"
 
+#include <KDBusService>
+
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -12,6 +14,7 @@ int main(int argc, char *argv[])
     app.setOrganizationDomain(QStringLiteral("github.io"));
     app.setApplicationName(QStringLiteral("open-onedrive"));
 
+    KDBusService service(KDBusService::Unique);
     QQmlApplicationEngine engine;
     ShellBackend backend;
     engine.rootContext()->setContextProperty(QStringLiteral("shellBackend"), &backend);
@@ -27,6 +30,10 @@ int main(int argc, char *argv[])
     if (!engine.rootObjects().isEmpty()) {
         backend.setMainWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
     }
+    QObject::connect(&service,
+                     &KDBusService::activateRequested,
+                     &backend,
+                     [&backend](const QStringList &, const QString &) { backend.activateMainWindow(); });
 
     return app.exec();
 }

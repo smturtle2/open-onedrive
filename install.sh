@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.0.0}"
+
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -25,22 +28,19 @@ sha256_check() {
   local archive_file="$2"
   local expected
   expected="$(awk '{print $1}' < "$checksum_file")"
+
   if have_cmd sha256sum; then
     local actual
     actual="$(sha256sum "$archive_file" | awk '{print $1}')"
-    if [[ "$expected" == "$actual" ]]; then
-      return
-    fi
+    [[ "$expected" == "$actual" ]] && return
     echo "Checksum verification failed for ${archive_file}." >&2
     exit 1
-    return
   fi
+
   if have_cmd shasum; then
     local actual
     actual="$(shasum -a 256 "$archive_file" | cut -d' ' -f1)"
-    if [[ "$expected" == "$actual" ]]; then
-      return
-    fi
+    [[ "$expected" == "$actual" ]] && return
     echo "Checksum verification failed for ${archive_file}." >&2
     exit 1
   fi
@@ -49,23 +49,130 @@ sha256_check() {
   exit 1
 }
 
-install_rclone_helper() {
+is_dry_run() {
+  [[ "${OPEN_ONEDRIVE_DRY_RUN:-0}" == "1" ]]
+}
+
+run_cmd() {
+  if is_dry_run; then
+    printf '+'
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    run_cmd "$@"
+  elif have_cmd sudo; then
+    run_cmd sudo "$@"
+  else
+    echo "sudo is required to install rclone automatically." >&2
+    return 1
+  fi
+}
+
+install_with_apt() {
+  run_privileged apt-get update
+  run_privileged apt-get install -y rclone
+}
+
+install_with_dnf() {
+  run_privileged dnf install -y rclone
+}
+
+install_with_pacman() {
+  run_privileged pacman -Sy --noconfirm rclone
+}
+
+install_with_zypper() {
+  run_privileged zypper --non-interactive install rclone
+}
+
+install_with_apk() {
+  run_privileged apk add rclone
+}
+
+install_with_official_script() {
+  local downloader=()
+  if have_cmd curl; then
+    downloader=(curl -fsSL https://rclone.org/install.sh)
+  elif have_cmd wget; then
+    downloader=(wget -qO- https://rclone.org/install.sh)
+  else
+    echo "curl or wget is required for the official rclone installer fallback." >&2
+    return 1
+  fi
+
+  if is_dry_run; then
+    printf '+'
+    printf ' %q' "${downloader[@]}"
+    printf ' |'
+    if [[ "$(id -u)" -eq 0 ]]; then
+      printf ' %q' bash
+    else
+      printf ' %q %q' sudo bash
+    fi
+    printf '\n'
+    return 0
+  fi
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "${downloader[@]}" | bash
+  else
+    sudo -v
+    "${downloader[@]}" | sudo bash
+  fi
+}
+
+attempt_install() {
+  local label="$1"
+  shift
+
+  echo "rclone not found. Trying ${label}..."
+  if "$@"; then
+    return 0
+  fi
+
+  echo "Failed to install rclone with ${label}." >&2
+  return 1
+}
+
+ensure_rclone_installed() {
   if have_cmd rclone; then
     return
   fi
 
-  local repo="$1"
-  local ref="$2"
-  local temp_dir="$3"
-  local helper="$temp_dir/install-rclone.sh"
+  if have_cmd apt-get && attempt_install "apt-get" install_with_apt; then
+    is_dry_run || have_cmd rclone && return
+  fi
+  if have_cmd dnf && attempt_install "dnf" install_with_dnf; then
+    is_dry_run || have_cmd rclone && return
+  fi
+  if have_cmd pacman && attempt_install "pacman" install_with_pacman; then
+    is_dry_run || have_cmd rclone && return
+  fi
+  if have_cmd zypper && attempt_install "zypper" install_with_zypper; then
+    is_dry_run || have_cmd rclone && return
+  fi
+  if have_cmd apk && attempt_install "apk" install_with_apk; then
+    is_dry_run || have_cmd rclone && return
+  fi
+  if attempt_install "the official rclone installer" install_with_official_script; then
+    is_dry_run || have_cmd rclone && return
+  fi
 
-  echo "rclone not found. Fetching the helper installer..."
-  fetch_url "https://raw.githubusercontent.com/${repo}/${ref}/scripts/install-rclone.sh" > "$helper"
-  chmod +x "$helper"
-  bash "$helper"
+  echo "Unable to install rclone automatically." >&2
+  exit 1
 }
 
 check_fuse_runtime() {
+  if [[ "${OPEN_ONEDRIVE_SKIP_FUSE_CHECK:-0}" == "1" ]]; then
+    return
+  fi
+
   if [[ ! -e /dev/fuse ]]; then
     echo "Warning: /dev/fuse is not available. open-onedrive needs FUSE to expose the OneDrive folder." >&2
   fi
@@ -75,6 +182,28 @@ check_fuse_runtime() {
   fi
 
   echo "Warning: fuse3 helpers were not found in PATH. Install fuse3 if the filesystem fails to start." >&2
+}
+
+release_base_url() {
+  local repo="$1"
+  local ref="$2"
+
+  if [[ -n "${OPEN_ONEDRIVE_RELEASE_BASE_URL:-}" ]]; then
+    printf '%s\n' "${OPEN_ONEDRIVE_RELEASE_BASE_URL}"
+    return
+  fi
+
+  local effective_ref="$ref"
+  if [[ -z "$effective_ref" ]]; then
+    effective_ref="$OPEN_ONEDRIVE_STABLE_REF"
+  fi
+
+  if [[ -n "$effective_ref" ]]; then
+    printf 'https://github.com/%s/releases/download/%s\n' "$repo" "$effective_ref"
+    return
+  fi
+
+  printf 'https://github.com/%s/releases/latest/download\n' "$repo"
 }
 
 write_launcher() {
@@ -195,11 +324,7 @@ install_from_release() {
   local asset_name="open-onedrive-linux-x86_64.tar.gz"
   local checksum_name="${asset_name}.sha256"
   local base_url
-  if [[ -n "$ref" ]]; then
-    base_url="https://github.com/${repo}/releases/download/${ref}"
-  else
-    base_url="https://github.com/${repo}/releases/latest/download"
-  fi
+  base_url="$(release_base_url "$repo" "$ref")"
 
   local archive_file="$temp_dir/$asset_name"
   local checksum_file="$temp_dir/$checksum_name"
@@ -217,7 +342,7 @@ install_from_release() {
     exit 1
   fi
 
-  install_rclone_helper "$repo" "${ref:-main}" "$temp_dir"
+  ensure_rclone_installed
   check_fuse_runtime
   install_release_tree "$extracted_root"
   echo "Installed open-onedrive into \$HOME/.local"
@@ -253,19 +378,18 @@ main() {
     mode="source"
   fi
 
-  local temp_dir
-  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/open-onedrive-install.XXXXXX")"
-  trap 'rm -rf "$temp_dir"' EXIT
+  OPEN_ONEDRIVE_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/open-onedrive-install.XXXXXX")"
+  trap 'rm -rf "${OPEN_ONEDRIVE_TMPDIR:-}"' EXIT
 
   case "$mode" in
     release)
-      install_from_release "$repo" "$ref" "$temp_dir"
+      install_from_release "$repo" "$ref" "$OPEN_ONEDRIVE_TMPDIR"
       ;;
     source)
-      install_from_source "$repo" "$ref" "$temp_dir" "$@"
+      install_from_source "$repo" "$ref" "$OPEN_ONEDRIVE_TMPDIR" "$@"
       ;;
     *)
-      echo "Unsupported OPEN_ONEDRIVE_INSTALL_MODE: ${mode}" >&2
+      echo "Unknown OPEN_ONEDRIVE_INSTALL_MODE: ${mode}" >&2
       exit 1
       ;;
   esac
