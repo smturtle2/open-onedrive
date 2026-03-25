@@ -9,6 +9,8 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    container:
+      image: archlinux:latest
 
     steps:
       - name: Checkout
@@ -16,21 +18,21 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            base-devel \
             cmake \
+            extra-cmake-modules \
             fuse3 \
-            libfuse3-dev \
-            ninja-build \
-            pkg-config \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qt6-tools-dev-tools \
-            libkf6coreaddons-dev \
-            libkf6kirigami-dev \
-            libkf6kio-dev \
-            libkf6statusnotifieritem-dev
+            git \
+            ninja \
+            pkgconf \
+            qt6-base \
+            qt6-declarative \
+            qt6-tools \
+            kirigami \
+            kio \
+            kstatusnotifieritem
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
