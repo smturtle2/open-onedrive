@@ -67,6 +67,10 @@ test_all() {
   cargo test --workspace
 }
 
+install_app() {
+  "$ROOT_DIR/scripts/install.sh"
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/dev.sh <command>
@@ -78,6 +82,7 @@ Commands:
   stop        Stop the background daemon
   status      Query daemon status over D-Bus
   test        Run cargo test --workspace
+  install     Build, install, register desktop app, enable user service
 EOF
 }
 
@@ -99,6 +104,9 @@ case "${1:-}" in
     ;;
   test)
     test_all
+    ;;
+  install)
+    install_app
     ;;
   *)
     usage

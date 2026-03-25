@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=open-onedrive
+Comment=OneDrive desktop client for Linux
+Exec=open-onedrive
+Icon=io.github.smturtle2.OpenOneDrive
+Terminal=false
+Categories=Network;Office;Utility;
+StartupNotify=true

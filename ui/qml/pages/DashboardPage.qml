@@ -45,7 +45,7 @@ Kirigami.ScrollablePage {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 720 ? 3 : 1
+            columns: width > 720 ? 4 : 1
             columnSpacing: Kirigami.Units.largeSpacing
             rowSpacing: Kirigami.Units.largeSpacing
 
@@ -60,7 +60,7 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 title: "Mount Path"
                 value: shellBackend.mountPath
-                description: "User-configurable mount root"
+                description: shellBackend.mountState
             }
 
             StatusCard {
@@ -68,6 +68,13 @@ Kirigami.ScrollablePage {
                 title: "Cache"
                 value: shellBackend.cacheUsageLabel
                 description: "Daemon-reported cache usage"
+            }
+
+            StatusCard {
+                Layout.fillWidth: true
+                title: "Index"
+                value: shellBackend.indexedItemsLabel
+                description: "Remote OneDrive metadata indexed into the mount"
             }
         }
 

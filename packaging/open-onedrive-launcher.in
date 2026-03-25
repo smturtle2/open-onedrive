@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user start @SERVICE_NAME@ >/dev/null 2>&1 || true
+fi
+
+if command -v pgrep >/dev/null 2>&1; then
+  if ! pgrep -u "$USER" -f "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1; then
+    "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1 &
+    disown || true
+  fi
+fi
+
+exec "@INSTALL_LIBEXEC_DIR@/open-onedrive-ui" "$@"

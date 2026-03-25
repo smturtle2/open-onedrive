@@ -1,18 +1,21 @@
 use anyhow::{Context, Result};
 use fuser::{BackgroundSession, MountOption};
-use openonedrive_vfs::{OpenOneDriveFs, SnapshotHandle, VirtualEntry};
+use openonedrive_vfs::{ContentProvider, OpenOneDriveFs, SnapshotHandle, VirtualEntry};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct MountController {
     snapshot: SnapshotHandle,
+    content_provider: Option<Arc<dyn ContentProvider>>,
     session: Option<BackgroundSession>,
     mount_path: Option<PathBuf>,
 }
 
 impl MountController {
-    pub fn new(snapshot: SnapshotHandle) -> Self {
+    pub fn new(snapshot: SnapshotHandle, content_provider: Option<Arc<dyn ContentProvider>>) -> Self {
         Self {
             snapshot,
+            content_provider,
             session: None,
             mount_path: None,
         }
@@ -31,7 +34,8 @@ impl MountController {
             MountOption::NoAtime,
             MountOption::RO,
         ];
-        let filesystem = OpenOneDriveFs::new(self.snapshot.clone());
+        let filesystem =
+            OpenOneDriveFs::new(self.snapshot.clone(), self.content_provider.clone());
         let session = fuser::spawn_mount2(filesystem, path, &options)
             .with_context(|| format!("unable to mount FUSE filesystem at {}", path.display()))?;
         self.session = Some(session);
@@ -44,4 +48,3 @@ impl MountController {
         self.mount_path = None;
     }
 }
-

@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 
+class QTimer;
+
 class ShellBackend : public QObject
 {
     Q_OBJECT
@@ -10,8 +12,10 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
     Q_PROPERTY(QString syncState READ syncState NOTIFY syncStateChanged)
+    Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QString cacheUsageLabel READ cacheUsageLabel NOTIFY cacheUsageLabelChanged)
+    Q_PROPERTY(QString indexedItemsLabel READ indexedItemsLabel NOTIFY indexedItemsLabelChanged)
 
 public:
     explicit ShellBackend(QObject *parent = nullptr);
@@ -20,8 +24,10 @@ public:
     QString clientId() const;
     QString mountPath() const;
     QString syncState() const;
+    QString mountState() const;
     QString statusMessage() const;
     QString cacheUsageLabel() const;
+    QString indexedItemsLabel() const;
 
     void setClientId(const QString &clientId);
     void setMountPath(const QString &mountPath);
@@ -38,18 +44,23 @@ Q_SIGNALS:
     void clientIdChanged();
     void mountPathChanged();
     void syncStateChanged();
+    void mountStateChanged();
     void statusMessageChanged();
     void cacheUsageLabelChanged();
+    void indexedItemsLabelChanged();
 
 private:
     void applyStatusJson(const QString &jsonPayload);
     void updateStatusMessage(const QString &message);
     void updateConfigured();
 
+    QTimer *m_refreshTimer = nullptr;
     bool m_configured = false;
     QString m_clientId;
     QString m_mountPath;
     QString m_syncState = QStringLiteral("needs-setup");
+    QString m_mountState = QStringLiteral("unmounted");
     QString m_statusMessage = QStringLiteral("Waiting for initial setup");
     QString m_cacheUsageLabel = QStringLiteral("Cache usage: pending daemon data");
+    QString m_indexedItemsLabel = QStringLiteral("0 items indexed");
 };

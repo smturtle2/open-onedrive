@@ -8,13 +8,16 @@ use openonedrive_config::{AppConfig, ProjectPaths, validate_mount_path};
 use openonedrive_graph::{DriveItem, GraphClient};
 use openonedrive_ipc_types::{AvailabilityState, ItemKind, ItemSnapshot, MountState, StatusSnapshot, SyncState};
 use openonedrive_state::{AuthSession, RemoteItemRecord, StateStore, SyncCursor};
-use openonedrive_vfs::{SnapshotHandle, VirtualEntry};
+use openonedrive_vfs::{ContentProvider, SnapshotHandle, VirtualEntry};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
@@ -35,8 +38,9 @@ const AUTH_SUCCESS_HTML: &str = r#"<!doctype html>
 pub struct OpenOneDriveApp {
     paths: ProjectPaths,
     config: RwLock<AppConfig>,
-    state: StateStore,
+    state: Arc<StateStore>,
     graph: GraphClient,
+    content_provider: Arc<DaemonContentProvider>,
     mount: Mutex<MountController>,
     runtime: tokio::sync::RwLock<RuntimeStatus>,
     sync_lock: Mutex<()>,
@@ -58,6 +62,14 @@ struct PendingLogin {
     redirect_uri: String,
 }
 
+struct DaemonContentProvider {
+    state: Arc<StateStore>,
+    graph: GraphClient,
+    cache_root: PathBuf,
+    snapshot: SnapshotHandle,
+    runtime: Handle,
+}
+
 impl Default for RuntimeStatus {
     fn default() -> Self {
         Self {
@@ -74,18 +86,30 @@ impl OpenOneDriveApp {
         let paths = ProjectPaths::discover()?;
         paths.ensure()?;
         let config = AppConfig::load_or_create(&paths)?;
-        let state = StateStore::open(&paths.db_file)?;
+        let state = Arc::new(StateStore::open(&paths.db_file)?);
         if state.get_auth_session()?.is_none() {
             state.clear_sync_cursor()?;
             state.clear_items()?;
         }
         let snapshot = SnapshotHandle::default();
+        let graph = GraphClient::default();
+        let content_provider = Arc::new(DaemonContentProvider {
+            state: state.clone(),
+            graph: graph.clone(),
+            cache_root: paths.cache_dir.join("content"),
+            snapshot: snapshot.clone(),
+            runtime: Handle::current(),
+        });
         let app = Arc::new(Self {
             paths,
             config: RwLock::new(config),
             state,
-            graph: GraphClient::default(),
-            mount: Mutex::new(MountController::new(snapshot)),
+            graph,
+            content_provider: content_provider.clone(),
+            mount: Mutex::new(MountController::new(
+                snapshot,
+                Some(content_provider as Arc<dyn ContentProvider>),
+            )),
             runtime: tokio::sync::RwLock::new(RuntimeStatus::default()),
             sync_lock: Mutex::new(()),
         });
@@ -202,12 +226,22 @@ impl OpenOneDriveApp {
         let virtual_paths = self.normalize_virtual_paths(paths);
         self.state
             .set_availability(&virtual_paths, AvailabilityState::Pinned, true)?;
+        for path in &virtual_paths {
+            let provider = self.content_provider.clone();
+            let path = path.clone();
+            let prefetch_path = path.clone();
+            tokio::task::spawn_blocking(move || provider.read_all(&prefetch_path))
+                .await
+                .context("pin prefetch task failed")?
+                .with_context(|| format!("unable to prefetch {path}"))?;
+        }
         self.refresh_snapshot().await?;
         Ok(())
     }
 
     pub async fn evict(self: &Arc<Self>, paths: &[String]) -> Result<()> {
         let virtual_paths = self.normalize_virtual_paths(paths);
+        self.content_provider.evict_paths(&virtual_paths)?;
         self.state
             .set_availability(&virtual_paths, AvailabilityState::OnlineOnly, false)?;
         self.refresh_snapshot().await?;
@@ -232,7 +266,7 @@ impl OpenOneDriveApp {
                 .unwrap_or_default(),
             client_id_configured: config.client_id.is_some(),
             cache_limit_gb: config.cache_limit_gb,
-            cache_usage_bytes: 0,
+            cache_usage_bytes: directory_size_bytes(&self.paths.cache_dir)?,
             items_indexed: self.state.items_indexed()?,
             last_error: runtime.last_error.unwrap_or_default(),
         })
@@ -539,6 +573,14 @@ impl OpenOneDriveApp {
 
         self.state.delete_items_by_remote_ids(&deleted_remote_ids)?;
         self.state.upsert_remote_items(&upserts)?;
+        self.content_provider
+            .invalidate_remote_ids(&deleted_remote_ids)?;
+        self.content_provider.invalidate_remote_ids(
+            &upserts
+                .iter()
+                .map(|item| item.remote_id.clone())
+                .collect::<Vec<_>>(),
+        )?;
         self.state.set_sync_cursor(&SyncCursor {
             delta_link: delta.delta_link,
             last_sync_unix: unix_time(),
@@ -672,6 +714,123 @@ impl OpenOneDriveApp {
     }
 }
 
+impl DaemonContentProvider {
+    fn evict_paths(&self, paths: &[String]) -> Result<()> {
+        for path in paths {
+            if let Some(item) = self
+                .state
+                .list_items_by_paths(&[path.clone()])?
+                .into_iter()
+                .next()
+            {
+                if let Some(remote_id) = item.remote_id {
+                    self.remove_cached_remote_id(&remote_id)?;
+                }
+            }
+        }
+        self.rebuild_snapshot()?;
+        Ok(())
+    }
+
+    fn invalidate_remote_ids(&self, remote_ids: &[String]) -> Result<()> {
+        for remote_id in remote_ids {
+            self.remove_cached_remote_id(remote_id)?;
+        }
+        Ok(())
+    }
+
+    fn remove_cached_remote_id(&self, remote_id: &str) -> Result<()> {
+        let cache_path = self.cache_path(remote_id);
+        if cache_path.exists() {
+            fs::remove_file(&cache_path)
+                .with_context(|| format!("unable to remove {}", cache_path.display()))?;
+        }
+        Ok(())
+    }
+
+    fn cache_path(&self, remote_id: &str) -> PathBuf {
+        self.cache_root.join(hex_key(remote_id))
+    }
+
+    fn rebuild_snapshot(&self) -> Result<()> {
+        let items = self.state.list_items()?;
+        let entries: Vec<VirtualEntry> = items
+            .into_iter()
+            .map(|item| VirtualEntry {
+                path: item.path,
+                kind: item.kind,
+                availability: item.availability,
+                pinned: item.pinned,
+                size: item.size,
+                modified_unix: item.modified_unix,
+                content_stub: item.content_stub,
+            })
+            .collect();
+        self.snapshot.rebuild(&entries);
+        Ok(())
+    }
+
+    fn read_all_inner(&self, path: &str) -> Result<Vec<u8>> {
+        let item = self
+            .state
+            .list_items_by_paths(&[path.to_string()])?
+            .into_iter()
+            .next()
+            .with_context(|| format!("unknown virtual path {path}"))?;
+        if item.kind == ItemKind::Directory {
+            bail!("{path} is a directory");
+        }
+
+        let remote_id = item
+            .remote_id
+            .clone()
+            .with_context(|| format!("missing remote id for {path}"))?;
+        let cache_path = self.cache_path(&remote_id);
+        if cache_path.exists() {
+            return fs::read(&cache_path)
+                .with_context(|| format!("unable to read {}", cache_path.display()));
+        }
+
+        fs::create_dir_all(&self.cache_root)
+            .with_context(|| format!("unable to create {}", self.cache_root.display()))?;
+        let state = self.state.clone();
+        let graph = self.graph.clone();
+        let remote_id_for_download = remote_id.clone();
+        let cache_path_for_download = cache_path.clone();
+        let path_for_download = path.to_string();
+        let pinned = item.pinned;
+        let bytes = self.runtime.block_on(async move {
+            let session = ensure_fresh_session_for_download(&state).await?;
+            let bytes = graph
+                .download_content(&session.access_token, &remote_id_for_download)
+                .await
+                .with_context(|| format!("unable to download {path_for_download}"))?;
+            tokio::fs::write(&cache_path_for_download, &bytes)
+                .await
+                .with_context(|| format!("unable to write {}", cache_path_for_download.display()))?;
+            state.set_availability(
+                &[path_for_download.clone()],
+                if pinned {
+                    AvailabilityState::Pinned
+                } else {
+                    AvailabilityState::Local
+                },
+                pinned,
+            )?;
+            Ok::<Vec<u8>, anyhow::Error>(bytes)
+        })?;
+        self.rebuild_snapshot()?;
+        Ok(bytes)
+    }
+}
+
+impl ContentProvider for DaemonContentProvider {
+    fn read_all(&self, path: &str) -> io::Result<Vec<u8>> {
+        self.read_all_inner(path)
+            .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))
+    }
+}
+
 fn map_drive_item(item: &DriveItem) -> Option<RemoteItemRecord> {
     let path = item.normalized_path()?;
     if path == "/" {
@@ -761,6 +920,68 @@ fn normalize_virtual_path_string(path: &str) -> String {
     } else {
         format!("/{path}")
     }
+}
+
+fn hex_key(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
+}
+
+fn directory_size_bytes(root: &Path) -> Result<u64> {
+    if !root.exists() {
+        return Ok(0);
+    }
+
+    let mut total = 0_u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path)
+            .with_context(|| format!("unable to inspect {}", path.display()))?
+        {
+            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
+            let entry_path = entry.path();
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("unable to stat {}", entry_path.display()))?;
+            if metadata.is_dir() {
+                stack.push(entry_path);
+            } else if metadata.is_file() {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+
+    Ok(total)
+}
+
+async fn ensure_fresh_session_for_download(state: &Arc<StateStore>) -> Result<AuthSession> {
+    let session = state
+        .get_auth_session()?
+        .context("Microsoft account is not connected")?;
+    if session.expires_at_unix > unix_time() + 60 {
+        return Ok(session);
+    }
+
+    let refresh_token = session
+        .refresh_token
+        .clone()
+        .context("access token expired and no refresh token is available")?;
+    let refreshed =
+        refresh_access_token(&session.client_id, &refresh_token, &redirect_uri(CALLBACK_PORT))
+            .await?;
+    let updated = AuthSession {
+        client_id: session.client_id,
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token.or(Some(refresh_token)),
+        expires_at_unix: unix_time() + refreshed.expires_in_seconds.unwrap_or(3600) as i64,
+        scope: refreshed.scope,
+        account_label: session.account_label,
+    };
+    state.set_auth_session(&updated)?;
+    Ok(updated)
 }
 
 fn unix_time() -> i64 {

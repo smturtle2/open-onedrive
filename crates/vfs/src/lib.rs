@@ -6,6 +6,7 @@ use libc::{EISDIR, ENOENT};
 use openonedrive_ipc_types::{AvailabilityState, ItemKind};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
+use std::io;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,6 +27,10 @@ pub struct VirtualEntry {
 #[derive(Debug, Clone)]
 pub struct SnapshotHandle(Arc<RwLock<TreeState>>);
 
+pub trait ContentProvider: Send + Sync {
+    fn read_all(&self, path: &str) -> io::Result<Vec<u8>>;
+}
+
 impl Default for SnapshotHandle {
     fn default() -> Self {
         Self(Arc::new(RwLock::new(TreeState::empty())))
@@ -45,11 +50,18 @@ impl SnapshotHandle {
 
 pub struct OpenOneDriveFs {
     snapshot: SnapshotHandle,
+    content_provider: Option<Arc<dyn ContentProvider>>,
 }
 
 impl OpenOneDriveFs {
-    pub fn new(snapshot: SnapshotHandle) -> Self {
-        Self { snapshot }
+    pub fn new(
+        snapshot: SnapshotHandle,
+        content_provider: Option<Arc<dyn ContentProvider>>,
+    ) -> Self {
+        Self {
+            snapshot,
+            content_provider,
+        }
     }
 }
 
@@ -145,7 +157,11 @@ impl Filesystem for OpenOneDriveFs {
             return;
         }
 
-        let content = node.content.as_bytes();
+        let content = self
+            .content_provider
+            .as_ref()
+            .and_then(|provider| provider.read_all(&node.path).ok())
+            .unwrap_or_else(|| node.content.clone());
         let start = offset.max(0) as usize;
         let end = (start + size as usize).min(content.len());
         if start >= content.len() {
@@ -160,9 +176,10 @@ impl Filesystem for OpenOneDriveFs {
 struct Node {
     attr: FileAttr,
     parent: Option<u64>,
+    path: String,
     name: String,
     kind: ItemKind,
-    content: String,
+    content: Vec<u8>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -177,9 +194,10 @@ impl TreeState {
         let root = Node {
             attr: make_attr(ROOT_INO, ItemKind::Directory, 0, now_unix()),
             parent: None,
+            path: "/".into(),
             name: "/".into(),
             kind: ItemKind::Directory,
-            content: String::new(),
+            content: Vec::new(),
         };
         let mut by_ino = BTreeMap::new();
         by_ino.insert(ROOT_INO, root);
@@ -217,10 +235,10 @@ impl TreeState {
                 let content = if kind == ItemKind::File {
                     build_content(entry)
                 } else {
-                    String::new()
+                    Vec::new()
                 };
                 let size = if kind == ItemKind::File {
-                    content.len() as u64
+                    entry.size.max(content.len() as u64)
                 } else {
                     0
                 };
@@ -228,6 +246,7 @@ impl TreeState {
                 let node = Node {
                     attr: make_attr(next_ino, kind, size, entry.modified_unix),
                     parent: Some(current_parent),
+                    path: current_path.clone(),
                     name: segment.to_string(),
                     kind,
                     content,
@@ -253,15 +272,16 @@ impl TreeState {
     }
 }
 
-fn build_content(entry: &VirtualEntry) -> String {
+fn build_content(entry: &VirtualEntry) -> Vec<u8> {
     if let Some(content) = &entry.content_stub {
-        return content.clone();
+        return content.as_bytes().to_vec();
     }
 
     format!(
         "open-onedrive placeholder\n\npath: {}\navailability: {:?}\npinned: {}\n",
         entry.path, entry.availability, entry.pinned
     )
+    .into_bytes()
 }
 
 fn normalize_path(path: &str) -> String {
@@ -306,4 +326,3 @@ fn now_unix() -> i64 {
         .expect("system time before unix epoch")
         .as_secs() as i64
 }
-

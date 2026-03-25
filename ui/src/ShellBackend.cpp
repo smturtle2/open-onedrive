@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 #include <QUrl>
 
 namespace {
@@ -26,6 +27,11 @@ ShellBackend::ShellBackend(QObject *parent)
     : QObject(parent)
 {
     m_mountPath = QStringLiteral("%1/OneDrive").arg(qEnvironmentVariable("HOME"));
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setInterval(3000);
+    connect(m_refreshTimer, &QTimer::timeout, this, &ShellBackend::refreshStatus);
+    m_refreshTimer->start();
+    QTimer::singleShot(0, this, &ShellBackend::refreshStatus);
 }
 
 bool ShellBackend::configured() const
@@ -48,6 +54,11 @@ QString ShellBackend::syncState() const
     return m_syncState;
 }
 
+QString ShellBackend::mountState() const
+{
+    return m_mountState;
+}
+
 QString ShellBackend::statusMessage() const
 {
     return m_statusMessage;
@@ -56,6 +67,11 @@ QString ShellBackend::statusMessage() const
 QString ShellBackend::cacheUsageLabel() const
 {
     return m_cacheUsageLabel;
+}
+
+QString ShellBackend::indexedItemsLabel() const
+{
+    return m_indexedItemsLabel;
 }
 
 void ShellBackend::setClientId(const QString &clientId)
@@ -189,8 +205,10 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const QJsonObject object = document.object();
     const QString mountPath = object.value(QStringLiteral("mount_path")).toString();
     const QString syncState = object.value(QStringLiteral("sync_state")).toString();
+    const QString mountState = object.value(QStringLiteral("mount_state")).toString();
     const QString lastError = object.value(QStringLiteral("last_error")).toString();
     const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
+    const qint64 itemsIndexed = object.value(QStringLiteral("items_indexed")).toInteger();
 
     if (!mountPath.isEmpty() && mountPath != m_mountPath) {
         m_mountPath = mountPath;
@@ -208,10 +226,21 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit syncStateChanged();
     }
 
+    if (!mountState.isEmpty() && mountState != m_mountState) {
+        m_mountState = mountState;
+        emit mountStateChanged();
+    }
+
     const QString cacheLabel = QStringLiteral("%1 B cached").arg(cacheBytes);
     if (cacheLabel != m_cacheUsageLabel) {
         m_cacheUsageLabel = cacheLabel;
         emit cacheUsageLabelChanged();
+    }
+
+    const QString indexedLabel = QStringLiteral("%1 items indexed").arg(itemsIndexed);
+    if (indexedLabel != m_indexedItemsLabel) {
+        m_indexedItemsLabel = indexedLabel;
+        emit indexedItemsLabelChanged();
     }
 
     if (!lastError.isEmpty()) {
@@ -219,7 +248,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         return;
     }
 
-    updateStatusMessage(QStringLiteral("Daemon connected. Status synchronized over D-Bus."));
+    updateStatusMessage(QStringLiteral("Daemon connected. %1, %2.").arg(m_syncState, m_indexedItemsLabel));
 }
 
 void ShellBackend::updateStatusMessage(const QString &message)

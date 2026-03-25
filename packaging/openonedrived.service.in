@@ -1,0 +1,13 @@
+[Unit]
+Description=open-onedrive background daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_BIN_DIR@/openonedrived
+Restart=on-failure
+RestartSec=3
+Environment=RUST_LOG=openonedrived=info
+
+[Install]
+WantedBy=default.target

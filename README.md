@@ -7,7 +7,7 @@ Windows OneDrive-like OSS client for Linux, built for KDE Plasma 6 and Wayland.
 [![Qt6](https://img.shields.io/badge/ui-Qt%206-41CD52?logo=qt)](https://www.qt.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[Korean README](./README.ko.md) · [Quick Start](#quick-start) · [Architecture](#architecture)
+[Korean README](./README.ko.md) · [Install](#install) · [Architecture](#architecture)
 
 `open-onedrive` aims to feel like the Windows OneDrive desktop client on a modern Linux desktop:
 
@@ -16,55 +16,68 @@ Windows OneDrive-like OSS client for Linux, built for KDE Plasma 6 and Wayland.
 - Placeholder-style FUSE filesystem
 - Qt/Kirigami desktop shell
 - Dolphin context actions and overlay plugins
+- User-local install with desktop launcher and systemd user service
 
 ## Status
 
-This repository already builds in the current environment.
+This repository now builds and installs in the current environment.
 
 Working today:
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo run -p xtask -- bootstrap`
-- `cargo run -p xtask -- build-ui`
-- `cargo run -p xtask -- build-integrations`
-- `openonedrived` + `openonedrivectl status` D-Bus round-trip
+- Microsoft browser login callback + token persistence
+- Graph `drive/root/delta` indexing into the SQLite metadata store
+- FUSE mount populated from real remote metadata
+- On-demand file download when reading a mounted file
+- `./scripts/install.sh` user-local install, app launcher, and systemd user service
 
 Current scope of the implementation:
 
-- Read-only placeholder FUSE tree seeded from SQLite demo metadata
-- D-Bus methods for login bootstrap, mount path updates, pin/evict, status, and item lookup
-- Qt shell wired to daemon status over D-Bus
-- Dolphin action and overlay plugins scaffolded and buildable
+- Real Microsoft Graph metadata sync and periodic polling
+- Read-only FUSE tree with on-demand file hydration and local cache
+- D-Bus methods for login, mount path updates, pin/evict, status, and item lookup
+- Qt shell wired to daemon status over D-Bus with live refresh
+- Dolphin action and overlay plugins installable under `~/.local`
 
 Still in progress:
 
-- Real Microsoft Graph sync engine
-- Real hydrate/download/upload path
-- Live overlay state backed by real cloud metadata
+- Writable sync and upload path
+- Richer desktop polish around notifications, tray UX, and full error recovery
 
-## Quick Start
+## Install
 
-Development setup is intentionally two commands:
+Install locally and register the app in one command:
 
 ```bash
 git clone https://github.com/smturtle2/open-onedrive.git
 cd open-onedrive
-./scripts/dev.sh bootstrap
-./scripts/dev.sh up
+./scripts/install.sh
 ```
 
-What those commands do:
+What this does:
 
-- `bootstrap`: verifies tools, builds the Rust workspace, builds the Qt shell, builds KDE integrations
-- `up`: starts the daemon in the background and launches the desktop UI
+- builds the Rust daemon and CLI
+- builds the Qt desktop shell
+- builds the Dolphin integration plugins
+- installs everything into `~/.local`
+- registers `open-onedrive` in the desktop app menu
+- installs and enables `openonedrived.service` with `systemctl --user`
 
-Useful follow-ups:
+After install:
 
 ```bash
-./scripts/dev.sh status
-./scripts/dev.sh test
-./scripts/dev.sh daemon
+open-onedrive
+systemctl --user status openonedrived.service
+openonedrivectl status
+```
+
+For development:
+
+```bash
+./scripts/dev.sh bootstrap
+./scripts/dev.sh up
+./scripts/dev.sh install
 ```
 
 ## Architecture
@@ -74,12 +87,13 @@ The repo is split by responsibility:
 - `crates/openonedrived`: daemon entrypoint, app lifecycle, D-Bus service, mount control
 - `crates/openonedrivectl`: developer CLI for the daemon D-Bus interface
 - `crates/config`: XDG paths, config load/save, mount path validation
-- `crates/state`: SQLite metadata store and bootstrap placeholder tree
-- `crates/vfs`: FUSE filesystem snapshot layer
-- `crates/auth`: Microsoft auth URL + PKCE bootstrap
-- `crates/graph`: Microsoft Graph client scaffolding
+- `crates/state`: SQLite metadata store for auth, delta cursors, and indexed items
+- `crates/vfs`: FUSE filesystem snapshot layer and content provider hook
+- `crates/auth`: Microsoft auth URL, PKCE, token exchange, token refresh
+- `crates/graph`: Microsoft Graph delta/content client
 - `ui/`: Qt6/Kirigami desktop shell
 - `integrations/`: Dolphin context action and overlay plugins
+- `packaging/`: desktop entry, launcher, and user service templates
 - `xtask/`: build/bootstrap helpers
 
 ## Repository Commands
@@ -90,6 +104,7 @@ cargo run -p xtask -- check
 cargo run -p xtask -- test
 cargo run -p xtask -- build-ui
 cargo run -p xtask -- build-integrations
+cargo run -p xtask -- install
 ```
 
 ## Goal
@@ -102,6 +117,6 @@ The long-term goal is not just “sync a folder.” It is to deliver a Linux-nat
 - Files On-Demand-like placeholder behavior
 - Dolphin right-click actions
 - state overlays
+- one-command local install and app registration
 
 If you are building on the same environment as this repo, the current codebase is ready to extend from here.
-
