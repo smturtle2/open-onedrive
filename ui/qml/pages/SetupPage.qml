@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import "../components"
 
 Kirigami.ScrollablePage {
     id: page
@@ -29,30 +30,8 @@ Kirigami.ScrollablePage {
                   : "Choose where the OneDrive mount should appear on this machine, then start the browser sign-in flow managed by rclone."
         }
 
-        Frame {
-            Layout.fillWidth: true
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: Kirigami.Units.mediumSpacing
-
-                Label {
-                    text: "Mount directory"
-                }
-
-                TextField {
-                    Layout.fillWidth: true
-                    placeholderText: "/home/you/OneDrive"
-                    text: shellBackend.mountPath
-                    onTextEdited: shellBackend.mountPath = text
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "The daemon only writes its own rclone config under XDG config/open-onedrive/rclone/rclone.conf and never touches ~/.config/rclone/rclone.conf."
-                }
-            }
+        MountPathEditor {
+            helperText: "The daemon only writes its own rclone config under XDG config/open-onedrive/rclone/rclone.conf and never touches ~/.config/rclone/rclone.conf."
         }
 
         Frame {
@@ -104,7 +83,7 @@ Kirigami.ScrollablePage {
             Button {
                 text: "Open Mount Folder"
                 icon.name: "document-open-folder"
-                enabled: shellBackend.mountPath.length > 0
+                enabled: shellBackend.effectiveMountPath.length > 0
                 onClicked: shellBackend.openMountLocation()
             }
         }

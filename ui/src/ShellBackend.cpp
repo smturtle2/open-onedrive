@@ -4,6 +4,7 @@
 #include <QDBusReply>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTimer>
@@ -21,12 +22,18 @@ QDBusInterface daemonInterface()
                           QString::fromLatin1(kInterface),
                           QDBusConnection::sessionBus());
 }
+
+QString defaultMountPath()
+{
+    return QDir::cleanPath(QStringLiteral("%1/OneDrive").arg(qEnvironmentVariable("HOME")));
+}
 }
 
 ShellBackend::ShellBackend(QObject *parent)
     : QObject(parent)
 {
-    m_mountPath = QStringLiteral("%1/OneDrive").arg(qEnvironmentVariable("HOME"));
+    m_mountPath = defaultMountPath();
+    m_effectiveMountPath = m_mountPath;
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setInterval(3000);
     connect(m_refreshTimer, &QTimer::timeout, this, &ShellBackend::refreshStatus);
@@ -54,6 +61,16 @@ bool ShellBackend::customClientIdConfigured() const
 QString ShellBackend::mountPath() const
 {
     return m_mountPath;
+}
+
+QString ShellBackend::effectiveMountPath() const
+{
+    return m_effectiveMountPath;
+}
+
+bool ShellBackend::mountPathPending() const
+{
+    return m_mountPath != m_effectiveMountPath;
 }
 
 QString ShellBackend::mountState() const
@@ -88,30 +105,28 @@ QStringList ShellBackend::recentLogs() const
 
 void ShellBackend::setMountPath(const QString &mountPath)
 {
-    if (m_mountPath == mountPath) {
+    const QString normalizedPath = normalizeMountPath(mountPath);
+    if (m_mountPath == normalizedPath) {
         return;
     }
 
-    m_mountPath = mountPath;
+    const bool pendingBefore = mountPathPending();
+    m_mountPath = normalizedPath;
     emit mountPathChanged();
+    if (pendingBefore != mountPathPending()) {
+        emit mountPathPendingChanged();
+    }
 }
 
 void ShellBackend::beginConnect()
 {
-    if (m_mountPath.trimmed().isEmpty()) {
-        updateStatusMessage(QStringLiteral("Choose a mount path before connecting."));
-        return;
-    }
-
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
         updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus. Start openonedrived first."));
         return;
     }
 
-    const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath.trimmed());
-    if (!pathReply.isValid()) {
-        updateStatusMessage(QStringLiteral("Mount path update failed: %1").arg(pathReply.error().message()));
+    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before connecting."))) {
         return;
     }
 
@@ -152,6 +167,10 @@ void ShellBackend::mountRemote()
         return;
     }
 
+    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before mounting."))) {
+        return;
+    }
+
     const QDBusReply<void> reply = iface.call(QStringLiteral("Mount"));
     if (!reply.isValid()) {
         updateStatusMessage(QStringLiteral("Mount failed: %1").arg(reply.error().message()));
@@ -186,6 +205,10 @@ void ShellBackend::retryMount()
         return;
     }
 
+    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before retrying."))) {
+        return;
+    }
+
     const QDBusReply<void> reply = iface.call(QStringLiteral("RetryMount"));
     if (!reply.isValid()) {
         updateStatusMessage(QStringLiteral("Retry failed: %1").arg(reply.error().message()));
@@ -197,12 +220,41 @@ void ShellBackend::retryMount()
 
 void ShellBackend::openMountLocation()
 {
-    if (m_mountPath.trimmed().isEmpty()) {
+    if (m_effectiveMountPath.isEmpty()) {
         updateStatusMessage(QStringLiteral("Choose a mount path first."));
         return;
     }
 
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QDir::cleanPath(m_mountPath)));
+    QDesktopServices::openUrl(QUrl::fromLocalFile(m_effectiveMountPath));
+}
+
+void ShellBackend::setMountPathFromUrl(const QUrl &mountPathUrl)
+{
+    if (!mountPathUrl.isValid()) {
+        return;
+    }
+
+    setMountPath(mountPathUrl.isLocalFile() ? mountPathUrl.toLocalFile() : mountPathUrl.path());
+}
+
+QUrl ShellBackend::mountPathDialogFolder() const
+{
+    const QString candidatePath = !m_mountPath.isEmpty() ? m_mountPath : m_effectiveMountPath;
+    if (candidatePath.isEmpty()) {
+        return QUrl::fromLocalFile(QDir::homePath());
+    }
+
+    QFileInfo candidate(candidatePath);
+    if (candidate.exists() && candidate.isDir()) {
+        return QUrl::fromLocalFile(candidate.absoluteFilePath());
+    }
+
+    const QFileInfo parent(candidate.dir().absolutePath());
+    if (parent.exists() && parent.isDir()) {
+        return QUrl::fromLocalFile(parent.absoluteFilePath());
+    }
+
+    return QUrl::fromLocalFile(QDir::homePath());
 }
 
 void ShellBackend::refreshStatus()
@@ -259,9 +311,17 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const qint64 cacheBytes = object.value(QStringLiteral("cache_usage_bytes")).toInteger();
 
     const bool wasDashboardReady = dashboardReady();
+    const bool pendingBefore = mountPathPending();
+    const bool preserveDraftPath = pendingBefore;
 
-    if (mountPath != m_mountPath && !mountPath.isEmpty()) {
-        m_mountPath = mountPath;
+    const QString normalizedMountPath = normalizeMountPath(mountPath);
+    if (!normalizedMountPath.isEmpty() && normalizedMountPath != m_effectiveMountPath) {
+        m_effectiveMountPath = normalizedMountPath;
+        emit effectiveMountPathChanged();
+    }
+
+    if (!preserveDraftPath && !normalizedMountPath.isEmpty() && normalizedMountPath != m_mountPath) {
+        m_mountPath = normalizedMountPath;
         emit mountPathChanged();
     }
 
@@ -296,6 +356,10 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit lastLogLineChanged();
     }
 
+    if (pendingBefore != mountPathPending()) {
+        emit mountPathPendingChanged();
+    }
+
     if (wasDashboardReady != dashboardReady()) {
         emit dashboardReadyChanged();
     }
@@ -316,7 +380,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     if (m_mountState == QStringLiteral("Mounted")) {
-        updateStatusMessage(QStringLiteral("rclone mount is active at %1.").arg(m_mountPath));
+        updateStatusMessage(QStringLiteral("rclone mount is active at %1.").arg(m_effectiveMountPath));
         return;
     }
 
@@ -341,4 +405,39 @@ void ShellBackend::updateStatusMessage(const QString &message)
 
     m_statusMessage = message;
     emit statusMessageChanged();
+}
+
+bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &emptyPathMessage)
+{
+    if (m_mountPath.isEmpty()) {
+        updateStatusMessage(emptyPathMessage);
+        return false;
+    }
+
+    if (m_mountPath == m_effectiveMountPath) {
+        return true;
+    }
+
+    const bool pendingBefore = mountPathPending();
+    const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath);
+    if (!pathReply.isValid()) {
+        updateStatusMessage(QStringLiteral("Mount path update failed: %1").arg(pathReply.error().message()));
+        return false;
+    }
+
+    m_effectiveMountPath = m_mountPath;
+    emit effectiveMountPathChanged();
+    if (pendingBefore != mountPathPending()) {
+        emit mountPathPendingChanged();
+    }
+    return true;
+}
+
+QString ShellBackend::normalizeMountPath(const QString &mountPath)
+{
+    const QString trimmedPath = mountPath.trimmed();
+    if (trimmedPath.isEmpty()) {
+        return QString();
+    }
+    return QDir::cleanPath(trimmedPath);
 }

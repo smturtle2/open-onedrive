@@ -62,7 +62,7 @@ Kirigami.ScrollablePage {
             StatusCard {
                 Layout.fillWidth: true
                 title: "Mount Path"
-                value: shellBackend.mountPath
+                value: shellBackend.effectiveMountPath
                 description: "Host filesystem path exposed by rclone mount"
             }
 
@@ -73,6 +73,8 @@ Kirigami.ScrollablePage {
                 description: "App-owned rclone VFS cache usage"
             }
         }
+
+        MountPathEditor { }
 
         Frame {
             Layout.fillWidth: true
