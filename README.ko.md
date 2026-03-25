@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  일반 로컬 폴더처럼 보이는 OneDrive 루트, 투명한 on-demand hydrate, 파일별 장치 유지 또는 online-only 전환, Dolphin 오버레이, tray/dashboard 셸을 제공하는 KDE 중심 Linux OneDrive 클라이언트입니다.
+  KDE Plasma 6와 Dolphin을 위한 정식 안정판 0.1.2: 일반 로컬 폴더처럼 보이는 OneDrive 루트, 투명한 on-demand hydrate, 파일별 장치 유지 또는 online-only 전환, Dolphin 오버레이, tray/dashboard 셸을 제공하는 Linux OneDrive 클라이언트입니다.
 </p>
 
 <p align="center">
@@ -30,6 +30,8 @@
   <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive dashboard preview" width="100%">
 </p>
 
+> `v0.1.2`는 Linux `KDE Plasma 6 + Dolphin`을 위한 첫 정식 지원 릴리스 라인입니다. 이번 릴리스는 시작 시 최신 상태 반영, 로컬 파일 작업 직후 상태 전파, 더 단순한 사용자 로컬 설치 흐름에 초점을 둡니다.
+
 ## 개요
 
 `open-onedrive`는 Linux `KDE Plasma 6 + Dolphin`을 1차 타깃으로 하며, `~/OneDrive` 같은 일반 폴더에 커스텀 FUSE 파일시스템을 올려 OneDrive를 노출합니다.
@@ -53,7 +55,7 @@
 - SQLite 기반 path-state cache와 업로드/다운로드 큐
 - Dolphin overlay icon과 context action
 - 파일시스템 상태, 전송 큐, conflict, 로그를 보여주는 Qt6/Kirigami dashboard
-- release 우선 `curl ... | bash` 설치 경로
+- 안정판용 `curl ... | bash` 설치 경로와 GitHub Release artifact
 
 ## 빠른 시작
 
@@ -66,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 특정 tag 설치:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.2 bash
 ```
 
 소스 빌드 bootstrap 강제:
@@ -119,6 +121,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 - 1차 타깃: `KDE Plasma 6` + `Dolphin`
 - release installer 기준 사용자 로컬 설치 경로: `~/.local`
 - source build 경로: Rust, CMake, Qt6 tooling, KF6 development package, fuse3 development package, C++ compiler
+- 이번 릴리스에서 지원하는 파일 관리자 통합: `Dolphin`
 
 ## 설정
 
@@ -141,6 +144,7 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
+# cache_limit_gb 는 0.1.2에서 예약만 되어 있고 아직 강제되지 않습니다
 ```
 
 보장 사항:
@@ -150,6 +154,7 @@ backing_dir_name = ".openonedrive-cache"
 - hydrate된 바이트는 숨김 backing 디렉터리에 저장됩니다
 - dashboard, tray, CLI, Dolphin 통합은 모두 같은 daemon 상태를 공유합니다
 - 숨김 backing 디렉터리는 구현 디테일이므로 직접 수정하면 안 됩니다
+- 이 안정판은 `KDE Plasma 6 + Dolphin`만 지원합니다
 
 ## UI 메모
 
@@ -194,6 +199,14 @@ backing_dir_name = ".openonedrive-cache"
 - Windows Cloud Files 수준의 placeholder parity
 - 이번 릴리스에서 GNOME/Nautilus 지원
 - custom Microsoft OAuth stack
+- `v0.1.2`에서 자동 cache eviction
+
+## 문제 해결
+
+- `D-Bus`에서 daemon에 연결되지 않음: `open-onedrive`를 한 번 실행하거나 `systemctl --user status openonedrived.service`를 확인하세요.
+- FUSE 시작 실패: `/dev/fuse`가 존재하는지, `fusermount3` 또는 `mount.fuse3`가 `PATH`에 있는지 확인하세요.
+- 설치 후 Dolphin action 또는 overlay가 보이지 않음: `kbuildsycoca6`를 실행하고 Dolphin을 다시 시작한 뒤, plugin이 `~/.local/lib/qt6/plugins/kf6/` 아래에 설치됐는지 확인하세요.
+- 동기화 일시정지 상태: on-demand 읽기는 계속 동작하지만, 로컬에서 수정한 내용은 dashboard, tray, CLI에서 동기화를 다시 시작할 때까지 업로드 대기열에 남습니다.
 
 ## 개발
 

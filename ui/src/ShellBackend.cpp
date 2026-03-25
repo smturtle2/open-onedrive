@@ -741,7 +741,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     if (m_syncState == QStringLiteral("Paused")) {
-        updateStatusMessage(tr("Background sync is paused. The visible root stays available on demand."));
+        updateStatusMessage(tr("Background sync is paused. On-demand opens still work, and local writes stay queued until you resume sync."));
         updateTray();
         return;
     }

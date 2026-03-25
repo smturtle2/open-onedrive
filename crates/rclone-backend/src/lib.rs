@@ -25,6 +25,7 @@ use tracing::warn;
 use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 
 const MAX_RECENT_LOGS: usize = 200;
+const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ pub struct RcloneBackend {
     recent_logs: std::sync::Mutex<VecDeque<String>>,
     connect_child: Mutex<Option<Child>>,
     connect_generation: Mutex<u64>,
+    rescan_generation: Mutex<u64>,
     filesystem_session: std::sync::Mutex<Option<fuser::BackgroundSession>>,
     underlay_root: std::sync::Mutex<Option<File>>,
     snapshot: SnapshotHandle,
@@ -129,6 +131,7 @@ impl RcloneBackend {
             recent_logs: std::sync::Mutex::new(VecDeque::with_capacity(MAX_RECENT_LOGS)),
             connect_child: Mutex::new(None),
             connect_generation: Mutex::new(0),
+            rescan_generation: Mutex::new(0),
             filesystem_session: std::sync::Mutex::new(None),
             underlay_root: std::sync::Mutex::new(None),
             snapshot: SnapshotHandle::default(),
@@ -143,7 +146,8 @@ impl RcloneBackend {
                 backend.record_error(error.to_string()).await;
             }
         } else if remote_configured && !backend.runtime.read().await.sync_paused {
-            backend.spawn_rescan();
+            backend.spawn_rescan("startup");
+            backend.restart_rescan_loop().await;
         }
 
         Ok(backend)
@@ -280,7 +284,7 @@ impl RcloneBackend {
                     Ok(status) if status.success() => {
                         let config = backend.current_config().await;
                         if let Err(error) = backend.complete_connect(config, None).await {
-                            backend.record_error(error.to_string()).await;
+                            backend.record_connection_error(error.to_string()).await;
                         }
                     }
                     Ok(status) => {
@@ -292,12 +296,14 @@ impl RcloneBackend {
                             )
                             .await
                         {
-                            backend.record_error(error.to_string()).await;
+                            backend.record_connection_error(error.to_string()).await;
                         }
                     }
                     Err(error) => {
                         backend
-                            .record_error(format!("waiting for rclone connect failed: {error}"))
+                            .record_connection_error(format!(
+                                "waiting for rclone connect failed: {error}"
+                            ))
                             .await;
                     }
                 }
@@ -310,6 +316,7 @@ impl RcloneBackend {
 
     pub async fn disconnect(self: &Arc<Self>) -> Result<()> {
         self.stop_connect_process().await?;
+        self.stop_rescan_loop().await;
         self.stop_filesystem().await?;
         remove_file_if_exists(&self.paths.rclone_config_file)?;
         self.clear_backing_root()?;
@@ -372,8 +379,8 @@ impl RcloneBackend {
         self.persist_runtime().await?;
         self.emit_event(BackendEvent::FilesystemStateChanged);
 
-        if self.path_state_store.all()?.is_empty() && !self.runtime.read().await.sync_paused {
-            let _ = self.rescan().await;
+        if !self.runtime.read().await.sync_paused {
+            self.rescan().await?;
         } else {
             self.refresh_virtual_snapshot()?;
         }
@@ -406,7 +413,7 @@ impl RcloneBackend {
         self.emit_event(BackendEvent::FilesystemStateChanged);
         self.emit_event(BackendEvent::ConnectionStateChanged);
         if !self.runtime.read().await.sync_paused {
-            self.spawn_rescan();
+            self.restart_rescan_loop().await;
         }
         Ok(())
     }
@@ -471,7 +478,8 @@ impl RcloneBackend {
             tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
                 .await
                 .context("path-state write task join failed")??;
-            self.refresh_virtual_snapshot()?;
+            self.refresh_virtual_snapshot_with_states(&snapshot);
+            self.sync_runtime_sets_from_states(&snapshot)?;
             self.complete_sync_activity(None).await?;
             self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
             Ok(snapshot.len() as u32)
@@ -486,6 +494,7 @@ impl RcloneBackend {
     }
 
     pub async fn pause_sync(&self) -> Result<()> {
+        self.stop_rescan_loop().await;
         {
             let mut runtime = self.runtime.write().await;
             runtime.sync_paused = true;
@@ -506,7 +515,9 @@ impl RcloneBackend {
         }
         self.persist_runtime().await?;
         self.emit_event(BackendEvent::SyncStateChanged);
-        self.spawn_rescan();
+        self.restart_rescan_loop().await;
+        self.enqueue_dirty_uploads()?;
+        self.spawn_rescan("resume");
         Ok(())
     }
 
@@ -524,13 +535,13 @@ impl RcloneBackend {
             changed.push(relative_path.clone());
         }
         self.set_pinned_state(&changed, true)?;
-        self.refresh_virtual_snapshot()?;
+        self.rebuild_path_state_snapshot_sync()?;
         self.complete_sync_activity(None).await?;
         self.append_log(format!(
             "kept {} item(s) available on this device",
             changed.len()
         ));
-        self.emit_event(BackendEvent::PathStatesChanged(changed.clone()));
+        self.emit_path_state_refresh(&changed);
         Ok(changed.len() as u32)
     }
 
@@ -548,30 +559,25 @@ impl RcloneBackend {
             changed.push(relative_path.clone());
         }
         self.set_pinned_state(&changed, false)?;
-        self.refresh_virtual_snapshot()?;
+        self.rebuild_path_state_snapshot_sync()?;
         self.complete_sync_activity(None).await?;
         self.append_log(format!(
             "returned {} item(s) to online-only mode",
             changed.len()
         ));
-        self.emit_event(BackendEvent::PathStatesChanged(changed.clone()));
+        self.emit_path_state_refresh(&changed);
         Ok(changed.len() as u32)
     }
 
     pub async fn retry_transfer(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
         let config = self.current_config().await;
-        let mut relative_paths = Vec::new();
-        for raw_path in raw_paths {
-            relative_paths.push(relative_string(&relative_path_for(
-                &config.root_path,
-                Path::new(raw_path),
-            )?));
-        }
+        let states = self.path_state_store.all()?;
+        let relative_paths = expand_retry_paths(&config.root_path, raw_paths, &states)?;
         if relative_paths.is_empty() {
             bail!("select at least one file inside the OneDrive folder");
         }
         for relative_path in &relative_paths {
-            self.enqueue_upload(relative_path.clone());
+            self.enqueue_upload(relative_path.clone(), true);
         }
         Ok(relative_paths.len() as u32)
     }
@@ -622,6 +628,50 @@ impl RcloneBackend {
         Ok(())
     }
 
+    fn refresh_virtual_snapshot_with_states(&self, states: &[PathState]) {
+        let entries = states
+            .iter()
+            .map(|state| VirtualEntry {
+                path: state.path.clone(),
+                is_dir: state.is_dir,
+                size_bytes: state.size_bytes,
+                modified_unix: state.last_sync_at,
+            })
+            .collect::<Vec<_>>();
+        self.snapshot.rebuild(&entries);
+    }
+
+    fn sync_runtime_sets_from_states(&self, states: &[PathState]) -> Result<()> {
+        let mut runtime = self.runtime.blocking_write();
+        runtime.pinned_relative_paths = states
+            .iter()
+            .filter(|state| !state.is_dir && state.pinned)
+            .map(|state| state.path.clone())
+            .collect();
+        runtime.conflict_relative_paths = states
+            .iter()
+            .filter(|state| !state.is_dir && state.state == PathSyncState::Conflict)
+            .map(|state| state.path.clone())
+            .collect();
+        drop(runtime);
+        futures_block_on(self.persist_runtime())?;
+        Ok(())
+    }
+
+    fn rebuild_path_state_snapshot_sync(&self) -> Result<()> {
+        let normalized = normalize_path_state_snapshot(self.path_state_store.all()?);
+        self.path_state_store.replace_all(&normalized)?;
+        self.refresh_virtual_snapshot_with_states(&normalized);
+        self.sync_runtime_sets_from_states(&normalized)?;
+        Ok(())
+    }
+
+    fn emit_path_state_refresh(&self, paths: &[String]) {
+        self.emit_event(BackendEvent::PathStatesChanged(affected_relative_paths(
+            paths,
+        )));
+    }
+
     async fn complete_sync_activity(&self, error: Option<String>) -> Result<()> {
         let mut error_message = None;
         {
@@ -653,7 +703,6 @@ impl RcloneBackend {
             return Ok(());
         }
         let mut states = self.path_state_store.get_many(relative_paths)?;
-        let path_set = relative_paths.iter().cloned().collect::<BTreeSet<_>>();
         let snapshot = self.path_state_store.all()?;
         let snapshot_map = snapshot
             .into_iter()
@@ -687,20 +736,10 @@ impl RcloneBackend {
             if !state.is_dir {
                 state.state = derive_path_state(&state);
             }
+            state.last_sync_at = unix_timestamp();
             states.push(state);
         }
         self.path_state_store.upsert_many(&dedup_states(states))?;
-
-        let mut runtime = self.runtime.blocking_write();
-        for relative_path in path_set {
-            if pinned {
-                runtime.pinned_relative_paths.insert(relative_path);
-            } else {
-                runtime.pinned_relative_paths.remove(&relative_path);
-            }
-        }
-        drop(runtime);
-        futures_block_on(self.persist_runtime())?;
         Ok(())
     }
 
@@ -736,18 +775,8 @@ impl RcloneBackend {
     }
 
     fn refresh_virtual_snapshot(&self) -> Result<()> {
-        let entries = self
-            .path_state_store
-            .all()?
-            .into_iter()
-            .map(|state| VirtualEntry {
-                path: state.path,
-                is_dir: state.is_dir,
-                size_bytes: state.size_bytes,
-                modified_unix: state.last_sync_at,
-            })
-            .collect::<Vec<_>>();
-        self.snapshot.rebuild(&entries);
+        let states = self.path_state_store.all()?;
+        self.refresh_virtual_snapshot_with_states(&states);
         Ok(())
     }
 
@@ -829,12 +858,6 @@ impl RcloneBackend {
                 conflict_reason,
             };
             state.state = derive_path_state(&state);
-            if state.state == PathSyncState::Conflict {
-                self.runtime
-                    .blocking_write()
-                    .conflict_relative_paths
-                    .insert(state.path.clone());
-            }
             states.insert(state.path.clone(), state);
         }
 
@@ -845,7 +868,7 @@ impl RcloneBackend {
             if state.dirty
                 || state.hydrated
                 || state.state == PathSyncState::Conflict
-                || state.is_dir
+                || (state.is_dir && should_preserve_dir_state(&state))
             {
                 states.insert(path, state);
             }
@@ -903,6 +926,9 @@ impl RcloneBackend {
             }
             runtime.last_error.clear();
         }
+        if !remote_configured {
+            self.stop_rescan_loop().await;
+        }
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
         }
@@ -927,7 +953,8 @@ impl RcloneBackend {
                 if config.auto_start_filesystem {
                     self.start_filesystem().await?;
                 } else if !self.runtime.read().await.sync_paused {
-                    self.spawn_rescan();
+                    self.spawn_rescan("connect");
+                    self.restart_rescan_loop().await;
                 }
                 Ok(())
             }
@@ -950,6 +977,24 @@ impl RcloneBackend {
         Ok(())
     }
 
+    async fn record_connection_error(&self, message: String) {
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.connection_state = ConnectionState::Error;
+            if runtime.filesystem_state == FilesystemState::Starting {
+                runtime.filesystem_state = FilesystemState::Stopped;
+            }
+            runtime.last_error = message.clone();
+        }
+        self.append_log(message.clone());
+        if let Err(error) = self.persist_runtime().await {
+            warn!("unable to persist runtime state: {error:#}");
+        }
+        self.emit_event(BackendEvent::ConnectionStateChanged);
+        self.emit_event(BackendEvent::FilesystemStateChanged);
+        self.emit_event(BackendEvent::ErrorRaised(message));
+    }
+
     async fn record_error(&self, message: String) {
         {
             let mut runtime = self.runtime.write().await;
@@ -961,6 +1006,7 @@ impl RcloneBackend {
             warn!("unable to persist runtime state: {error:#}");
         }
         self.emit_event(BackendEvent::FilesystemStateChanged);
+        self.emit_event(BackendEvent::ConnectionStateChanged);
         self.emit_event(BackendEvent::ErrorRaised(message));
     }
 
@@ -1014,19 +1060,64 @@ impl RcloneBackend {
         Ok(())
     }
 
-    fn spawn_rescan(self: &Arc<Self>) {
+    async fn stop_rescan_loop(&self) {
+        let mut generation = self.rescan_generation.lock().await;
+        *generation += 1;
+    }
+
+    async fn restart_rescan_loop(self: &Arc<Self>) {
+        let generation = {
+            let mut generation = self.rescan_generation.lock().await;
+            *generation += 1;
+            *generation
+        };
+        let runtime = self.runtime.read().await;
+        if !runtime.remote_configured || runtime.sync_paused {
+            return;
+        }
+        drop(runtime);
+
         let backend = self.clone();
         tokio::spawn(async move {
-            if backend.runtime.read().await.sync_paused {
-                return;
-            }
-            if let Err(error) = backend.rescan().await {
-                backend.append_log(format!("remote rescan skipped: {error}"));
+            loop {
+                tokio::time::sleep(RESCAN_INTERVAL).await;
+                let current_generation = *backend.rescan_generation.lock().await;
+                if current_generation != generation {
+                    return;
+                }
+                let runtime = backend.runtime.read().await;
+                if !runtime.remote_configured || runtime.sync_paused {
+                    return;
+                }
+                drop(runtime);
+                if let Err(error) = backend.rescan().await {
+                    backend.append_log(format!("periodic remote rescan failed: {error}"));
+                }
             }
         });
     }
 
-    fn enqueue_upload(self: &Arc<Self>, relative_path: String) {
+    fn spawn_rescan(self: &Arc<Self>, context: &'static str) {
+        let backend = self.clone();
+        tokio::spawn(async move {
+            let runtime = backend.runtime.read().await;
+            if !runtime.remote_configured || runtime.sync_paused {
+                return;
+            }
+            drop(runtime);
+            if let Err(error) = backend.rescan().await {
+                backend.append_log(format!("{context} remote rescan failed: {error}"));
+            }
+        });
+    }
+
+    fn enqueue_upload(self: &Arc<Self>, relative_path: String, allow_while_paused: bool) {
+        if self.runtime.blocking_read().sync_paused && !allow_while_paused {
+            self.append_log(format!(
+                "deferred upload for {relative_path} while sync is paused"
+            ));
+            return;
+        }
         {
             let mut runtime = self.runtime.blocking_write();
             runtime.pending_uploads = runtime.pending_uploads.saturating_add(1);
@@ -1075,6 +1166,20 @@ impl RcloneBackend {
         });
     }
 
+    fn enqueue_dirty_uploads(self: &Arc<Self>) -> Result<u32> {
+        let dirty_paths = self
+            .path_state_store
+            .all()?
+            .into_iter()
+            .filter(|state| !state.is_dir && state.dirty)
+            .map(|state| state.path)
+            .collect::<BTreeSet<_>>();
+        for path in &dirty_paths {
+            self.enqueue_upload(path.clone(), true);
+        }
+        Ok(dirty_paths.len() as u32)
+    }
+
     fn set_path_error_sync(&self, relative_path: &str, message: String) {
         let mut states = self
             .path_state_store
@@ -1096,10 +1201,6 @@ impl RcloneBackend {
         if message.contains("conflict") {
             state.state = PathSyncState::Conflict;
             state.conflict_reason = message.clone();
-            self.runtime
-                .blocking_write()
-                .conflict_relative_paths
-                .insert(relative_path.to_string());
         } else {
             state.state = PathSyncState::Error;
             state.error = message.clone();
@@ -1107,11 +1208,9 @@ impl RcloneBackend {
         state.dirty = true;
         state.last_sync_at = unix_timestamp();
         let _ = self.path_state_store.upsert_many(&[state]);
-        let _ = self.refresh_virtual_snapshot();
+        let _ = self.rebuild_path_state_snapshot_sync();
         self.append_log(message.clone());
-        self.emit_event(BackendEvent::PathStatesChanged(vec![
-            relative_path.to_string(),
-        ]));
+        self.emit_path_state_refresh(&[relative_path.to_string()]);
     }
 
     fn hydrate_relative_path_sync(&self, relative_path: &str) -> Result<PathBuf> {
@@ -1170,7 +1269,6 @@ impl RcloneBackend {
             .map(|metadata| metadata.len())
             .unwrap_or(state.size_bytes);
         self.path_state_store.upsert_many(&[state])?;
-        self.refresh_virtual_snapshot()?;
         Ok(local_path)
     }
 
@@ -1261,10 +1359,6 @@ impl RcloneBackend {
         state.last_sync_at = unix_timestamp();
         state.base_revision = format!("local-{}", state.last_sync_at);
         state.state = derive_path_state(&state);
-        self.runtime
-            .blocking_write()
-            .conflict_relative_paths
-            .remove(relative_path);
         self.path_state_store.upsert_many(&[state])?;
         Ok(())
     }
@@ -1304,7 +1398,6 @@ impl RcloneBackend {
             conflict_reason: String::new(),
         };
         self.path_state_store.upsert_many(&[state])?;
-        self.refresh_virtual_snapshot()?;
         Ok(())
     }
 
@@ -1333,7 +1426,6 @@ impl RcloneBackend {
             conflict_reason: String::new(),
         };
         self.path_state_store.upsert_many(&[state])?;
-        self.refresh_virtual_snapshot()?;
         Ok(())
     }
 
@@ -1382,7 +1474,6 @@ impl RcloneBackend {
             })
             .collect::<Vec<_>>();
         self.path_state_store.replace_all(&remaining)?;
-        self.refresh_virtual_snapshot()?;
         Ok(())
     }
 
@@ -1426,7 +1517,6 @@ impl RcloneBackend {
             }
         }
         self.path_state_store.replace_all(&all)?;
-        self.refresh_virtual_snapshot()?;
         Ok(())
     }
 
@@ -1477,6 +1567,10 @@ impl Provider for FuseBridge {
         } else {
             backend.hydrate_relative_path_sync(path).map_err(io_error)?;
         }
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
         let target = backend.ensure_backing_parent(path).map_err(io_error)?;
         OpenOptions::new()
             .read(true)
@@ -1488,22 +1582,42 @@ impl Provider for FuseBridge {
 
     fn create_dir(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.create_remote_dir_sync(path).map_err(io_error)
+        backend.create_remote_dir_sync(path).map_err(io_error)?;
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
+        Ok(())
     }
 
     fn remove_file(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.remove_path_sync(path, false).map_err(io_error)
+        backend.remove_path_sync(path, false).map_err(io_error)?;
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
+        Ok(())
     }
 
     fn remove_dir(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.remove_path_sync(path, true).map_err(io_error)
+        backend.remove_path_sync(path, true).map_err(io_error)?;
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
+        Ok(())
     }
 
     fn rename_path(&self, from: &str, to: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.rename_path_sync(from, to).map_err(io_error)
+        backend.rename_path_sync(from, to).map_err(io_error)?;
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[from.to_string(), to.to_string()]);
+        Ok(())
     }
 
     fn set_len(&self, path: &str, size: u64) -> io::Result<()> {
@@ -1527,6 +1641,11 @@ impl Provider for FuseBridge {
             .path_state_store
             .upsert_many(&[state])
             .map_err(io_error)?;
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
+        backend.enqueue_upload(path.to_string(), false);
         Ok(())
     }
 
@@ -1547,7 +1666,11 @@ impl Provider for FuseBridge {
             .path_state_store
             .upsert_many(&[state])
             .map_err(io_error)?;
-        backend.enqueue_upload(path.to_string());
+        backend
+            .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend.emit_path_state_refresh(&[path.to_string()]);
+        backend.enqueue_upload(path.to_string(), false);
         Ok(())
     }
 }
@@ -1571,6 +1694,51 @@ fn expand_selected_paths(root_path: &Path, raw_paths: &[String]) -> Result<BTree
         collect_selected_files(root_path, &absolute, &mut files)?;
     }
     Ok(files)
+}
+
+fn expand_retry_paths(
+    root_path: &Path,
+    raw_paths: &[String],
+    states: &[PathState],
+) -> Result<BTreeSet<String>> {
+    let state_map = states
+        .iter()
+        .map(|state| (state.path.clone(), state))
+        .collect::<HashMap<_, _>>();
+    let mut retryable = BTreeSet::new();
+
+    for raw_path in raw_paths {
+        let relative = relative_string(&relative_path_for(root_path, Path::new(raw_path))?);
+        let Some(state) = state_map.get(&relative) else {
+            bail!("unknown path {relative}");
+        };
+        if !state.is_dir {
+            retryable.insert(relative);
+            continue;
+        }
+
+        let prefix = format!("{}/", state.path);
+        retryable.extend(
+            states
+                .iter()
+                .filter(|candidate| {
+                    !candidate.is_dir
+                        && candidate.path.starts_with(&prefix)
+                        && is_retryable_state(candidate)
+                })
+                .map(|candidate| candidate.path.clone()),
+        );
+    }
+
+    Ok(retryable)
+}
+
+fn is_retryable_state(state: &PathState) -> bool {
+    state.dirty
+        || state.state == PathSyncState::Error
+        || state.state == PathSyncState::Conflict
+        || !state.error.is_empty()
+        || !state.conflict_reason.is_empty()
 }
 
 fn collect_selected_files(
@@ -1772,6 +1940,42 @@ fn dedup_states(states: Vec<PathState>) -> Vec<PathState> {
         by_path.insert(state.path.clone(), state);
     }
     by_path.into_values().collect()
+}
+
+fn normalize_path_state_snapshot(states: Vec<PathState>) -> Vec<PathState> {
+    let mut normalized = BTreeMap::new();
+    for state in states {
+        if state.is_dir && !should_preserve_dir_state(&state) {
+            continue;
+        }
+        normalized.insert(state.path.clone(), state);
+    }
+    apply_directory_states(&mut normalized);
+    normalized.into_values().collect()
+}
+
+fn should_preserve_dir_state(state: &PathState) -> bool {
+    !state.base_revision.is_empty()
+        || state.pinned
+        || state.hydrated
+        || state.dirty
+        || !state.error.is_empty()
+        || !state.conflict_reason.is_empty()
+}
+
+fn affected_relative_paths(paths: &[String]) -> Vec<String> {
+    let mut affected = BTreeSet::new();
+    for path in paths {
+        let mut current = Some(Path::new(path));
+        while let Some(candidate) = current {
+            if candidate.as_os_str().is_empty() {
+                break;
+            }
+            affected.insert(relative_string(candidate));
+            current = candidate.parent();
+        }
+    }
+    affected.into_iter().collect()
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
@@ -2015,9 +2219,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        build_connect_args, build_deletefile_args, build_download_args, build_lsjson_args,
-        build_moveto_args, build_rmdir_args, build_upload_args, derive_path_state,
-        expand_selected_paths, relative_path_for, resolve_rclone_binary_with_path,
+        affected_relative_paths, build_connect_args, build_deletefile_args, build_download_args,
+        build_lsjson_args, build_moveto_args, build_rmdir_args, build_upload_args,
+        derive_path_state, expand_retry_paths, expand_selected_paths,
+        normalize_path_state_snapshot, relative_path_for, resolve_rclone_binary_with_path,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::{PathState, PathSyncState};
@@ -2126,6 +2331,111 @@ mod tests {
             conflict_reason: "remote changed".into(),
         };
         assert_eq!(derive_path_state(&state), PathSyncState::Conflict);
+    }
+
+    #[test]
+    fn retry_transfer_expands_retryable_directory_files_only() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("root");
+        let snapshot = vec![
+            PathState {
+                path: "Docs".into(),
+                is_dir: true,
+                state: PathSyncState::Conflict,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "Docs/error.txt".into(),
+                is_dir: false,
+                state: PathSyncState::Error,
+                size_bytes: 1,
+                pinned: false,
+                hydrated: true,
+                dirty: false,
+                error: "boom".into(),
+                last_sync_at: 1,
+                base_revision: "rev1".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "Docs/clean.txt".into(),
+                is_dir: false,
+                state: PathSyncState::AvailableLocal,
+                size_bytes: 1,
+                pinned: false,
+                hydrated: true,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "rev2".into(),
+                conflict_reason: String::new(),
+            },
+        ];
+
+        let retryable = expand_retry_paths(&root, &["Docs".into()], &snapshot).expect("retry");
+        assert_eq!(
+            retryable.into_iter().collect::<Vec<_>>(),
+            vec!["Docs/error.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalize_snapshot_rebuilds_directory_aggregates() {
+        let normalized = normalize_path_state_snapshot(vec![
+            PathState {
+                path: "Docs".into(),
+                is_dir: true,
+                state: PathSyncState::PinnedLocal,
+                size_bytes: 0,
+                pinned: true,
+                hydrated: true,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: String::new(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "Docs/readme.md".into(),
+                is_dir: false,
+                state: PathSyncState::AvailableLocal,
+                size_bytes: 1,
+                pinned: false,
+                hydrated: true,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 2,
+                base_revision: "rev".into(),
+                conflict_reason: String::new(),
+            },
+        ]);
+
+        assert_eq!(normalized.len(), 2);
+        let docs = normalized
+            .into_iter()
+            .find(|state| state.path == "Docs")
+            .expect("docs dir");
+        assert_eq!(docs.state, PathSyncState::AvailableLocal);
+        assert!(!docs.pinned);
+    }
+
+    #[test]
+    fn affected_paths_include_parent_directories() {
+        assert_eq!(
+            affected_relative_paths(&["Docs/nested/spec.txt".into()]),
+            vec![
+                "Docs".to_string(),
+                "Docs/nested".to_string(),
+                "Docs/nested/spec.txt".to_string()
+            ]
+        );
     }
 
     fn build_paths(root: &Path) -> ProjectPaths {

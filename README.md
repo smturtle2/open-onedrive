@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  A KDE-first Linux OneDrive client with a real local root folder, transparent on-demand hydration, per-file keep-local or online-only control, Dolphin overlays, and a tray/dashboard shell.
+  Stable 0.1.2 for KDE Plasma 6 and Dolphin: a Linux OneDrive client with a real local root folder, transparent on-demand hydration, per-file keep-local or online-only control, Dolphin overlays, and a tray/dashboard shell.
 </p>
 
 <p align="center">
@@ -30,6 +30,8 @@
   <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive dashboard preview" width="100%">
 </p>
 
+> `v0.1.2` is the first stable, supported release line for `KDE Plasma 6 + Dolphin` on Linux. The release focuses on startup freshness, immediate state propagation after local file operations, and a simpler user-local install flow.
+
 ## Overview
 
 `open-onedrive` targets `KDE Plasma 6 + Dolphin` on Linux and exposes OneDrive through a custom FUSE filesystem rooted at a normal folder such as `~/OneDrive`.
@@ -53,7 +55,7 @@ This gives regular applications a normal local path while still supporting Windo
 - SQLite-backed path-state cache plus queued upload and download operations
 - Dolphin overlay icons and context actions
 - Qt6/Kirigami dashboard with filesystem state, queue depth, conflicts, logs, and tray controls
-- release-first `curl ... | bash` installer
+- stable `curl ... | bash` installer and GitHub Release artifacts
 
 ## Quick Start
 
@@ -66,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 Install a specific tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.0 bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=v0.1.2 bash
 ```
 
 Force the source-build bootstrap path:
@@ -119,6 +121,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 - first-class target: `KDE Plasma 6` with `Dolphin`
 - release installer target: user-local install under `~/.local`
 - source build path: Rust, CMake, Qt6 tooling, KF6 development packages, fuse3 development packages, and a C++ compiler
+- supported file-manager integration in this release: `Dolphin`
 
 ## Configuration
 
@@ -141,6 +144,7 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
+# cache_limit_gb is reserved in 0.1.2 and is not enforced yet
 ```
 
 Design guarantees:
@@ -150,6 +154,7 @@ Design guarantees:
 - hydrated bytes are stored in the hidden backing directory, not directly in the daemon state directory
 - the dashboard, tray, CLI, and Dolphin integrations resolve from the same daemon state
 - the hidden backing directory is implementation detail and should not be edited by hand
+- this stable release supports `KDE Plasma 6 + Dolphin` only
 
 ## UI Notes
 
@@ -194,6 +199,14 @@ Design guarantees:
 - Windows Cloud Files placeholder parity
 - GNOME/Nautilus support in this release
 - custom Microsoft OAuth stack
+- automatic cache eviction in `v0.1.2`
+
+## Troubleshooting
+
+- `Daemon not reachable on D-Bus`: start the app once with `open-onedrive`, or check `systemctl --user status openonedrived.service`.
+- FUSE startup failures: confirm `/dev/fuse` exists and `fusermount3` or `mount.fuse3` is available in `PATH`.
+- Dolphin actions or overlays missing after install: run `kbuildsycoca6`, restart Dolphin, and verify the plugins were copied under `~/.local/lib/qt6/plugins/kf6/`.
+- Sync paused: on-demand reads still work, but dirty local writes stay queued until you resume sync from the dashboard, tray, or CLI.
 
 ## Development
 
