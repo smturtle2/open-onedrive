@@ -10,7 +10,7 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         width: Math.min(parent.width, 760)
-        anchors.horizontalCenter: parent.horizontalCenter
+        x: Math.max(0, (parent.width - width) / 2)
         spacing: Kirigami.Units.largeSpacing
 
         Item {

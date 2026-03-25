@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="./assets/open-onedrive.svg" alt="open-onedrive logo" width="128">
+  <img src="./assets/open-onedrive.svg" alt="open-onedrive logo" width="112">
 </p>
 
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  OneDrive desktop shell for Linux that supervises <code>rclone mount</code>.
+  A Linux desktop shell for OneDrive that supervises <code>rclone mount</code> instead of reinventing sync.
 </p>
 
 <p align="center">
@@ -17,9 +17,10 @@
 
 <p align="center">
   <a href="./README.ko.md">한국어</a> ·
-  <a href="#quick-start">Quick Start</a> ·
   <a href="#highlights">Highlights</a> ·
-  <a href="#architecture">Architecture</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#how-it-works">How It Works</a> ·
   <a href="#development">Development</a>
 </p>
 
@@ -29,25 +30,39 @@
 
 ## Overview
 
-`open-onedrive` is a Linux desktop wrapper around `rclone`, not a custom sync engine. It owns an app-specific `rclone.conf`, supervises the foreground mount process through a daemon, and exposes a Qt6/Kirigami shell plus a small D-Bus CLI for status, recovery, and diagnostics.
+`open-onedrive` is a Linux desktop wrapper around `rclone`, not a custom sync engine. It owns an app-specific `rclone.conf`, supervises the foreground mount process through a daemon, exposes a Qt6/Kirigami shell plus a D-Bus CLI, and keeps recovery actions visible when the mount fails.
+
+## Highlights
+
+- one-line bootstrap with `curl ... | bash`
+- app-owned `rclone.conf` under XDG paths, isolated from `~/.config/rclone/rclone.conf`
+- daemon-managed `rclone mount` with restart backoff and recent log capture
+- dashboard and logs that stay available during recovery
+- Qt6/Kirigami shell plus `openonedrivectl` for diagnostics
+- Dolphin integration for lightweight KDE desktop actions
 
 ## Quick Start
 
-Install from GitHub with one command:
+Install directly from GitHub:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-Install from a cloned checkout:
+Pin a specific branch or tag:
 
 ```bash
-git clone https://github.com/smturtle2/open-onedrive.git
-cd open-onedrive
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=main bash
 ```
 
-Launch and confirm the daemon:
+What the installer does:
+
+- downloads the repository payload into a temporary directory
+- installs `rclone` automatically if it is missing
+- builds the Rust workspace, Qt shell, and KDE integrations
+- installs the launcher, desktop entry, icon, and `openonedrived.service`
+
+Launch and verify:
 
 ```bash
 open-onedrive
@@ -55,47 +70,31 @@ systemctl --user status openonedrived.service
 openonedrivectl status
 ```
 
-If `rclone` is missing, the installer first tries a supported system package manager and then falls back to the official `rclone` install script. That step may prompt for `sudo`.
+Source-based local install still works:
 
-## Highlights
+```bash
+git clone https://github.com/smturtle2/open-onedrive.git
+cd open-onedrive
+./scripts/install.sh
+```
 
-- one-command bootstrap with `curl | bash` or local `./install.sh`
-- app-owned `rclone.conf` under `~/.config/open-onedrive/rclone/rclone.conf`
-- daemon-managed `rclone mount` with restart backoff and recent log capture
-- dashboard recovery flow that keeps logs visible when mount errors occur
-- Qt6/Kirigami UI plus `openonedrivectl` for D-Bus status and control
-- lightweight Dolphin action plugin for KDE Plasma
+## Requirements
 
-## What It Manages
+- Linux desktop environment
+- `rclone` as a hard runtime dependency
+- first-class target: KDE Plasma 6 with Qt6/Kirigami
+- current wrapper flow targets OneDrive Personal
 
-- `openonedrived` owns runtime state, D-Bus methods, mount supervision, and restart policy.
-- `rclone` owns Microsoft sign-in, mount execution, and VFS cache behavior.
-- the UI and `openonedrivectl` talk to the daemon over the session bus.
-- the wrapper never writes to the user's default `~/.config/rclone/rclone.conf`.
+## Configuration
 
-## Preview
+The app stores its config under the XDG project directory, typically:
 
-The dashboard is built for operational clarity: current mount state, mount path, cache size, quick recovery actions, and readable logs stay in one place.
+- `~/.config/open-onedrive/config.toml`
+- `~/.config/open-onedrive/rclone/rclone.conf`
+- `~/.local/state/open-onedrive/runtime-state.toml`
+- `~/.cache/open-onedrive/rclone/`
 
-<p align="center">
-  <img src="./assets/docs/flow-overview.svg" alt="open-onedrive architecture flow" width="100%">
-</p>
-
-## Architecture
-
-| Layer | Responsibility |
-| --- | --- |
-| `install.sh` | bootstrap from GitHub or a local checkout |
-| `xtask` | build, install, and desktop integration automation |
-| `openonedrived` | runtime state, D-Bus surface, mount supervision |
-| `rclone-backend` | `rclone` discovery, config ownership, logs, retries |
-| `openonedrivectl` | CLI access to daemon methods and status |
-| `ui/` | Qt6/Kirigami shell for setup, dashboard, and logs |
-| `integrations/` | Dolphin action plugin |
-
-## Config
-
-`config.toml` is intentionally small. Typical fields:
+Example `config.toml`:
 
 ```toml
 mount_path = "/home/you/OneDrive"
@@ -103,21 +102,45 @@ remote_name = "openonedrive"
 cache_limit_gb = 10
 auto_mount = true
 
-# Optional manual overrides
+# Optional overrides
 # rclone_bin = "/usr/bin/rclone"
-# custom_client_id = "..."
+# custom_client_id = "your-microsoft-client-id"
 ```
+
+Design guarantees:
+
+- the wrapper never writes to `~/.config/rclone/rclone.conf`
+- runtime state is persisted separately from the user-facing config
+- `openonedrived --print-config` stays read-only when no config file exists
+
+## UI Notes
+
+- Setup focuses on choosing a mount directory and launching the browser auth flow.
+- Dashboard keeps mount controls, latest status, and diagnostics in one place.
+- Logs remain reachable during recovery, so retry and inspection happen without dropping back to setup.
+
+## How It Works
+
+<p align="center">
+  <img src="./assets/docs/flow-overview.svg" alt="open-onedrive architecture overview" width="100%">
+</p>
+
+- `openonedrived` owns runtime state, D-Bus methods, and mount supervision.
+- `rclone` handles Microsoft auth, mount execution, and VFS cache behavior.
+- the UI and `openonedrivectl` both talk to the daemon over the session bus.
+- the app stays inside its own XDG-owned surface area instead of sharing the user's default `rclone` config.
 
 ## Project Layout
 
 | Path | Purpose |
 | --- | --- |
+| `install.sh` | bootstrap entrypoint for `curl ... | bash` |
 | `crates/openonedrived` | daemon entrypoint and D-Bus surface |
 | `crates/openonedrivectl` | debug CLI for daemon control and status |
 | `crates/rclone-backend` | `rclone` discovery, config ownership, mount supervision, logs |
 | `crates/config` | XDG paths, app config, mount path validation |
 | `crates/ipc-types` | shared D-Bus status types |
-| `crates/state` | persisted runtime state |
+| `crates/state` | persisted lightweight runtime state |
 | `ui/` | Qt6/Kirigami shell |
 | `integrations/` | Dolphin actions |
 | `packaging/` | launcher, desktop entry, and user service templates |
@@ -127,7 +150,8 @@ auto_mount = true
 
 - no custom Microsoft OAuth, Graph delta sync, SQLite item index, or in-house FUSE/VFS engine
 - no writes to the user's default `~/.config/rclone/rclone.conf`
-- no per-file pin or evict, placeholder badges, or overlay state in this release
+- no placeholder badges, per-file pin or evict, or overlay state in this release
+- no legacy direct-engine compatibility layer
 
 Legacy direct-engine state is discarded on startup.
 
