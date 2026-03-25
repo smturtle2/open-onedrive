@@ -6,9 +6,9 @@ Kirigami.ApplicationWindow {
     id: root
     width: 1040
     height: 720
-    minimumWidth: 900
-    minimumHeight: 640
-    title: "open-onedrive"
+    minimumWidth: 820
+    minimumHeight: 620
+    title: qsTr("open-onedrive")
 
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
     Component.onCompleted: shellBackend.refreshStatus()

@@ -18,6 +18,7 @@ if(TARGET OpenGL::OpenGL AND NOT TARGET OpenGL::GL)
     target_link_libraries(OpenGL::GL INTERFACE OpenGL::OpenGL)
 endif()
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus QuickDialogs2)
+find_package(KF6Kirigami REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -37,6 +38,7 @@ target_link_libraries(open-onedrive-ui
         Qt6::QuickControls2
         Qt6::DBus
         Qt6::QuickDialogs2
+        KF6::Kirigami
 )
 
 install(TARGETS open-onedrive-ui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

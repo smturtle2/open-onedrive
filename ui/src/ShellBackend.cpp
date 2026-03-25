@@ -5,10 +5,13 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QTimer>
 #include <QUrl>
+#include <QClipboard>
 
 namespace {
 constexpr auto kService = "io.github.smturtle2.OpenOneDrive1";
@@ -50,7 +53,7 @@ bool ShellBackend::remoteConfigured() const
 
 bool ShellBackend::dashboardReady() const
 {
-    return m_remoteConfigured && m_mountState != QStringLiteral("Error");
+    return m_remoteConfigured;
 }
 
 bool ShellBackend::customClientIdConfigured() const
@@ -83,6 +86,26 @@ QString ShellBackend::statusMessage() const
     return m_statusMessage;
 }
 
+QString ShellBackend::mountStateLabel() const
+{
+    if (m_mountState == QStringLiteral("Mounted")) {
+        return tr("Mounted");
+    }
+    if (m_mountState == QStringLiteral("Mounting")) {
+        return tr("Mounting");
+    }
+    if (m_mountState == QStringLiteral("Connecting")) {
+        return tr("Connecting");
+    }
+    if (m_mountState == QStringLiteral("Unmounted")) {
+        return tr("Ready to mount");
+    }
+    if (m_mountState == QStringLiteral("Error")) {
+        return tr("Needs attention");
+    }
+    return tr("Disconnected");
+}
+
 QString ShellBackend::cacheUsageLabel() const
 {
     return m_cacheUsageLabel;
@@ -101,6 +124,26 @@ QString ShellBackend::lastLogLine() const
 QStringList ShellBackend::recentLogs() const
 {
     return m_recentLogs;
+}
+
+bool ShellBackend::canMount() const
+{
+    return m_remoteConfigured
+           && m_mountState != QStringLiteral("Mounted")
+           && m_mountState != QStringLiteral("Mounting")
+           && m_mountState != QStringLiteral("Connecting");
+}
+
+bool ShellBackend::canUnmount() const
+{
+    return m_mountState == QStringLiteral("Mounted") || m_mountState == QStringLiteral("Mounting");
+}
+
+bool ShellBackend::canRetry() const
+{
+    return m_remoteConfigured
+           && (m_mountState == QStringLiteral("Error")
+               || m_mountState == QStringLiteral("Unmounted"));
 }
 
 void ShellBackend::setMountPath(const QString &mountPath)
@@ -122,21 +165,21 @@ void ShellBackend::beginConnect()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus. Start openonedrived first."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus. Start openonedrived first."));
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before connecting."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before connecting."))) {
         return;
     }
 
     const QDBusReply<void> connectReply = iface.call(QStringLiteral("BeginConnect"));
     if (!connectReply.isValid()) {
-        updateStatusMessage(QStringLiteral("Connect failed: %1").arg(connectReply.error().message()));
+        updateStatusMessage(tr("Connect failed: %1").arg(connectReply.error().message()));
         return;
     }
 
-    updateStatusMessage(QStringLiteral("Started the rclone browser sign-in flow. Finish the Microsoft login in your browser."));
+    updateStatusMessage(tr("Started the rclone browser sign-in flow. Finish the Microsoft login in your browser."));
     refreshStatus();
     refreshLogs();
 }
@@ -145,13 +188,13 @@ void ShellBackend::disconnectRemote()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
         return;
     }
 
     const QDBusReply<void> reply = iface.call(QStringLiteral("Disconnect"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Disconnect failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Disconnect failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -163,17 +206,17 @@ void ShellBackend::mountRemote()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before mounting."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before mounting."))) {
         return;
     }
 
     const QDBusReply<void> reply = iface.call(QStringLiteral("Mount"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Mount failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Mount failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -184,13 +227,13 @@ void ShellBackend::unmountRemote()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
         return;
     }
 
     const QDBusReply<void> reply = iface.call(QStringLiteral("Unmount"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Unmount failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Unmount failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -201,17 +244,17 @@ void ShellBackend::retryMount()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
         return;
     }
 
-    if (!syncMountPathIfNeeded(iface, QStringLiteral("Choose a mount path before retrying."))) {
+    if (!syncMountPathIfNeeded(iface, tr("Choose a mount path before retrying."))) {
         return;
     }
 
     const QDBusReply<void> reply = iface.call(QStringLiteral("RetryMount"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Retry failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Retry failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -221,7 +264,7 @@ void ShellBackend::retryMount()
 void ShellBackend::openMountLocation()
 {
     if (m_effectiveMountPath.isEmpty()) {
-        updateStatusMessage(QStringLiteral("Choose a mount path first."));
+        updateStatusMessage(tr("Choose a mount path first."));
         return;
     }
 
@@ -257,17 +300,30 @@ QUrl ShellBackend::mountPathDialogFolder() const
     return QUrl::fromLocalFile(QDir::homePath());
 }
 
+void ShellBackend::copyRecentLogsToClipboard()
+{
+    if (m_recentLogs.isEmpty()) {
+        updateStatusMessage(tr("No recent logs to copy yet."));
+        return;
+    }
+
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(m_recentLogs.join(QLatin1Char('\n')));
+        updateStatusMessage(tr("Copied recent logs to the clipboard."));
+    }
+}
+
 void ShellBackend::refreshStatus()
 {
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
-        updateStatusMessage(QStringLiteral("Daemon not reachable on D-Bus. UI is in local fallback mode."));
+        updateStatusMessage(tr("Daemon not reachable on D-Bus. UI is in local fallback mode."));
         return;
     }
 
     const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
     if (!reply.isValid()) {
-        updateStatusMessage(QStringLiteral("Status refresh failed: %1").arg(reply.error().message()));
+        updateStatusMessage(tr("Status refresh failed: %1").arg(reply.error().message()));
         return;
     }
 
@@ -296,7 +352,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
 {
     const QJsonDocument document = QJsonDocument::fromJson(jsonPayload.toUtf8());
     if (!document.isObject()) {
-        updateStatusMessage(QStringLiteral("Daemon returned malformed status JSON."));
+        updateStatusMessage(tr("Daemon returned malformed status JSON."));
         return;
     }
 
@@ -340,7 +396,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
         emit mountStateChanged();
     }
 
-    const QString cacheLabel = QStringLiteral("%1 B cached").arg(cacheBytes);
+    const QString cacheLabel = tr("%1 cached").arg(formatBytes(cacheBytes));
     if (cacheLabel != m_cacheUsageLabel) {
         m_cacheUsageLabel = cacheLabel;
         emit cacheUsageLabelChanged();
@@ -370,31 +426,31 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
 
     if (!m_remoteConfigured) {
-        updateStatusMessage(QStringLiteral("Choose a mount folder, then start the OneDrive browser sign-in."));
+        updateStatusMessage(tr("Choose a mount folder, then start the OneDrive browser sign-in."));
         return;
     }
 
     if (m_mountState == QStringLiteral("Connecting")) {
-        updateStatusMessage(QStringLiteral("Browser sign-in is in progress. Finish the Microsoft login flow."));
+        updateStatusMessage(tr("Browser sign-in is in progress. Finish the Microsoft login flow."));
         return;
     }
 
     if (m_mountState == QStringLiteral("Mounted")) {
-        updateStatusMessage(QStringLiteral("rclone mount is active at %1.").arg(m_effectiveMountPath));
+        updateStatusMessage(tr("rclone mount is active at %1.").arg(m_effectiveMountPath));
         return;
     }
 
     if (m_mountState == QStringLiteral("Mounting")) {
-        updateStatusMessage(QStringLiteral("Starting rclone mount."));
+        updateStatusMessage(tr("Starting rclone mount."));
         return;
     }
 
     if (m_mountState == QStringLiteral("Unmounted")) {
-        updateStatusMessage(QStringLiteral("OneDrive is configured but currently unmounted."));
+        updateStatusMessage(tr("OneDrive is configured but currently unmounted."));
         return;
     }
 
-    updateStatusMessage(QStringLiteral("Review recent logs and reconnect if needed."));
+    updateStatusMessage(tr("Review recent logs and reconnect if needed."));
 }
 
 void ShellBackend::updateStatusMessage(const QString &message)
@@ -421,7 +477,7 @@ bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &e
     const bool pendingBefore = mountPathPending();
     const QDBusReply<void> pathReply = iface.call(QStringLiteral("SetMountPath"), m_mountPath);
     if (!pathReply.isValid()) {
-        updateStatusMessage(QStringLiteral("Mount path update failed: %1").arg(pathReply.error().message()));
+        updateStatusMessage(tr("Mount path update failed: %1").arg(pathReply.error().message()));
         return false;
     }
 
@@ -440,4 +496,9 @@ QString ShellBackend::normalizeMountPath(const QString &mountPath)
         return QString();
     }
     return QDir::cleanPath(trimmedPath);
+}
+
+QString ShellBackend::formatBytes(qint64 bytes)
+{
+    return QLocale().formattedDataSize(bytes);
 }

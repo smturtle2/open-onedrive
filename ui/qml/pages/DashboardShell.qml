@@ -5,7 +5,7 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.Page {
     id: page
-    title: "open-onedrive"
+    title: qsTr("open-onedrive")
 
     property int currentIndex: 0
 
@@ -19,11 +19,11 @@ Kirigami.Page {
             onCurrentIndexChanged: page.currentIndex = currentIndex
 
             TabButton {
-                text: "Dashboard"
+                text: qsTr("Dashboard")
             }
 
             TabButton {
-                text: "Logs"
+                text: qsTr("Logs")
             }
         }
 

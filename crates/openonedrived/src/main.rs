@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     if args.print_config {
         let paths = openonedrive_config::ProjectPaths::discover()?;
-        let config = openonedrive_config::AppConfig::load_or_create(&paths)?;
+        let config = openonedrive_config::AppConfig::load(&paths)?;
         println!("{}", toml::to_string_pretty(&config)?);
         return Ok(());
     }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock};
@@ -119,11 +120,10 @@ impl RcloneBackend {
                 .with_context(|| format!("unable to create {}", requested_path.display()))?;
         }
 
-        {
-            let mut config = self.config.write().await;
-            config.mount_path = requested_path;
-            config.save(&self.paths)?;
-        }
+        let mut updated_config = self.current_config().await;
+        updated_config.mount_path = requested_path;
+        updated_config.save(&self.paths)?;
+        *self.config.write().await = updated_config;
 
         if should_remount && self.runtime.read().await.remote_configured {
             self.mount().await?;
@@ -150,7 +150,9 @@ impl RcloneBackend {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = command.spawn().context("failed to spawn rclone config create")?;
+        let mut child = command
+            .spawn()
+            .context("failed to spawn rclone config create")?;
         let generation = {
             let mut generation = self.connect_generation.lock().await;
             *generation += 1;
@@ -207,38 +209,48 @@ impl RcloneBackend {
                 };
 
                 match exit {
-                Ok(status) if status.success() => {
-                    let config = backend.current_config().await;
-                    match has_remote_config(&backend.paths.rclone_config_file, &config.remote_name) {
-                        Ok(true) => {
-                            backend.set_remote_configured(true).await;
-                            if config.auto_mount {
-                                if let Err(error) = backend.mount().await {
-                                    backend.record_error(error.to_string()).await;
+                    Ok(status) if status.success() => {
+                        let config = backend.current_config().await;
+                        match has_remote_config(
+                            &backend.paths.rclone_config_file,
+                            &config.remote_name,
+                        ) {
+                            Ok(true) => {
+                                backend.set_remote_configured(true).await;
+                                if config.auto_mount {
+                                    if let Err(error) = backend.mount().await {
+                                        backend.record_error(error.to_string()).await;
+                                    }
+                                } else {
+                                    backend.set_mount_state(MountState::Unmounted).await;
                                 }
-                            } else {
-                                backend.set_mount_state(MountState::Unmounted).await;
+                            }
+                            Ok(false) => {
+                                backend
+                                    .record_error(
+                                        "rclone finished without writing the app-owned remote"
+                                            .to_string(),
+                                    )
+                                    .await;
+                            }
+                            Err(error) => {
+                                backend.record_error(error.to_string()).await;
                             }
                         }
-                        Ok(false) => {
-                            backend
-                                .record_error("rclone finished without writing the app-owned remote".to_string())
-                                .await;
-                        }
-                        Err(error) => {
-                            backend.record_error(error.to_string()).await;
-                        }
+                    }
+                    Ok(status) => {
+                        backend
+                            .record_error(format!(
+                                "rclone config create exited with status {status}"
+                            ))
+                            .await;
+                    }
+                    Err(error) => {
+                        backend
+                            .record_error(format!("waiting for rclone connect failed: {error}"))
+                            .await;
                     }
                 }
-                Ok(status) => {
-                    backend
-                        .record_error(format!("rclone config create exited with status {status}"))
-                        .await;
-                }
-                Err(error) => {
-                    backend.record_error(format!("waiting for rclone connect failed: {error}")).await;
-                }
-            }
                 return;
             }
         });
@@ -272,7 +284,10 @@ impl RcloneBackend {
             if !runtime.remote_configured {
                 bail!("no OneDrive remote is configured yet");
             }
-            if matches!(runtime.mount_state, MountState::Mounted | MountState::Mounting) {
+            if matches!(
+                runtime.mount_state,
+                MountState::Mounted | MountState::Mounting
+            ) {
                 return Ok(());
             }
         }
@@ -351,36 +366,36 @@ impl RcloneBackend {
                 };
 
                 match exit {
-                Ok(status) if status.success() => {
-                    let desired = backend.runtime.read().await.mount_desired;
-                    if desired {
+                    Ok(status) if status.success() => {
+                        let desired = backend.runtime.read().await.mount_desired;
+                        if desired {
+                            backend
+                                .record_error("rclone mount exited unexpectedly".to_string())
+                                .await;
+                            if let Some(delay) = backend.prepare_restart_delay().await {
+                                backend.spawn_restart(delay, generation);
+                            }
+                        } else {
+                            backend.set_mount_state(MountState::Unmounted).await;
+                        }
+                    }
+                    Ok(status) => {
                         backend
-                            .record_error("rclone mount exited unexpectedly".to_string())
+                            .record_error(format!("rclone mount exited with status {status}"))
                             .await;
                         if let Some(delay) = backend.prepare_restart_delay().await {
                             backend.spawn_restart(delay, generation);
                         }
-                    } else {
-                        backend.set_mount_state(MountState::Unmounted).await;
+                    }
+                    Err(error) => {
+                        backend
+                            .record_error(format!("waiting for rclone mount failed: {error}"))
+                            .await;
+                        if let Some(delay) = backend.prepare_restart_delay().await {
+                            backend.spawn_restart(delay, generation);
+                        }
                     }
                 }
-                Ok(status) => {
-                    backend
-                        .record_error(format!("rclone mount exited with status {status}"))
-                        .await;
-                    if let Some(delay) = backend.prepare_restart_delay().await {
-                        backend.spawn_restart(delay, generation);
-                    }
-                }
-                Err(error) => {
-                    backend
-                        .record_error(format!("waiting for rclone mount failed: {error}"))
-                        .await;
-                    if let Some(delay) = backend.prepare_restart_delay().await {
-                        backend.spawn_restart(delay, generation);
-                    }
-                }
-            }
                 return;
             }
         });
@@ -523,16 +538,17 @@ impl RcloneBackend {
     }
 
     async fn append_log(&self, line: String) {
+        let stamped_line = format!("{} {}", log_timestamp(), line);
         {
             let mut logs = self.recent_logs.lock().await;
             if logs.len() == MAX_RECENT_LOGS {
                 logs.pop_front();
             }
-            logs.push_back(line.clone());
+            logs.push_back(stamped_line.clone());
         }
         {
             let mut runtime = self.runtime.write().await;
-            runtime.last_log_line = line;
+            runtime.last_log_line = stamped_line;
         }
         if let Err(error) = self.persist_runtime().await {
             warn!("unable to persist runtime state: {error:#}");
@@ -625,7 +641,10 @@ pub fn resolve_rclone_binary_with_path(
         if path.exists() {
             return Ok(path.to_path_buf());
         }
-        bail!("configured rclone binary does not exist: {}", path.display());
+        bail!(
+            "configured rclone binary does not exist: {}",
+            path.display()
+        );
     }
 
     let Some(path_env) = path_env else {
@@ -714,8 +733,8 @@ fn directory_size_bytes(root: &Path) -> Result<u64> {
     let mut total = 0_u64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
-        for entry in fs::read_dir(&path)
-            .with_context(|| format!("unable to inspect {}", path.display()))?
+        for entry in
+            fs::read_dir(&path).with_context(|| format!("unable to inspect {}", path.display()))?
         {
             let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
             let entry_path = entry.path();
@@ -732,10 +751,18 @@ fn directory_size_bytes(root: &Path) -> Result<u64> {
     Ok(total)
 }
 
+fn log_timestamp() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("[{now}]")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_mount_args, resolve_rclone_binary_with_path, restart_backoff, RcloneBackend,
+        RcloneBackend, build_mount_args, resolve_rclone_binary_with_path, restart_backoff,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::MountState;
@@ -750,8 +777,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let override_path = dir.path().join("custom-rclone");
         fs::write(&override_path, "#!/bin/sh\n").expect("write binary");
-        let resolved =
-            resolve_rclone_binary_with_path(Some(&override_path), Some("/bin".as_ref())).expect("resolve");
+        let resolved = resolve_rclone_binary_with_path(Some(&override_path), Some("/bin".as_ref()))
+            .expect("resolve");
         assert_eq!(resolved, override_path);
     }
 
@@ -800,7 +827,9 @@ mod tests {
             ..AppConfig::default()
         };
 
-        let backend = RcloneBackend::load(paths.clone(), config).await.expect("backend");
+        let backend = RcloneBackend::load(paths.clone(), config)
+            .await
+            .expect("backend");
         backend.begin_connect().await.expect("connect");
         sleep(Duration::from_millis(700)).await;
 

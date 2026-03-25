@@ -18,11 +18,15 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString effectiveMountPath READ effectiveMountPath NOTIFY effectiveMountPathChanged)
     Q_PROPERTY(bool mountPathPending READ mountPathPending NOTIFY mountPathPendingChanged)
     Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
+    Q_PROPERTY(QString mountStateLabel READ mountStateLabel NOTIFY mountStateChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QString cacheUsageLabel READ cacheUsageLabel NOTIFY cacheUsageLabelChanged)
     Q_PROPERTY(QString rcloneVersion READ rcloneVersion NOTIFY rcloneVersionChanged)
     Q_PROPERTY(QString lastLogLine READ lastLogLine NOTIFY lastLogLineChanged)
     Q_PROPERTY(QStringList recentLogs READ recentLogs NOTIFY recentLogsChanged)
+    Q_PROPERTY(bool canMount READ canMount NOTIFY mountStateChanged)
+    Q_PROPERTY(bool canUnmount READ canUnmount NOTIFY mountStateChanged)
+    Q_PROPERTY(bool canRetry READ canRetry NOTIFY mountStateChanged)
 
 public:
     explicit ShellBackend(QObject *parent = nullptr);
@@ -34,11 +38,15 @@ public:
     QString effectiveMountPath() const;
     bool mountPathPending() const;
     QString mountState() const;
+    QString mountStateLabel() const;
     QString statusMessage() const;
     QString cacheUsageLabel() const;
     QString rcloneVersion() const;
     QString lastLogLine() const;
     QStringList recentLogs() const;
+    bool canMount() const;
+    bool canUnmount() const;
+    bool canRetry() const;
 
     void setMountPath(const QString &mountPath);
 
@@ -50,6 +58,7 @@ public:
     Q_INVOKABLE void openMountLocation();
     Q_INVOKABLE void setMountPathFromUrl(const QUrl &mountPathUrl);
     Q_INVOKABLE QUrl mountPathDialogFolder() const;
+    Q_INVOKABLE void copyRecentLogsToClipboard();
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshLogs();
 
@@ -72,6 +81,7 @@ private:
     bool syncMountPathIfNeeded(QDBusInterface &iface, const QString &emptyPathMessage);
     void updateStatusMessage(const QString &message);
     static QString normalizeMountPath(const QString &mountPath);
+    static QString formatBytes(qint64 bytes);
 
     QTimer *m_refreshTimer = nullptr;
     bool m_remoteConfigured = false;

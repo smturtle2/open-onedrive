@@ -20,11 +20,16 @@ enum Command {
     Status,
     BeginConnect,
     Disconnect,
-    SetMountPath { path: String },
+    SetMountPath {
+        path: String,
+    },
     Mount,
     Unmount,
     RetryMount,
-    Logs { #[arg(default_value_t = 50)] limit: u32 },
+    Logs {
+        #[arg(default_value_t = 50)]
+        limit: u32,
+    },
 }
 
 #[tokio::main]

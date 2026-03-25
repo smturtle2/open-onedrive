@@ -14,8 +14,8 @@ Frame {
 
     FolderDialog {
         id: folderDialog
-        title: "Choose mount directory"
-        acceptLabel: "Use Folder"
+        title: qsTr("Choose mount directory")
+        acceptLabel: qsTr("Use Folder")
 
         onAccepted: shellBackend.setMountPathFromUrl(selectedFolder)
     }
@@ -25,7 +25,7 @@ Frame {
         spacing: Kirigami.Units.mediumSpacing
 
         Label {
-            text: "Mount directory"
+            text: qsTr("Mount directory")
         }
 
         RowLayout {
@@ -34,13 +34,13 @@ Frame {
 
             TextField {
                 Layout.fillWidth: true
-                placeholderText: "/home/you/OneDrive"
+                placeholderText: qsTr("/home/you/OneDrive")
                 text: shellBackend.mountPath
                 onTextEdited: shellBackend.mountPath = text
             }
 
             Button {
-                text: "Browse..."
+                text: qsTr("Browse...")
                 icon.name: "document-open-folder"
                 onClicked: {
                     const folder = shellBackend.mountPathDialogFolder()
@@ -58,8 +58,8 @@ Frame {
                    ? Kirigami.Theme.neutralTextColor
                    : Kirigami.Theme.disabledTextColor
             text: shellBackend.mountPathPending
-                  ? "Pending change. Apply it with Connect, Mount, or Retry Mount."
-                  : "Changes take effect the next time you connect or remount."
+                  ? qsTr("Pending change. Apply it with Connect, Mount, or Retry Mount.")
+                  : qsTr("Changes take effect the next time you connect or remount.")
         }
 
         Label {

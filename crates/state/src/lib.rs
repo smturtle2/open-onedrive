@@ -3,6 +3,7 @@ use openonedrive_ipc_types::MountState;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
@@ -35,13 +36,22 @@ impl StateStore {
 
         let raw = fs::read_to_string(&self.path)
             .with_context(|| format!("unable to read {}", self.path.display()))?;
-        toml::from_str(&raw).with_context(|| format!("unable to parse {}", self.path.display()))
+        match toml::from_str(&raw) {
+            Ok(state) => Ok(state),
+            Err(error) => {
+                backup_corrupt_file(&self.path);
+                eprintln!(
+                    "warning: ignoring corrupt runtime state at {}: {error}",
+                    self.path.display()
+                );
+                Ok(RuntimeState::default())
+            }
+        }
     }
 
     pub fn save(&self, state: &RuntimeState) -> Result<()> {
         let raw = toml::to_string_pretty(state).context("unable to serialize runtime state")?;
-        fs::write(&self.path, raw)
-            .with_context(|| format!("unable to write {}", self.path.display()))?;
+        write_atomic(&self.path, &raw)?;
         Ok(())
     }
 
@@ -52,6 +62,41 @@ impl StateStore {
         }
         Ok(())
     }
+}
+
+fn backup_corrupt_file(path: &Path) {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("runtime-state.toml");
+    let backup_path = path.with_file_name(format!("{file_name}.corrupt-{stamp}"));
+    let _ = fs::rename(path, &backup_path);
+}
+
+fn write_atomic(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create {}", parent.display()))?;
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("runtime-state.toml");
+    let temp_path = path.with_file_name(format!("{file_name}.tmp-{stamp}"));
+    fs::write(&temp_path, content)
+        .with_context(|| format!("unable to write {}", temp_path.display()))?;
+    fs::rename(&temp_path, path)
+        .with_context(|| format!("unable to replace {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -81,5 +126,23 @@ mod tests {
         store.save(&snapshot).expect("save");
 
         assert_eq!(store.load().expect("reload"), snapshot);
+    }
+
+    #[test]
+    fn corrupt_state_is_ignored_and_backed_up() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("runtime-state.toml");
+        std::fs::write(&path, "not = [valid").expect("write corrupt state");
+        let store = StateStore::open(&path).expect("store");
+
+        assert_eq!(store.load().expect("load"), RuntimeState::default());
+        assert!(!path.exists());
+        assert!(
+            dir.path()
+                .read_dir()
+                .expect("read dir")
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+        );
     }
 }

@@ -1,7 +1,8 @@
 /target
 /build
+/CMakeFiles
+/CMakeCache.txt
 /.qtc_clangd
 /.cache
 *.db
 *.sqlite3
-

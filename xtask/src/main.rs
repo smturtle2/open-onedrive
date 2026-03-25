@@ -92,11 +92,14 @@ fn install() -> Result<()> {
         &service_dir,
         &action_plugin_dir,
     ] {
-        fs::create_dir_all(dir)
-            .with_context(|| format!("unable to create {}", dir.display()))?;
+        fs::create_dir_all(dir).with_context(|| format!("unable to create {}", dir.display()))?;
     }
 
-    install_file("target/debug/openonedrived", &bin_dir.join("openonedrived"), true)?;
+    install_file(
+        "target/debug/openonedrived",
+        &bin_dir.join("openonedrived"),
+        true,
+    )?;
     install_file(
         "target/debug/openonedrivectl",
         &bin_dir.join("openonedrivectl"),
@@ -124,7 +127,10 @@ fn install() -> Result<()> {
             "packaging/open-onedrive-launcher.in",
             &[
                 ("@INSTALL_BIN_DIR@", bin_dir.to_string_lossy().as_ref()),
-                ("@INSTALL_LIBEXEC_DIR@", libexec_dir.to_string_lossy().as_ref()),
+                (
+                    "@INSTALL_LIBEXEC_DIR@",
+                    libexec_dir.to_string_lossy().as_ref(),
+                ),
                 ("@SERVICE_NAME@", "openonedrived.service"),
             ],
         )?,
@@ -168,7 +174,10 @@ fn install() -> Result<()> {
     run_optional(refresh_kde_cache, "kbuildsycoca6");
 
     println!("Installed open-onedrive into {}", prefix.display());
-    println!("Launch from your app menu or run: {}", bin_dir.join("open-onedrive").display());
+    println!(
+        "Launch from your app menu or run: {}",
+        bin_dir.join("open-onedrive").display()
+    );
     println!("Daemon service: systemctl --user status openonedrived.service");
     Ok(())
 }
@@ -231,10 +240,7 @@ fn cmake_build(source_dir: &str, build_dir: &str) -> Result<()> {
         configure.args(["-G", "Ninja"]);
     }
     if nix_include.exists() {
-        configure.arg(format!(
-            "-DX11_X11_INCLUDE_PATH={}",
-            nix_include.display()
-        ));
+        configure.arg(format!("-DX11_X11_INCLUDE_PATH={}", nix_include.display()));
     }
     if nix_libx11.exists() {
         configure.arg(format!("-DX11_X11_LIB={}", nix_libx11.display()));
@@ -263,11 +269,21 @@ fn install_file(src: &str, dst: &Path, executable: bool) -> Result<()> {
             .with_context(|| format!("unable to create {}", parent.display()))?;
     }
     let temp_path = dst.with_extension("tmp");
-    fs::copy(src_path, &temp_path)
-        .with_context(|| format!("unable to copy {} to {}", src_path.display(), temp_path.display()))?;
+    fs::copy(src_path, &temp_path).with_context(|| {
+        format!(
+            "unable to copy {} to {}",
+            src_path.display(),
+            temp_path.display()
+        )
+    })?;
     set_mode(&temp_path, executable)?;
-    fs::rename(&temp_path, dst)
-        .with_context(|| format!("unable to replace {} with {}", dst.display(), temp_path.display()))?;
+    fs::rename(&temp_path, dst).with_context(|| {
+        format!(
+            "unable to replace {} with {}",
+            dst.display(),
+            temp_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -276,8 +292,8 @@ fn write_text_file(path: &Path, content: &str, executable: bool) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("unable to create {}", parent.display()))?;
     }
-    let mut file = fs::File::create(path)
-        .with_context(|| format!("unable to create {}", path.display()))?;
+    let mut file =
+        fs::File::create(path).with_context(|| format!("unable to create {}", path.display()))?;
     file.write_all(content.as_bytes())
         .with_context(|| format!("unable to write {}", path.display()))?;
     set_mode(path, executable)?;

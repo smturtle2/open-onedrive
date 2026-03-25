@@ -1,0 +1,61 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="720" rx="36" fill="#0B1320"/>
+  <rect x="28" y="28" width="1224" height="664" rx="28" fill="#101C2E"/>
+  <text x="88" y="118" fill="white" font-family="Arial, sans-serif" font-size="40" font-weight="700">How open-onedrive works</text>
+  <text x="88" y="156" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="22">Installer, daemon, UI, and rclone stay separated so the wrapper can recover cleanly.</text>
+
+  <g>
+    <rect x="88" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
+    <rect x="88" y="224" width="250" height="8" rx="4" fill="#4F7CFF"/>
+    <text x="120" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">1. Bootstrap</text>
+    <text x="120" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">curl | bash</text>
+    <text x="120" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Downloads the repo payload, installs rclone if needed, then runs xtask install.</text>
+  </g>
+
+  <g>
+    <rect x="394" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
+    <rect x="394" y="224" width="250" height="8" rx="4" fill="#F7B267"/>
+    <text x="426" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">2. Daemon</text>
+    <text x="426" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">openonedrived</text>
+    <text x="426" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Owns D-Bus methods, runtime state, restart backoff, and app-specific config directories.</text>
+  </g>
+
+  <g>
+    <rect x="700" y="224" width="250" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
+    <rect x="700" y="224" width="250" height="8" rx="4" fill="#1F7A4D"/>
+    <text x="732" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">3. Clients</text>
+    <text x="732" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">Qt shell and CLI</text>
+    <text x="732" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">The Kirigami UI and openonedrivectl talk to the daemon over the session bus.</text>
+  </g>
+
+  <g>
+    <rect x="1006" y="224" width="186" height="180" rx="28" fill="#0C1830" stroke="#22395F"/>
+    <rect x="1006" y="224" width="186" height="8" rx="4" fill="#6F8B42"/>
+    <text x="1038" y="286" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">4. rclone</text>
+    <text x="1038" y="326" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">Auth and mount</text>
+    <text x="1038" y="358" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">Microsoft login, mount execution, cache behavior.</text>
+  </g>
+
+  <g stroke="#48678D" stroke-width="6" stroke-linecap="round">
+    <path d="M338 314H382"/>
+    <path d="M644 314H688"/>
+    <path d="M950 314H992"/>
+  </g>
+  <g fill="#48678D">
+    <path d="M376 302L394 314L376 326V302Z"/>
+    <path d="M682 302L700 314L682 326V302Z"/>
+    <path d="M986 302L1004 314L986 326V302Z"/>
+  </g>
+
+  <g>
+    <rect x="88" y="466" width="1104" height="156" rx="28" fill="#0A1627" stroke="#22395F"/>
+    <text x="124" y="518" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">XDG-owned surface area</text>
+    <text x="124" y="554" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/config.toml</text>
+    <text x="124" y="584" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">config/open-onedrive/rclone/rclone.conf</text>
+    <text x="124" y="614" fill="#D5DDEB" font-family="Arial, sans-serif" font-size="20">state/open-onedrive/runtime-state.toml and cache/open-onedrive/rclone</text>
+
+    <rect x="792" y="504" width="364" height="84" rx="20" fill="#12233A"/>
+    <text x="826" y="538" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">Key property</text>
+    <text x="826" y="570" fill="#A7B6D0" font-family="Arial, sans-serif" font-size="18">The wrapper never writes to ~/.config/rclone/rclone.conf.</text>
+  </g>
+</svg>

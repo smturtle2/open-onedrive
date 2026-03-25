@@ -1,0 +1,69 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="720" rx="36" fill="#08111F"/>
+  <rect x="24" y="24" width="1232" height="672" rx="28" fill="url(#bg)"/>
+  <circle cx="100" cy="96" r="10" fill="#FF6B6B"/>
+  <circle cx="136" cy="96" r="10" fill="#F7B267"/>
+  <circle cx="172" cy="96" r="10" fill="#6DD47E"/>
+  <text x="226" y="103" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="22">open-onedrive dashboard</text>
+
+  <g opacity="0.9">
+    <rect x="88" y="150" width="1104" height="132" rx="26" fill="#0C1830" stroke="#1E3357"/>
+    <text x="132" y="206" fill="white" font-family="Arial, sans-serif" font-size="42" font-weight="700">OneDrive mount control</text>
+    <text x="132" y="244" fill="#A4B4D0" font-family="Arial, sans-serif" font-size="22">Foreground rclone mount with logs, retry flow, and app-owned config.</text>
+    <rect x="982" y="182" width="156" height="48" rx="24" fill="#1F7A4D"/>
+    <text x="1020" y="212" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">Mounted</text>
+  </g>
+
+  <g>
+    <rect x="88" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
+    <rect x="88" y="320" width="248" height="8" rx="4" fill="#4F7CFF"/>
+    <text x="118" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Backend</text>
+    <text x="118" y="416" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">rclone</text>
+    <text x="118" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Version detected and supervised by daemon</text>
+  </g>
+
+  <g>
+    <rect x="352" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
+    <rect x="352" y="320" width="248" height="8" rx="4" fill="#1F7A4D"/>
+    <text x="382" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Mount state</text>
+    <text x="382" y="416" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">Healthy</text>
+    <text x="382" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Readable status plus recovery actions</text>
+  </g>
+
+  <g>
+    <rect x="616" y="320" width="248" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
+    <rect x="616" y="320" width="248" height="8" rx="4" fill="#3A5A78"/>
+    <text x="646" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Mount path</text>
+    <text x="646" y="416" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">~/OneDrive</text>
+    <text x="646" y="448" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">Empty directory managed by the wrapper</text>
+  </g>
+
+  <g>
+    <rect x="880" y="320" width="312" height="150" rx="24" fill="#101E37" stroke="#1F355B"/>
+    <rect x="880" y="320" width="312" height="8" rx="4" fill="#6F8B42"/>
+    <text x="910" y="370" fill="#91A3C4" font-family="Arial, sans-serif" font-size="18">Recent log</text>
+    <text x="910" y="408" fill="white" font-family="Arial, sans-serif" font-size="22" font-weight="700">[1711398132] mount stderr:</text>
+    <text x="910" y="440" fill="#C6D0E1" font-family="Arial, sans-serif" font-size="18">vfs cache warm and ready</text>
+  </g>
+
+  <g>
+    <rect x="88" y="506" width="760" height="136" rx="24" fill="#0C1830" stroke="#1E3357"/>
+    <text x="118" y="554" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recovery stays visible</text>
+    <text x="118" y="590" fill="#A4B4D0" font-family="Arial, sans-serif" font-size="20">Logs, retry, disconnect, and mount path edits remain available even when the daemon reports an error.</text>
+  </g>
+
+  <g>
+    <rect x="876" y="506" width="316" height="136" rx="24" fill="#0C1830" stroke="#1E3357"/>
+    <rect x="908" y="544" width="120" height="40" rx="20" fill="#4F7CFF"/>
+    <text x="942" y="570" fill="white" font-family="Arial, sans-serif" font-size="18" font-weight="700">Mount</text>
+    <rect x="1042" y="544" width="120" height="40" rx="20" fill="#22324B"/>
+    <text x="1071" y="570" fill="#D7E0EE" font-family="Arial, sans-serif" font-size="18" font-weight="700">Retry</text>
+  </g>
+
+  <defs>
+    <linearGradient id="bg" x1="96" y1="58" x2="1190" y2="666" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#13233E"/>
+      <stop offset="1" stop-color="#0A1322"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -3,6 +3,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const QUALIFIER: &str = "io.github";
 const ORGANIZATION: &str = "smturtle2";
@@ -94,13 +95,9 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn load_or_create(paths: &ProjectPaths) -> Result<Self> {
-        paths.ensure()?;
-
+    pub fn load(paths: &ProjectPaths) -> Result<Self> {
         if !paths.config_file.exists() {
-            let config = Self::default();
-            config.save(paths)?;
-            return Ok(config);
+            return Ok(Self::default());
         }
 
         let raw = fs::read_to_string(&paths.config_file)
@@ -110,11 +107,22 @@ impl AppConfig {
         Ok(config)
     }
 
+    pub fn load_or_create(paths: &ProjectPaths) -> Result<Self> {
+        paths.ensure()?;
+
+        if !paths.config_file.exists() {
+            let config = Self::default();
+            config.save(paths)?;
+            return Ok(config);
+        }
+
+        Self::load(paths)
+    }
+
     pub fn save(&self, paths: &ProjectPaths) -> Result<()> {
         paths.ensure()?;
         let raw = toml::to_string_pretty(self).context("unable to serialize config")?;
-        fs::write(&paths.config_file, raw)
-            .with_context(|| format!("unable to write {}", paths.config_file.display()))?;
+        write_atomic(&paths.config_file, &raw)?;
         Ok(())
     }
 
@@ -145,8 +153,8 @@ pub fn validate_mount_path(path: &Path) -> Result<()> {
         if !metadata.is_dir() {
             bail!("mount path must be a directory");
         }
-        let mut entries = fs::read_dir(path)
-            .with_context(|| format!("unable to inspect {}", path.display()))?;
+        let mut entries =
+            fs::read_dir(path).with_context(|| format!("unable to inspect {}", path.display()))?;
         if entries.next().is_some() {
             bail!("mount path must be empty");
         }
@@ -174,6 +182,26 @@ fn is_known_mount_point(path: &Path) -> Result<bool> {
         let fields: Vec<&str> = line.split_whitespace().collect();
         fields.get(4).copied() == Some(canonical.as_ref())
     }))
+}
+
+fn write_atomic(path: &Path, content: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("target path must have a parent directory")?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config.toml");
+    let temp_path = parent.join(format!(".{file_name}.tmp-{stamp}"));
+    fs::write(&temp_path, content)
+        .with_context(|| format!("unable to write {}", temp_path.display()))?;
+    fs::rename(&temp_path, path)
+        .with_context(|| format!("unable to replace {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -210,5 +238,26 @@ mod tests {
         assert!(paths.config_file.ends_with("config.toml"));
         assert!(paths.legacy_db_file.ends_with("state.sqlite3"));
         assert!(paths.rclone_config_file.ends_with("rclone/rclone.conf"));
+    }
+
+    #[test]
+    fn load_defaults_without_creating_files() {
+        let dir = tempdir().expect("tempdir");
+        let paths = ProjectPaths {
+            config_dir: dir.path().join("config"),
+            state_dir: dir.path().join("state"),
+            cache_dir: dir.path().join("cache"),
+            runtime_dir: dir.path().join("run"),
+            config_file: dir.path().join("config").join("config.toml"),
+            legacy_db_file: dir.path().join("state").join("state.sqlite3"),
+            runtime_state_file: dir.path().join("state").join("runtime-state.toml"),
+            rclone_config_dir: dir.path().join("config").join("rclone"),
+            rclone_config_file: dir.path().join("config").join("rclone").join("rclone.conf"),
+            rclone_cache_dir: dir.path().join("cache").join("rclone"),
+        };
+
+        let config = AppConfig::load(&paths).expect("load");
+        assert_eq!(config, AppConfig::default());
+        assert!(!paths.config_file.exists());
     }
 }
