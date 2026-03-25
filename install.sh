@@ -23,13 +23,19 @@ fetch_url() {
 sha256_check() {
   local checksum_file="$1"
   local archive_file="$2"
+  local expected
+  expected="$(awk '{print $1}' < "$checksum_file")"
   if have_cmd sha256sum; then
-    (cd "$(dirname "$archive_file")" && sha256sum -c "$(basename "$checksum_file")")
+    local actual
+    actual="$(sha256sum "$archive_file" | awk '{print $1}')"
+    if [[ "$expected" == "$actual" ]]; then
+      return
+    fi
+    echo "Checksum verification failed for ${archive_file}." >&2
+    exit 1
     return
   fi
   if have_cmd shasum; then
-    local expected
-    expected="$(cut -d' ' -f1 < "$checksum_file")"
     local actual
     actual="$(shasum -a 256 "$archive_file" | cut -d' ' -f1)"
     if [[ "$expected" == "$actual" ]]; then

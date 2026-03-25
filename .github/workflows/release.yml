@@ -60,7 +60,7 @@ jobs:
           cp build/integrations-release/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so dist/open-onedrive-linux-x86_64/
           cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
           tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
-          sha256sum dist/open-onedrive-linux-x86_64.tar.gz > dist/open-onedrive-linux-x86_64.tar.gz.sha256
+          (cd dist && sha256sum open-onedrive-linux-x86_64.tar.gz > open-onedrive-linux-x86_64.tar.gz.sha256)
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
