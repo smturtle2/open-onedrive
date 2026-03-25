@@ -108,6 +108,28 @@ jobs:
           test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so"
           test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so"
 
+          cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'
+          #!/usr/bin/env bash
+          trap 'exit 0' TERM INT
+          while true; do
+            sleep 1
+          done
+          EOF
+          chmod +x "${smoke_home}/.local/bin/openonedrived"
+          "${smoke_home}/.local/bin/openonedrived" &
+          busy_daemon_pid="$!"
+          sleep 1
+
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          OPEN_ONEDRIVE_SMOKE_RCLONE="${bootstrap_bin}/rclone" \
+          OPEN_ONEDRIVE_RELEASE_BASE_URL="file://${PWD}/dist" \
+          OPEN_ONEDRIVE_SKIP_FUSE_CHECK=1 \
+          bash ./install.sh
+
+          wait "${busy_daemon_pid}" || true
+          test -x "${smoke_home}/.local/bin/openonedrived"
+
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.0.0}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.0.1}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -72,6 +72,59 @@ run_privileged() {
     echo "sudo is required to install rclone automatically." >&2
     return 1
   fi
+}
+
+replace_installed_file() {
+  local src="$1"
+  local dest="$2"
+  local mode="${3:-}"
+  local dest_dir tmp_file
+  dest_dir="$(dirname "$dest")"
+  tmp_file="$(mktemp "${dest_dir}/.$(basename "$dest").XXXXXX")"
+  cp "$src" "$tmp_file"
+  if [[ -n "$mode" ]]; then
+    chmod "$mode" "$tmp_file"
+  fi
+  mv -f "$tmp_file" "$dest"
+}
+
+wait_for_pattern_exit() {
+  local user_name="$1"
+  local pattern="$2"
+
+  if ! have_cmd pgrep; then
+    return
+  fi
+
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if ! pgrep -u "$user_name" -f "$pattern" >/dev/null 2>&1; then
+      return
+    fi
+    sleep 0.2
+  done
+}
+
+stop_running_open_onedrive() {
+  local prefix="$1"
+  local user_name
+  user_name="${USER:-$(id -un)}"
+  local bin_dir="$prefix/bin"
+  local libexec_dir="$prefix/lib/open-onedrive"
+
+  if have_cmd systemctl; then
+    systemctl --user stop openonedrived.service >/dev/null 2>&1 || true
+  fi
+
+  if have_cmd pkill; then
+    pkill -u "$user_name" -f "${bin_dir}/openonedrived" >/dev/null 2>&1 || true
+    pkill -u "$user_name" -f "${libexec_dir}/open-onedrive-ui" >/dev/null 2>&1 || true
+    pkill -u "$user_name" -f "${bin_dir}/open-onedrive\$" >/dev/null 2>&1 || true
+  fi
+
+  wait_for_pattern_exit "$user_name" "${bin_dir}/openonedrived"
+  wait_for_pattern_exit "$user_name" "${libexec_dir}/open-onedrive-ui"
+  wait_for_pattern_exit "$user_name" "${bin_dir}/open-onedrive\$"
 }
 
 install_with_apt() {
@@ -210,7 +263,9 @@ write_launcher() {
   local path="$1"
   local bin_dir="$2"
   local libexec_dir="$3"
-  cat > "$path" <<EOF
+  local temp_path
+  temp_path="$(mktemp "${path}.XXXXXX")"
+  cat > "$temp_path" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -228,13 +283,16 @@ fi
 
 exec "${libexec_dir}/open-onedrive-ui" "\$@"
 EOF
-  chmod +x "$path"
+  chmod +x "$temp_path"
+  mv -f "$temp_path" "$path"
 }
 
 write_desktop_entry() {
   local path="$1"
   local bin_dir="$2"
-  cat > "$path" <<EOF
+  local temp_path
+  temp_path="$(mktemp "${path}.XXXXXX")"
+  cat > "$temp_path" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
@@ -247,12 +305,15 @@ Terminal=false
 Categories=Network;Office;Utility;
 StartupNotify=true
 EOF
+  mv -f "$temp_path" "$path"
 }
 
 write_systemd_service() {
   local path="$1"
   local bin_dir="$2"
-  cat > "$path" <<EOF
+  local temp_path
+  temp_path="$(mktemp "${path}.XXXXXX")"
+  cat > "$temp_path" <<EOF
 [Unit]
 Description=open-onedrive custom FUSE OneDrive daemon
 After=default.target
@@ -267,6 +328,7 @@ Environment=RUST_LOG=openonedrived=info
 [Install]
 WantedBy=default.target
 EOF
+  mv -f "$temp_path" "$path"
 }
 
 install_release_tree() {
@@ -292,13 +354,14 @@ install_release_tree() {
     "$overlay_plugin_dir" \
     "$service_dir"
 
-  cp "$extracted_root/openonedrived" "$bin_dir/openonedrived"
-  cp "$extracted_root/openonedrivectl" "$bin_dir/openonedrivectl"
-  cp "$extracted_root/open-onedrive-ui" "$libexec_dir/open-onedrive-ui"
-  cp "$extracted_root/libopen_onedrive_fileitemaction.so" "$action_plugin_dir/libopen_onedrive_fileitemaction.so"
-  cp "$extracted_root/libopen_onedrive_overlayicon.so" "$overlay_plugin_dir/libopen_onedrive_overlayicon.so"
-  cp "$extracted_root/io.github.smturtle2.OpenOneDrive.svg" "$icon_dir/io.github.smturtle2.OpenOneDrive.svg"
-  chmod +x "$bin_dir/openonedrived" "$bin_dir/openonedrivectl" "$libexec_dir/open-onedrive-ui"
+  stop_running_open_onedrive "$prefix"
+
+  replace_installed_file "$extracted_root/openonedrived" "$bin_dir/openonedrived" 755
+  replace_installed_file "$extracted_root/openonedrivectl" "$bin_dir/openonedrivectl" 755
+  replace_installed_file "$extracted_root/open-onedrive-ui" "$libexec_dir/open-onedrive-ui" 755
+  replace_installed_file "$extracted_root/libopen_onedrive_fileitemaction.so" "$action_plugin_dir/libopen_onedrive_fileitemaction.so"
+  replace_installed_file "$extracted_root/libopen_onedrive_overlayicon.so" "$overlay_plugin_dir/libopen_onedrive_overlayicon.so"
+  replace_installed_file "$extracted_root/io.github.smturtle2.OpenOneDrive.svg" "$icon_dir/io.github.smturtle2.OpenOneDrive.svg"
 
   write_launcher "$bin_dir/open-onedrive" "$bin_dir" "$libexec_dir"
   write_desktop_entry "$app_dir/io.github.smturtle2.OpenOneDrive.desktop" "$bin_dir"

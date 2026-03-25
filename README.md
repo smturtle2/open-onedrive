@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  Stable <strong>v1.0.0</strong> for <strong>KDE Plasma 6 + Dolphin</strong>: a Linux OneDrive client that exposes a real local root folder, hydrates files on demand, lets you keep files on this device or return them to online-only, and keeps the daemon, tray, CLI, and Dolphin in sync.
+  Stable <strong>v1.0.1</strong> for <strong>KDE Plasma 6 + Dolphin</strong>: a Linux OneDrive client that exposes a real local root folder, hydrates files on demand, lets you keep files on this device or return them to online-only, and keeps the daemon, tray, CLI, and Dolphin in sync.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@
   <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
 </p>
 
-> `v1.0.0` is the first stable release line. The scope is intentionally narrow: Linux `x86_64`, `KDE Plasma 6`, and `Dolphin`. The goal is a reliable local-first OneDrive experience, not broad desktop coverage.
+> `v1.0.1` is the current stable release line. The scope is intentionally narrow: Linux `x86_64`, `KDE Plasma 6`, and `Dolphin`. The goal is a reliable local-first OneDrive experience, not broad desktop coverage.
 
 ## Overview
 
@@ -65,7 +65,7 @@ The result is a normal local path for regular Linux apps, with explicit per-file
 | Local filesystem model | custom FUSE mount owned by `openonedrived` |
 | Stable installer target | user-local install under `~/.local` |
 
-Non-goals for `v1.0.0`:
+Non-goals for `v1.0.1`:
 
 - `rclone mount`
 - GNOME / Nautilus support
@@ -85,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 Install an exact tag with a fully pinned bootstrap path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.1/install.sh | bash
 ```
 
 Install from source instead of release artifacts:
@@ -159,7 +159,7 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
-# cache_limit_gb is reserved in v1.0.0 and is not enforced yet
+# cache_limit_gb is reserved in v1.0.1 and is not enforced yet
 ```
 
 Design guarantees:
