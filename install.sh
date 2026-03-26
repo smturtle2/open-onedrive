@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.3.3}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.4.0}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -483,6 +483,7 @@ install_release_tree() {
   local libexec_dir="$prefix/lib/open-onedrive"
   local app_dir="$prefix/share/applications"
   local icon_dir="$prefix/share/icons/hicolor/scalable/apps"
+  local emblem_dir="$prefix/share/icons/hicolor/scalable/emblems"
   local nautilus_extension_dir="$prefix/share/nautilus-python/extensions"
   local plugin_root="$prefix/lib/qt6/plugins/kf6"
   local action_plugin_dir="$plugin_root/kfileitemaction"
@@ -494,6 +495,7 @@ install_release_tree() {
     "$libexec_dir" \
     "$app_dir" \
     "$icon_dir" \
+    "$emblem_dir" \
     "$nautilus_extension_dir" \
     "$action_plugin_dir" \
     "$overlay_plugin_dir" \
@@ -509,6 +511,11 @@ install_release_tree() {
   replace_installed_file "$extracted_root/libopen_onedrive_fileitemaction.so" "$action_plugin_dir/libopen_onedrive_fileitemaction.so"
   replace_installed_file "$extracted_root/libopen_onedrive_overlayicon.so" "$overlay_plugin_dir/libopen_onedrive_overlayicon.so"
   replace_installed_file "$extracted_root/io.github.smturtle2.OpenOneDrive.svg" "$icon_dir/io.github.smturtle2.OpenOneDrive.svg"
+  replace_installed_file "$extracted_root/open-onedrive-online-only.svg" "$emblem_dir/open-onedrive-online-only.svg"
+  replace_installed_file "$extracted_root/open-onedrive-local.svg" "$emblem_dir/open-onedrive-local.svg"
+  replace_installed_file "$extracted_root/open-onedrive-pinned.svg" "$emblem_dir/open-onedrive-pinned.svg"
+  replace_installed_file "$extracted_root/open-onedrive-syncing.svg" "$emblem_dir/open-onedrive-syncing.svg"
+  replace_installed_file "$extracted_root/open-onedrive-attention.svg" "$emblem_dir/open-onedrive-attention.svg"
 
   write_launcher "$bin_dir/open-onedrive" "$bin_dir" "$libexec_dir"
   write_desktop_entry "$app_dir/io.github.smturtle2.OpenOneDrive.desktop" "$bin_dir"
@@ -521,6 +528,9 @@ install_release_tree() {
   fi
   if have_cmd update-desktop-database; then
     update-desktop-database "$app_dir" >/dev/null 2>&1 || true
+  fi
+  if have_cmd gtk-update-icon-cache; then
+    gtk-update-icon-cache -f -t "$prefix/share/icons/hicolor" >/dev/null 2>&1 || true
   fi
   if have_cmd kbuildsycoca6; then
     kbuildsycoca6 >/dev/null 2>&1 || true

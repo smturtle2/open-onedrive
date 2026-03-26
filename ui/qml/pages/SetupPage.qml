@@ -15,7 +15,7 @@ Kirigami.ScrollablePage {
             return qsTr("Repair Remote")
         }
         if (shellBackend.remoteConfigured) {
-            return qsTr("Retry Filesystem")
+            return qsTr("Reconnect")
         }
         return qsTr("Connect OneDrive")
     }
@@ -25,29 +25,29 @@ Kirigami.ScrollablePage {
             return "tools-wizard"
         }
         if (shellBackend.remoteConfigured) {
-            return "view-refresh"
+            return "network-connect"
         }
         return "network-connect"
     }
 
     function stageTitle() {
         if (shellBackend.needsRemoteRepair) {
-            return qsTr("Repair the saved sign-in")
+            return qsTr("Repair the saved remote profile")
         }
         if (shellBackend.remoteConfigured) {
-            return qsTr("Manage the visible folder for this device")
+            return qsTr("Visible folder and connection")
         }
-        return qsTr("Choose the visible folder and sign in")
+        return qsTr("Choose the visible folder and connect")
     }
 
     function stageBody() {
         if (shellBackend.needsRemoteRepair) {
-            return qsTr("Repair refreshes only the app-owned OneDrive remote. Existing local backing bytes and path state stay on this device.")
+            return qsTr("Repair rebuilds only the app-owned remote profile. Local backing bytes and path state stay on this device.")
         }
         if (shellBackend.remoteConfigured) {
-            return qsTr("This page stays intentionally small: folder path, connection state, and recovery actions only.")
+            return qsTr("This page stays intentionally small: folder path plus connection and repair controls.")
         }
-        return qsTr("The first run is short. Pick an empty folder, complete the browser sign-in, then start the visible filesystem.")
+        return qsTr("Pick an empty folder, complete the browser sign-in, then return to Dashboard or Files.")
     }
 
     function runPrimaryAction() {
@@ -55,15 +55,11 @@ Kirigami.ScrollablePage {
             shellBackend.repairRemote()
             return
         }
-        if (shellBackend.remoteConfigured) {
-            shellBackend.retryMount()
-            return
-        }
         shellBackend.beginConnect()
     }
 
     ColumnLayout {
-        width: Math.min(parent.width, 860)
+        width: Math.min(parent.width, 760)
         x: Math.max(0, (parent.width - width) / 2)
         spacing: Kirigami.Units.largeSpacing
 
@@ -99,10 +95,10 @@ Kirigami.ScrollablePage {
                     ? Kirigami.MessageType.Error
                     : Kirigami.MessageType.Information
             text: !shellBackend.daemonReachable
-                  ? qsTr("The background service is offline. You can still review the folder path while the daemon comes back.")
+                  ? qsTr("The background service is offline. Start openonedrived first if actions here do not respond.")
                   : shellBackend.needsRemoteRepair
-                    ? qsTr("Repair replaces only the app-owned sign-in. It does not delete online files in OneDrive.")
-                    : qsTr("open-onedrive keeps its own rclone profile for this app and leaves your regular rclone setup untouched.")
+                    ? qsTr("Repair replaces only the app-owned sign-in. It does not remove files from OneDrive.")
+                    : qsTr("open-onedrive keeps its own rclone profile and leaves your regular rclone setup untouched.")
         }
 
         Rectangle {
@@ -141,9 +137,10 @@ Kirigami.ScrollablePage {
                 anchors.margins: Kirigami.Units.largeSpacing
                 spacing: Kirigami.Units.mediumSpacing
 
-                Kirigami.Heading {
+                Label {
                     text: qsTr("Connection")
-                    level: 3
+                    color: Kirigami.Theme.neutralTextColor
+                    font.bold: true
                 }
 
                 Repeater {
@@ -186,39 +183,11 @@ Kirigami.ScrollablePage {
                     }
 
                     Button {
-                        text: qsTr("Start Filesystem")
-                        icon.name: "folder-cloud"
-                        visible: shellBackend.canMount
-                        onClicked: shellBackend.mountRemote()
-                    }
-
-                    Button {
-                        text: qsTr("Open Folder")
-                        icon.name: "document-open-folder"
-                        visible: shellBackend.effectiveMountPath.length > 0
-                        enabled: shellBackend.effectiveMountPath.length > 0
-                        onClicked: shellBackend.openMountLocation()
-                    }
-
-                    Button {
-                        text: qsTr("Refresh status")
-                        icon.name: "view-refresh"
-                        onClicked: shellBackend.refreshStatus()
-                    }
-
-                    Button {
                         text: qsTr("Disconnect")
                         icon.name: "network-disconnect"
                         visible: shellBackend.remoteConfigured
                         onClicked: requestDisconnect ? requestDisconnect() : shellBackend.disconnectRemote()
                     }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Closing the window keeps tray controls alive, so the daemon can continue working independently.")
                 }
             }
         }

@@ -70,6 +70,11 @@ jobs:
           cp build/integrations-release/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so dist/open-onedrive-linux-x86_64/
           cp integrations/nautilus/src/openonedrive.py dist/open-onedrive-linux-x86_64/
           cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
+          cp assets/emblems/open-onedrive-online-only.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-local.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-pinned.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-syncing.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-attention.svg dist/open-onedrive-linux-x86_64/
           tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
           (cd dist && sha256sum open-onedrive-linux-x86_64.tar.gz > open-onedrive-linux-x86_64.tar.gz.sha256)
 
@@ -117,6 +122,11 @@ jobs:
           test -f "${smoke_home}/.local/share/nautilus-python/extensions/openonedrive.py"
           test -f "${smoke_home}/.config/systemd/user/openonedrived.service"
           test -f "${smoke_home}/.local/share/applications/io.github.smturtle2.OpenOneDrive.desktop"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-online-only.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-local.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-pinned.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-syncing.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-attention.svg"
           test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so"
           test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so"
 

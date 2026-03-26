@@ -12,102 +12,96 @@ Kirigami.ScrollablePage {
     property var requestSetup: null
     property var requestLogs: null
 
-    function bannerType() {
-        if (!shellBackend.daemonReachable
-                || shellBackend.needsRemoteRepair
-                || shellBackend.connectionState === "Error"
-                || shellBackend.mountState === "Error"
-                || shellBackend.syncState === "Error") {
-            return Kirigami.MessageType.Error
-        }
-        if (shellBackend.mountState === "Degraded"
-                || shellBackend.syncState === "Paused"
-                || shellBackend.conflictCount > 0) {
-            return Kirigami.MessageType.Warning
-        }
-        return Kirigami.MessageType.Information
-    }
-
     function statusTitle() {
         switch (shellBackend.appState) {
         case "daemon-unavailable":
-            return qsTr("The background service needs to come back first")
+            return qsTr("The background service is offline")
         case "welcome":
-            return qsTr("This device still needs its OneDrive connection")
+            return qsTr("Connect this device to OneDrive")
         case "connecting":
-            return qsTr("Connection or file work is still in progress")
+            return qsTr("The workspace is still preparing")
         case "recovery":
-            return qsTr("Review recovery work before returning to Files")
+            return qsTr("Recovery work needs your attention")
         case "running":
-            return qsTr("The visible OneDrive folder is ready")
+            return qsTr("Your visible OneDrive folder is ready")
         default:
-            return qsTr("The workspace is ready for the next step")
+            return qsTr("The workspace is ready")
         }
     }
 
     function statusBody() {
         switch (shellBackend.appState) {
         case "daemon-unavailable":
-            return qsTr("Open Logs to inspect the daemon, then restart the user service before browsing files.")
+            return qsTr("Bring the daemon back first, then return to Files.")
         case "welcome":
-            return qsTr("Choose the visible folder in Settings, finish the Microsoft sign-in, then start the filesystem.")
+            return qsTr("Choose the visible folder in Settings, then finish the browser sign-in.")
         case "connecting":
-            return qsTr("Keep this page open if you want a compact status view while queue work and sign-in continue.")
+            return qsTr("Connection, mount, or transfer work is still running in the background.")
         case "recovery":
-            return qsTr("Settings and Logs stay closest to repair actions. Files will reflect the same daemon state once recovery is finished.")
+            return qsTr("Use Settings for repair and Logs for the recent daemon trail.")
         case "running":
-            return qsTr("Browse online-only and local items from Files, then keep or release them without leaving the visible folder workflow.")
+            return qsTr("Files is the main workspace for online-only visibility and keep/free actions.")
         default:
-            return qsTr("Use this page as the short status summary, then continue in Files.")
+            return qsTr("Open Files to continue working with the visible OneDrive folder.")
         }
     }
 
-    function nextStepTitle() {
-        if (shellBackend.appState === "welcome") {
-            return qsTr("Connect OneDrive")
-        }
+    function actionText() {
         if (shellBackend.appState === "daemon-unavailable") {
             return qsTr("Open Logs")
         }
+        if (shellBackend.appState === "welcome") {
+            return qsTr("Open Settings")
+        }
         if (shellBackend.needsRemoteRepair) {
-            return qsTr("Repair the saved sign-in")
+            return qsTr("Repair Remote")
         }
         if (shellBackend.canRetry) {
-            return qsTr("Retry the filesystem")
+            return qsTr("Retry Filesystem")
         }
         if (shellBackend.canMount) {
-            return qsTr("Start the visible folder")
-        }
-        if (shellBackend.syncState === "Paused") {
-            return qsTr("Resume sync")
+            return qsTr("Start Filesystem")
         }
         return qsTr("Open Files")
     }
 
-    function nextStepBody() {
-        if (shellBackend.appState === "welcome") {
-            return qsTr("Settings is the only place you need for the first run: choose the folder path and begin sign-in.")
-        }
+    function runAction() {
         if (shellBackend.appState === "daemon-unavailable") {
-            return qsTr("The main UI can stay open, but the daemon must respond again before Files can refresh.")
+            requestLogs ? requestLogs() : undefined
+            return
+        }
+        if (shellBackend.appState === "welcome") {
+            requestSetup ? requestSetup() : undefined
+            return
         }
         if (shellBackend.needsRemoteRepair) {
-            return qsTr("Repair rebuilds only the app-owned remote profile and keeps the local backing store plus path state.")
+            shellBackend.repairRemote()
+            return
         }
         if (shellBackend.canRetry) {
-            return qsTr("Retry remounts the visible folder after reviewing the recent daemon trail.")
+            shellBackend.retryMount()
+            return
         }
         if (shellBackend.canMount) {
-            return qsTr("Start the filesystem to expose OneDrive as the normal visible folder on this device.")
+            shellBackend.mountRemote()
+            return
         }
-        if (shellBackend.syncState === "Paused") {
-            return qsTr("On-demand opens still work while paused, but local writes stay queued until you resume sync.")
+        requestExplorer ? requestExplorer() : undefined
+    }
+
+    function queueLabel() {
+        if (shellBackend.queuedActionCount <= 0) {
+            return qsTr("Clear")
         }
-        return qsTr("Files remains the main workspace for online-only visibility, residency changes, and quick actions.")
+        return qsTr("%1 queued").arg(shellBackend.queuedActionCount)
+    }
+
+    function storageLabel() {
+        return shellBackend.cacheUsageLabel
     }
 
     ColumnLayout {
-        width: Math.min(parent.width, 900)
+        width: Math.min(parent.width, 860)
         x: Math.max(0, (parent.width - width) / 2)
         spacing: Kirigami.Units.largeSpacing
 
@@ -119,7 +113,9 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             visible: shellBackend.statusMessage.length > 0
             showCloseButton: false
-            type: page.bannerType()
+            type: shellBackend.appState === "recovery" || shellBackend.appState === "daemon-unavailable"
+                  ? Kirigami.MessageType.Warning
+                  : Kirigami.MessageType.Information
             text: shellBackend.statusMessage
         }
 
@@ -140,7 +136,7 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.smallSpacing
 
                     Label {
-                        text: qsTr("Workspace status")
+                        text: qsTr("Current status")
                         color: "#627284"
                         font.capitalization: Font.AllUppercase
                         font.letterSpacing: 1.1
@@ -162,68 +158,21 @@ Kirigami.ScrollablePage {
                     }
                 }
 
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: width > 760 ? 4 : width > 500 ? 2 : 1
-                    columnSpacing: Kirigami.Units.mediumSpacing
-                    rowSpacing: Kirigami.Units.mediumSpacing
-
-                    Repeater {
-                        model: [
-                            { "label": qsTr("Visible folder"), "value": shellBackend.effectiveMountPath.length > 0 ? shellBackend.effectiveMountPath : qsTr("Not set") },
-                            { "label": qsTr("Queue"), "value": qsTr("%1 pending").arg(shellBackend.queueDepth) },
-                            { "label": qsTr("Local bytes"), "value": shellBackend.cacheUsageLabel },
-                            { "label": qsTr("Kept on device"), "value": qsTr("%1 item(s)").arg(shellBackend.pinnedFileCount) }
-                        ]
-
-                        delegate: Rectangle {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            radius: Kirigami.Units.mediumSpacing
-                            color: "#f5f8fb"
-                            border.width: 1
-                            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.08)
-                            implicitHeight: metricColumn.implicitHeight + Kirigami.Units.mediumSpacing * 2
-
-                            ColumnLayout {
-                                id: metricColumn
-                                anchors.fill: parent
-                                anchors.margins: Kirigami.Units.mediumSpacing
-                                spacing: 2
-
-                                Label {
-                                    text: modelData.label
-                                    color: "#627284"
-                                    font.bold: true
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    text: modelData.value
-                                    font.bold: true
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Flow {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
 
                     Button {
-                        text: qsTr("Open Files")
-                        icon.name: "folder-open"
+                        text: page.actionText()
                         highlighted: true
-                        enabled: shellBackend.daemonReachable && shellBackend.remoteConfigured
-                        onClicked: requestExplorer ? requestExplorer() : undefined
+                        onClicked: page.runAction()
                     }
 
                     Button {
-                        text: qsTr("Open Settings")
-                        icon.name: "settings-configure"
-                        onClicked: requestSetup ? requestSetup() : undefined
+                        text: qsTr("Open Files")
+                        icon.name: "folder-open"
+                        enabled: shellBackend.daemonReachable && shellBackend.remoteConfigured
+                        onClicked: requestExplorer ? requestExplorer() : undefined
                     }
 
                     Button {
@@ -233,10 +182,10 @@ Kirigami.ScrollablePage {
                     }
 
                     Button {
-                        text: qsTr("Disconnect")
-                        icon.name: "network-disconnect"
-                        visible: shellBackend.remoteConfigured
-                        onClicked: requestDisconnect ? requestDisconnect() : undefined
+                        text: qsTr("Open Folder")
+                        icon.name: "document-open-folder"
+                        enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
+                        onClicked: shellBackend.openMountLocation()
                     }
                 }
             }
@@ -244,102 +193,98 @@ Kirigami.ScrollablePage {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 760 ? 2 : 1
-            columnSpacing: Kirigami.Units.largeSpacing
-            rowSpacing: Kirigami.Units.largeSpacing
+            columns: width > 680 ? 4 : 2
+            columnSpacing: Kirigami.Units.mediumSpacing
+            rowSpacing: Kirigami.Units.mediumSpacing
 
-            Rectangle {
-                Layout.fillWidth: true
-                radius: Kirigami.Units.largeSpacing
-                color: "#ffffff"
-                border.width: 1
-                border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
+            Repeater {
+                model: [
+                    { "label": qsTr("Connection"), "value": shellBackend.connectionStateLabel },
+                    { "label": qsTr("Filesystem"), "value": shellBackend.mountStateLabel },
+                    { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel },
+                    { "label": qsTr("Queue"), "value": page.queueLabel() }
+                ]
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Kirigami.Units.largeSpacing
-                    spacing: Kirigami.Units.mediumSpacing
+                delegate: Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    radius: Kirigami.Units.mediumSpacing
+                    color: "#ffffff"
+                    border.width: 1
+                    border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
+                    implicitHeight: metricColumn.implicitHeight + Kirigami.Units.mediumSpacing * 2
 
-                    Kirigami.Heading {
-                        text: qsTr("Current state")
-                        level: 3
-                    }
+                    ColumnLayout {
+                        id: metricColumn
+                        anchors.fill: parent
+                        anchors.margins: Kirigami.Units.mediumSpacing
+                        spacing: 2
 
-                    Repeater {
-                        model: [
-                            { "label": qsTr("Connection"), "value": shellBackend.connectionStateLabel },
-                            { "label": qsTr("Filesystem"), "value": shellBackend.mountStateLabel },
-                            { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel },
-                            { "label": qsTr("Last sync"), "value": shellBackend.lastSyncLabel },
-                            { "label": qsTr("Active transfers"), "value": qsTr("%1").arg(shellBackend.activeTransferCount) }
-                        ]
+                        Label {
+                            text: modelData.label
+                            color: "#627284"
+                            font.bold: true
+                        }
 
-                        delegate: RowLayout {
-                            required property var modelData
+                        Label {
                             Layout.fillWidth: true
-
-                            Label {
-                                text: modelData.label
-                                color: "#627284"
-                            }
-
-                            Item {
-                                Layout.fillWidth: true
-                            }
-
-                            Label {
-                                text: modelData.value
-                                font.bold: true
-                            }
+                            wrapMode: Text.WordWrap
+                            text: modelData.value
+                            font.bold: true
                         }
                     }
                 }
             }
+        }
 
-            Rectangle {
-                Layout.fillWidth: true
-                radius: Kirigami.Units.largeSpacing
-                color: "#ffffff"
-                border.width: 1
-                border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
+        Rectangle {
+            Layout.fillWidth: true
+            radius: Kirigami.Units.largeSpacing
+            color: "#ffffff"
+            border.width: 1
+            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Kirigami.Units.largeSpacing
-                    spacing: Kirigami.Units.mediumSpacing
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
+                spacing: Kirigami.Units.mediumSpacing
 
-                    Kirigami.Heading {
-                        text: qsTr("Next step")
-                        level: 3
-                    }
+                Label {
+                    text: qsTr("Visible folder")
+                    color: "#627284"
+                    font.bold: true
+                }
 
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        text: page.nextStepTitle()
-                        font.bold: true
-                    }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: shellBackend.effectiveMountPath.length > 0
+                          ? shellBackend.effectiveMountPath
+                          : qsTr("Choose a folder in Settings.")
+                }
 
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: "#627284"
-                        text: page.nextStepBody()
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: "#627284"
+                    text: qsTr("Local data: %1").arg(page.storageLabel())
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Button {
+                        text: qsTr("Open Settings")
+                        icon.name: "settings-configure"
+                        onClicked: requestSetup ? requestSetup() : undefined
                     }
 
                     Button {
-                        text: shellBackend.syncState === "Paused" ? qsTr("Resume Sync") : qsTr("Open Files")
-                        icon.name: shellBackend.syncState === "Paused" ? "media-playback-start" : "folder-open"
-                        enabled: shellBackend.syncState === "Paused"
-                                 ? shellBackend.canResumeSync
-                                 : shellBackend.daemonReachable && shellBackend.remoteConfigured
-                        onClicked: {
-                            if (shellBackend.syncState === "Paused") {
-                                shellBackend.resumeSync()
-                            } else if (requestExplorer) {
-                                requestExplorer()
-                            }
-                        }
+                        text: qsTr("Disconnect")
+                        icon.name: "network-disconnect"
+                        visible: shellBackend.remoteConfigured
+                        onClicked: requestDisconnect ? requestDisconnect() : undefined
                     }
                 }
             }

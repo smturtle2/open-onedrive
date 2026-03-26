@@ -7,6 +7,5 @@
         <file alias="qml/pages/ExplorerPage.qml">../qml/pages/ExplorerPage.qml</file>
         <file alias="qml/pages/LogsPage.qml">../qml/pages/LogsPage.qml</file>
         <file alias="qml/components/MountPathEditor.qml">../qml/components/MountPathEditor.qml</file>
-        <file alias="qml/components/StatusCard.qml">../qml/components/StatusCard.qml</file>
     </qresource>
 </RCC>

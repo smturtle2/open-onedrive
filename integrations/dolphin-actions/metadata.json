@@ -3,7 +3,7 @@
         "Id": "open_onedrive_fileitemaction",
         "Name": "open-onedrive Actions",
         "Description": "Device retention actions for open-onedrive mounted items",
-        "Version": "1.3.3",
+        "Version": "1.4.0",
         "License": "MIT"
     }
 }

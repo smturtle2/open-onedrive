@@ -688,19 +688,6 @@ void ShellBackend::retryTransferPaths(const QStringList &paths)
     }
 }
 
-void ShellBackend::copyRecentLogsToClipboard()
-{
-    if (m_recentLogs.isEmpty()) {
-        updateStatusMessage(tr("No recent logs to copy yet."));
-        return;
-    }
-
-    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
-        clipboard->setText(m_recentLogs.join(QLatin1Char('\n')));
-        updateStatusMessage(tr("Copied recent logs to the clipboard."));
-    }
-}
-
 void ShellBackend::copyLinesToClipboard(const QStringList &lines)
 {
     if (lines.isEmpty()) {
@@ -712,23 +699,6 @@ void ShellBackend::copyLinesToClipboard(const QStringList &lines)
         clipboard->setText(lines.join(QLatin1Char('\n')));
         updateStatusMessage(tr("Copied the selected log lines to the clipboard."));
     }
-}
-
-QString ShellBackend::listDirectoryJson(const QString &path)
-{
-    QDBusInterface iface = daemonInterface();
-    if (!iface.isValid()) {
-        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
-        return QStringLiteral("[]");
-    }
-
-    const QDBusReply<QString> reply = iface.call(QStringLiteral("ListDirectoryJson"), path);
-    if (!reply.isValid()) {
-        updateStatusMessage(tr("Directory listing failed: %1").arg(reply.error().message()));
-        return QStringLiteral("[]");
-    }
-
-    return reply.value();
 }
 
 QVariantMap ShellBackend::listDirectoryResult(const QString &path)
@@ -754,25 +724,6 @@ QVariantMap ShellBackend::listDirectoryResult(const QString &path)
     }
 
     return parseExplorerEntries(reply.value(), tr("Directory listing returned invalid data."));
-}
-
-QString ShellBackend::searchPathsJson(const QString &query, int limit)
-{
-    QDBusInterface iface = daemonInterface();
-    if (!iface.isValid()) {
-        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
-        return QStringLiteral("[]");
-    }
-
-    const QDBusReply<QString> reply = iface.call(QStringLiteral("SearchPathsJson"),
-                                                 query,
-                                                 qMax(0, limit));
-    if (!reply.isValid()) {
-        updateStatusMessage(tr("Search failed: %1").arg(reply.error().message()));
-        return QStringLiteral("[]");
-    }
-
-    return reply.value();
 }
 
 QVariantMap ShellBackend::searchPathsResult(const QString &query, int limit)

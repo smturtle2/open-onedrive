@@ -50,6 +50,7 @@
 - 커스텀 FUSE 루트를 통해 online-only 파일과 폴더를 계속 가시화
 - `rclone mount`가 아니라 daemon이 관리하는 on-demand 다운로드와 queued 업로드
 - 앱, tray, CLI, Dolphin, Nautilus에서 파일/폴더 단위 residency 제어
+- `online-only`, `local`, `pinned`, `syncing`, `attention` 상태를 구분하는 Dolphin overlay와 우클릭 액션
 - 복잡한 운영 콘솔 대신 단순한 Dashboard와 Settings 화면
 - 창을 닫아도 백그라운드 제어가 남는 독립 tray helper
 - `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`
@@ -103,15 +104,15 @@ openonedrivectl status
 
 1. `Settings`에서 `~/OneDrive` 같은 빈 보이는 폴더를 고릅니다.
 2. `rclone`이 시작한 Microsoft 브라우저 로그인 과정을 끝냅니다.
-3. 필요하면 파일시스템을 시작합니다.
+3. 파일시스템이 아직 멈춰 있으면 `Dashboard`의 기본 작업으로 시작합니다.
 4. `Files`에서 online-only와 local 항목을 함께 확인합니다.
-5. 앱, tray, Dolphin, Nautilus, CLI에서 `Keep on device` 또는 `Free up space`를 사용합니다.
+5. 앱, tray, Dolphin, Nautilus, CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
 
 주요 화면:
 
 - `Dashboard`: 상태, 큐, 저장소 사용량, 다음 권장 작업만 짧게 요약
 - `Files`: online-only 가시성과 residency 변경을 처리하는 메인 작업 화면
-- `Settings`: 폴더 경로, 연결, 복구, 재시작, disconnect
+- `Settings`: 폴더 경로, 연결, 복구, disconnect
 - `Logs`: daemon과 `rclone`의 최근 출력 확인
 - `Tray`: 창이 닫힌 뒤에도 남는 분리된 helper
 
@@ -144,7 +145,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 | OS / 아키텍처 | Linux `x86_64` |
 | 보이는 루트 | `openonedrived`가 관리하는 커스텀 FUSE 경로 |
 | OneDrive backend | `rclone` 인증, 목록, 업로드, 다운로드 primitive |
-| native 파일 관리자 통합 | `Dolphin`과 `Nautilus` |
+| native 파일 관리자 통합 | `Dolphin` 우선, `Nautilus` 보조 |
 | UI 표면 | Qt 셸 + 분리된 tray helper |
 | 안정판 설치 대상 | `~/.local` 사용자 로컬 설치 |
 
@@ -159,6 +160,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 ## 동작 방식
 
 - daemon이 하나의 직렬 action queue를 소유해 `rclone` 작업이 UI 프로세스와 분리됩니다
+- background sync가 pause된 상태에서도 foreground hydrate, keep, free-space 작업은 계속 처리합니다
 - `rclone lsjson --hash`가 파일 바이트를 hydrate하지 않고 원격 metadata를 갱신합니다
 - `rclone copyto`가 첫 open에서 cold file을 다운로드하고 dirty local write를 업로드합니다
 - path state가 저장돼 shell, tray, CLI, 파일 관리자 통합에서 online-only / local / conflict / error 상태를 함께 봅니다
@@ -189,7 +191,7 @@ cargo run -p xtask -- install
 - `Daemon not reachable on D-Bus`: `open-onedrive`를 한 번 실행하거나 `systemctl --user status openonedrived.service`를 확인합니다.
 - 파일시스템 시작 실패: `/dev/fuse`와 `fusermount3` 또는 `mount.fuse3` 존재 여부를 확인합니다.
 - Dolphin action/overlay가 보이지 않음: `kbuildsycoca6` 실행 후 Dolphin을 재시작하고 `~/.local/lib/qt6/plugins/kf6/` 아래 플러그인을 확인합니다.
-- Nautilus action/emblem이 보이지 않음: `nautilus-python` 설치 여부를 확인한 뒤 Nautilus를 재시작합니다.
+- Nautilus action/emblem이 보이지 않음: `nautilus-python` 설치 여부를 확인한 뒤 Nautilus를 재시작합니다. 안정판 기준 우선 통합 대상은 Dolphin입니다.
 - sync가 paused 또는 degraded 상태: on-demand open은 계속 동작하지만 dirty write는 resume 전까지 큐에 남습니다.
 
 ## License

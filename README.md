@@ -50,6 +50,7 @@ The result is a normal folder path for regular Linux apps, plus explicit `Keep o
 - visible online-only files and folders through a custom FUSE root
 - on-demand downloads and queued uploads driven by the daemon, not by `rclone mount`
 - per-file and per-folder residency control from the app, tray, CLI, Dolphin, and Nautilus
+- Dolphin overlays and context-menu actions for `online-only`, `local`, `pinned`, `syncing`, and `attention` states
 - simple Dashboard and Settings surfaces instead of a crowded control panel
 - independent tray helper so the window can close without stopping background controls
 - app-owned `rclone.conf` under XDG paths, isolated from your normal `~/.config/rclone/rclone.conf`
@@ -103,15 +104,15 @@ First run:
 
 1. Choose an empty visible folder such as `~/OneDrive` in `Settings`.
 2. Finish the Microsoft browser sign-in started by `rclone`.
-3. Start the filesystem if it is not already running.
+3. If the filesystem is still stopped, use the primary action on `Dashboard`.
 4. Open `Files` to browse online-only and local items side by side.
-5. Use `Keep on device` or `Free up space` from the app, tray, Dolphin, Nautilus, or CLI.
+5. Use `Keep on this device` or `Free up space` from the app, tray, Dolphin, Nautilus, or CLI.
 
 Main surfaces:
 
 - `Dashboard`: compact status, queue, storage, and the next recommended action
 - `Files`: the main workspace for residency changes and online-only visibility
-- `Settings`: folder path, connect, repair, restart, and disconnect
+- `Settings`: folder path, connect, repair, and disconnect
 - `Logs`: recent daemon and `rclone` output for recovery work
 - `Tray`: independent helper that stays resident after the window closes
 
@@ -144,7 +145,7 @@ Project state lives under XDG paths, typically:
 | OS / arch | Linux `x86_64` |
 | Visible root | custom FUSE path managed by `openonedrived` |
 | OneDrive backend | `rclone` auth, list, upload, and download primitives |
-| Native file manager integration | `Dolphin` and `Nautilus` |
+| Native file manager integration | `Dolphin` first-class, `Nautilus` secondary |
 | UI surface | Qt shell plus separate tray helper |
 | Stable installer target | user-local install under `~/.local` |
 
@@ -159,6 +160,7 @@ Current non-goals:
 ## How It Works
 
 - the daemon owns one serialized action queue so `rclone` work stays isolated from the UI process
+- foreground hydrate, keep, and free-space actions can still run while background sync is paused
 - `rclone lsjson --hash` refreshes remote metadata without hydrating file bytes
 - `rclone copyto` downloads cold files on first open and uploads dirty local writes
 - path state is persisted so online-only, local, conflict, and error status stay visible across the shell, tray, CLI, and file-manager integrations
@@ -189,7 +191,7 @@ cargo run -p xtask -- install
 - `Daemon not reachable on D-Bus`: run `open-onedrive` once, or check `systemctl --user status openonedrived.service`.
 - filesystem startup fails: confirm `/dev/fuse` exists and `fusermount3` or `mount.fuse3` is available in `PATH`.
 - Dolphin actions or overlays are missing: run `kbuildsycoca6`, restart Dolphin, and verify plugins under `~/.local/lib/qt6/plugins/kf6/`.
-- Nautilus actions or emblems are missing: confirm `nautilus-python` is installed, then restart Nautilus.
+- Nautilus actions or emblems are missing: confirm `nautilus-python` is installed, then restart Nautilus. Dolphin is the stable-first integration target.
 - sync is paused or degraded: on-demand opens still work, but dirty local writes stay queued until you resume sync.
 
 ## License

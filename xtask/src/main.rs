@@ -87,6 +87,12 @@ fn install() -> Result<()> {
         .join("hicolor")
         .join("scalable")
         .join("apps");
+    let emblem_dir = prefix
+        .join("share")
+        .join("icons")
+        .join("hicolor")
+        .join("scalable")
+        .join("emblems");
     let nautilus_extension_dir = prefix
         .join("share")
         .join("nautilus-python")
@@ -106,6 +112,7 @@ fn install() -> Result<()> {
         &libexec_dir,
         &app_dir,
         &icon_dir,
+        &emblem_dir,
         &nautilus_extension_dir,
         &service_dir,
         &action_plugin_dir,
@@ -147,6 +154,31 @@ fn install() -> Result<()> {
     install_file(
         "assets/open-onedrive.svg",
         &icon_dir.join("io.github.smturtle2.OpenOneDrive.svg"),
+        false,
+    )?;
+    install_file(
+        "assets/emblems/open-onedrive-online-only.svg",
+        &emblem_dir.join("open-onedrive-online-only.svg"),
+        false,
+    )?;
+    install_file(
+        "assets/emblems/open-onedrive-local.svg",
+        &emblem_dir.join("open-onedrive-local.svg"),
+        false,
+    )?;
+    install_file(
+        "assets/emblems/open-onedrive-pinned.svg",
+        &emblem_dir.join("open-onedrive-pinned.svg"),
+        false,
+    )?;
+    install_file(
+        "assets/emblems/open-onedrive-syncing.svg",
+        &emblem_dir.join("open-onedrive-syncing.svg"),
+        false,
+    )?;
+    install_file(
+        "assets/emblems/open-onedrive-attention.svg",
+        &emblem_dir.join("open-onedrive-attention.svg"),
         false,
     )?;
     install_file(
@@ -206,6 +238,9 @@ fn install() -> Result<()> {
 
     let refresh_kde_cache = Command::new("kbuildsycoca6");
     run_optional(refresh_kde_cache, "kbuildsycoca6");
+    let mut refresh_icon_cache = Command::new("gtk-update-icon-cache");
+    refresh_icon_cache.args(["-f", "-t"]).arg(prefix.join("share").join("icons").join("hicolor"));
+    run_optional(refresh_icon_cache, "gtk-update-icon-cache");
 
     println!("Installed open-onedrive into {}", prefix.display());
     println!(

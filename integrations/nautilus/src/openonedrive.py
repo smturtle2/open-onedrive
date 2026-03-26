@@ -25,12 +25,12 @@ LISTING_TTL_SECONDS = 2.0
 PATH_STATE_TTL_SECONDS = 2.0
 
 STATE_TO_EMBLEM = {
-    "PinnedLocal": "emblem-favorite",
-    "AvailableLocal": "emblem-checked",
-    "Syncing": "emblem-synchronizing",
-    "Conflict": "emblem-important",
-    "Error": "emblem-important",
-    "OnlineOnly": "emblem-downloads",
+    "PinnedLocal": "open-onedrive-pinned",
+    "AvailableLocal": "open-onedrive-local",
+    "Syncing": "open-onedrive-syncing",
+    "Conflict": "open-onedrive-attention",
+    "Error": "open-onedrive-attention",
+    "OnlineOnly": "open-onedrive-online-only",
 }
 
 STATE_TO_LABEL = {

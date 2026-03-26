@@ -154,22 +154,22 @@ QString OpenOneDriveOverlayIconPlugin::currentBackingDirName() const
 QStringList OpenOneDriveOverlayIconPlugin::overlaysForState(const QString &state)
 {
     if (state == QStringLiteral("PinnedLocal")) {
-        return {QStringLiteral("emblem-favorite")};
+        return {QStringLiteral("open-onedrive-pinned")};
     }
     if (state == QStringLiteral("AvailableLocal")) {
-        return {QStringLiteral("emblem-checked")};
+        return {QStringLiteral("open-onedrive-local")};
     }
     if (state == QStringLiteral("Syncing")) {
-        return {QStringLiteral("emblem-synchronizing")};
+        return {QStringLiteral("open-onedrive-syncing")};
     }
     if (state == QStringLiteral("Error")) {
-        return {QStringLiteral("emblem-important")};
+        return {QStringLiteral("open-onedrive-attention")};
     }
     if (state == QStringLiteral("Conflict")) {
-        return {QStringLiteral("emblem-important")};
+        return {QStringLiteral("open-onedrive-attention")};
     }
     if (state == QStringLiteral("OnlineOnly")) {
-        return {QStringLiteral("emblem-downloads")};
+        return {QStringLiteral("open-onedrive-online-only")};
     }
     return {};
 }

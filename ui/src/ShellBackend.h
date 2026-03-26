@@ -117,12 +117,9 @@ public:
     Q_INVOKABLE void makeOnlineOnlyPath(const QString &path);
     Q_INVOKABLE void makeOnlineOnlyPaths(const QStringList &paths);
     Q_INVOKABLE void retryTransferPaths(const QStringList &paths);
-    Q_INVOKABLE void copyRecentLogsToClipboard();
     Q_INVOKABLE void copyLinesToClipboard(const QStringList &lines);
     Q_INVOKABLE QVariantMap listDirectoryResult(const QString &path);
     Q_INVOKABLE QVariantMap searchPathsResult(const QString &query, int limit = 200);
-    Q_INVOKABLE QString listDirectoryJson(const QString &path);
-    Q_INVOKABLE QString searchPathsJson(const QString &query, int limit = 200);
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshLogs();

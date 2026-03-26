@@ -4,8 +4,8 @@ mod vfs;
 use anyhow::{Context, Result, anyhow, bail};
 use openonedrive_config::{AppConfig, ProjectPaths, validate_root_path};
 use openonedrive_ipc_types::{
-    ConnectionState, FilesystemState, LogEntry, LogLevel, PathState, PathSyncState,
-    StatusSnapshot, SyncState,
+    ConnectionState, FilesystemState, LogEntry, LogLevel, PathState, PathSyncState, StatusSnapshot,
+    SyncState,
 };
 use openonedrive_state::{QueuedActionKind, QueuedActionState, RuntimeState, StateStore};
 use path_state::{DirectoryMetadata, PathStateStore};
@@ -17,7 +17,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Weak, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -174,8 +174,12 @@ enum ActionKind {
 impl ActionKind {
     fn label(&self) -> &'static str {
         match self {
-            Self::RefreshDirectory { recursive: true, .. } => "refresh-tree",
-            Self::RefreshDirectory { recursive: false, .. } => "refresh-directory",
+            Self::RefreshDirectory {
+                recursive: true, ..
+            } => "refresh-tree",
+            Self::RefreshDirectory {
+                recursive: false, ..
+            } => "refresh-directory",
             Self::Hydrate { .. } => "hydrate",
             Self::Upload { .. } => "upload",
             Self::CreateDir { .. } => "mkdir",
@@ -195,6 +199,17 @@ impl ActionKind {
 
     fn counts_as_scan(&self) -> bool {
         matches!(self, Self::RefreshDirectory { .. })
+    }
+
+    fn blocked_while_background_sync_is_paused(&self) -> bool {
+        matches!(
+            self,
+            Self::Upload { .. }
+                | Self::RefreshDirectory {
+                    recursive: true,
+                    ..
+                }
+        )
     }
 
     fn to_state(&self) -> QueuedActionState {
@@ -289,6 +304,25 @@ struct ActionScheduler {
     queue: VecDeque<QueuedAction>,
     active_action_kind: String,
     stop_after_current: bool,
+}
+
+impl ActionScheduler {
+    fn next_runnable_action_index(&self) -> Option<usize> {
+        if self.stop_after_current {
+            self.queue
+                .iter()
+                .position(|queued| !queued.kind.blocked_while_background_sync_is_paused())
+        } else if self.queue.is_empty() {
+            None
+        } else {
+            Some(0)
+        }
+    }
+
+    fn pop_next_runnable_action(&mut self) -> Option<QueuedAction> {
+        let index = self.next_runnable_action_index()?;
+        self.queue.remove(index)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -413,11 +447,11 @@ impl RcloneBackend {
                 let queued = {
                     let (lock, wake) = &*scheduler;
                     let mut state = lock.lock().expect("action scheduler poisoned");
-                    while state.queue.is_empty() {
+                    while state.next_runnable_action_index().is_none() {
                         state.active_action_kind.clear();
                         state = wake.wait(state).expect("action scheduler poisoned");
                     }
-                    let queued = state.queue.pop_front().expect("queue entry");
+                    let queued = state.pop_next_runnable_action().expect("queue entry");
                     state.active_action_kind = queued.kind.label().to_string();
                     queued
                 };
@@ -531,11 +565,7 @@ impl RcloneBackend {
         }
     }
 
-    async fn refresh_directory_action(
-        &self,
-        path: Option<String>,
-        recursive: bool,
-    ) -> Result<()> {
+    async fn refresh_directory_action(&self, path: Option<String>, recursive: bool) -> Result<()> {
         if recursive {
             return self.run_recursive_refresh_action().await;
         }
@@ -662,15 +692,21 @@ impl RcloneBackend {
         let Some(refresh_path) = self.directory_listing_refresh_path(relative_path)? else {
             return Ok(());
         };
-        self.refresh_directory_listing(Some(refresh_path.as_str())).await
+        self.refresh_directory_listing(Some(refresh_path.as_str()))
+            .await
     }
 
-    fn directory_listing_refresh_path(&self, relative_path: Option<&str>) -> Result<Option<String>> {
+    fn directory_listing_refresh_path(
+        &self,
+        relative_path: Option<&str>,
+    ) -> Result<Option<String>> {
         let listing_key = relative_path.unwrap_or_default();
         let metadata = self.path_state_store.directory_metadata(listing_key)?;
         let needs_refresh = metadata.is_none_or(|metadata| {
             !metadata.children_known
-                || metadata.last_listed_at.saturating_add(DIRECTORY_LIST_TTL.as_secs())
+                || metadata
+                    .last_listed_at
+                    .saturating_add(DIRECTORY_LIST_TTL.as_secs())
                     < unix_timestamp()
         });
         if needs_refresh {
@@ -1144,8 +1180,10 @@ impl RcloneBackend {
         let result: Result<u32> = async {
             let existing_states = self.path_state_store.all()?;
             let store_is_empty = existing_states.is_empty();
-            let seed_progressively =
-                store_is_empty || existing_states.iter().all(|state| !state.path.contains('/'));
+            let seed_progressively = store_is_empty
+                || existing_states
+                    .iter()
+                    .all(|state| !state.path.contains('/'));
             if store_is_empty {
                 if let Err(error) = self.seed_root_snapshot_preview().await {
                     self.append_warning_log(
@@ -1216,8 +1254,8 @@ impl RcloneBackend {
         let selected_paths = match expand_selected_paths(&config.root_path, raw_paths, &states) {
             Ok(selected_paths) if !selected_paths.is_empty() => selected_paths,
             Ok(_) => {
-                let message = "select at least one file or directory inside the OneDrive folder"
-                    .to_string();
+                let message =
+                    "select at least one file or directory inside the OneDrive folder".to_string();
                 self.complete_sync_activity(Some(message.clone())).await?;
                 bail!(message);
             }
@@ -1619,16 +1657,10 @@ impl RcloneBackend {
                 }
                 self.append_warning_log(
                     "sync",
-                    format!(
-                        "recursive remote scan failed, retrying directory crawl: {error}"
-                    ),
+                    format!("recursive remote scan failed, retrying directory crawl: {error}"),
                 );
-                self.scan_remote_entries_by_directory(
-                    &config,
-                    binary.as_path(),
-                    seed_progressively,
-                )
-                .await
+                self.scan_remote_entries_by_directory(&config, binary.as_path(), seed_progressively)
+                    .await
             }
         }
     }
@@ -1719,22 +1751,9 @@ impl RcloneBackend {
         scope: &str,
         timeout: Option<Duration>,
     ) -> Result<Vec<RcloneListEntry>> {
-        let _guard = self.rclone_process_lock.lock().await;
-        let output_future = Command::new(binary)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .output();
-        let output = match timeout {
-            Some(timeout) => tokio::time::timeout(timeout, output_future)
-                .await
-                .with_context(|| format!("rclone lsjson timed out for {scope}"))??,
-            None => output_future
-                .await
-                .with_context(|| format!("failed to execute rclone lsjson for {scope}"))?,
-        };
+        let output = self
+            .run_rclone_output_command(binary, args, scope, timeout)
+            .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1755,6 +1774,32 @@ impl RcloneBackend {
             String::from_utf8(output.stdout).context("rclone lsjson returned invalid utf-8")?;
         serde_json::from_str::<Vec<RcloneListEntry>>(&payload)
             .context("unable to parse rclone lsjson output")
+    }
+
+    async fn run_rclone_output_command(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        scope: &str,
+        timeout: Option<Duration>,
+    ) -> Result<std::process::Output> {
+        let _guard = self.rclone_process_lock.lock().await;
+        let output_future = Command::new(binary)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output();
+        let output = match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, output_future)
+                .await
+                .with_context(|| format!("rclone command timed out for {scope}"))??,
+            None => output_future
+                .await
+                .with_context(|| format!("failed to execute rclone command for {scope}"))?,
+        };
+        Ok(output)
     }
 
     async fn seed_root_snapshot_preview(&self) -> Result<()> {
@@ -1778,13 +1823,12 @@ impl RcloneBackend {
         tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
             .await
             .context("path-state preview write task join failed")??;
-        self.path_state_store.set_directory_metadata_many(&[
-            DirectoryMetadata {
+        self.path_state_store
+            .set_directory_metadata_many(&[DirectoryMetadata {
                 path: String::new(),
                 children_known: true,
                 last_listed_at: unix_timestamp(),
-            },
-        ])?;
+            }])?;
         self.refresh_virtual_snapshot_with_states(&snapshot);
         self.sync_runtime_sets_from_states(&snapshot)?;
         self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
@@ -1814,11 +1858,11 @@ impl RcloneBackend {
     fn fetch_remote_file_entry_sync(&self, relative_path: &str) -> Result<Option<RcloneListEntry>> {
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-        let _guard = self.rclone_process_lock.blocking_lock();
-        let output = std::process::Command::new(binary)
-            .args(build_lsjson_single_args(&config, &self.paths, relative_path))
-            .output()
-            .context("failed to execute rclone lsjson for single path")?;
+        let output = self.run_rclone_output_blocking(
+            binary.as_path(),
+            build_lsjson_single_args(&config, &self.paths, relative_path),
+            "failed to execute rclone lsjson for single path",
+        )?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             bail!(
@@ -1924,7 +1968,7 @@ impl RcloneBackend {
     async fn refresh_rclone_version(&self) {
         let config = self.current_config().await;
         let version = resolve_rclone_binary(config.rclone_bin.as_deref())
-            .and_then(read_rclone_version)
+            .and_then(|binary| self.read_rclone_version_blocking(binary))
             .unwrap_or_default();
         let mut runtime = self.runtime.write().await;
         runtime.rclone_version = version;
@@ -2115,7 +2159,14 @@ impl RcloneBackend {
     }
 
     fn action_scheduler_snapshot(&self) -> (Vec<QueuedActionState>, String, u32, u32, u32, bool) {
-        let (queued_actions, active_action_kind, pending_downloads, pending_uploads, pending_scans, blocked) = {
+        let (
+            queued_actions,
+            active_action_kind,
+            pending_downloads,
+            pending_uploads,
+            pending_scans,
+            blocked,
+        ) = {
             let scheduler = self
                 .action_scheduler
                 .0
@@ -2180,7 +2231,9 @@ impl RcloneBackend {
                 SyncState::Paused
             } else if !active_action_kind.is_empty() || !queued_actions.is_empty() {
                 if active_action_kind.starts_with("refresh")
-                    || (pending_scans > 0 && runtime.pending_downloads == 0 && runtime.pending_uploads == 0)
+                    || (pending_scans > 0
+                        && runtime.pending_downloads == 0
+                        && runtime.pending_uploads == 0)
                 {
                     SyncState::Scanning
                 } else {
@@ -2472,16 +2525,11 @@ impl RcloneBackend {
         let result = (|| -> Result<PathBuf> {
             let config = self.config_read_guard().clone();
             let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-            let _guard = self.rclone_process_lock.blocking_lock();
-            let status = std::process::Command::new(binary)
-                .args(build_download_args(
-                    &config,
-                    &self.paths,
-                    relative_path,
-                    &local_path,
-                ))
-                .status()
-                .context("failed to execute rclone copyto")?;
+            let status = self.run_rclone_status_blocking(
+                binary.as_path(),
+                build_download_args(&config, &self.paths, relative_path, &local_path),
+                "failed to execute rclone copyto",
+            )?;
             if !status.success() {
                 bail!("rclone copyto failed for {relative_path}");
             }
@@ -2570,7 +2618,10 @@ impl RcloneBackend {
                     }
                 }
                 None => {
-                    bail!("conflict detected for {}: remote file disappeared", relative_path);
+                    bail!(
+                        "conflict detected for {}: remote file disappeared",
+                        relative_path
+                    );
                 }
             }
         }
@@ -2578,22 +2629,20 @@ impl RcloneBackend {
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
         let _guard = self.rclone_process_lock.blocking_lock();
-        let status = std::process::Command::new(binary)
-            .args(build_upload_args(
-                &config,
-                &self.paths,
-                relative_path,
-                &local_path,
-            ))
-            .status()
-            .context("failed to execute rclone copyto")?;
+        let status = self.run_rclone_status_blocking(
+            binary.as_path(),
+            build_upload_args(&config, &self.paths, relative_path, &local_path),
+            "failed to execute rclone copyto",
+        )?;
         if !status.success() {
             bail!("rclone copyto upload failed for {}", relative_path);
         }
 
         let verified_remote = self
             .fetch_remote_file_entry_sync(relative_path)?
-            .with_context(|| format!("uploaded {relative_path}, but could not verify remote metadata"))?;
+            .with_context(|| {
+                format!("uploaded {relative_path}, but could not verify remote metadata")
+            })?;
 
         state.dirty = false;
         state.error.clear();
@@ -2649,11 +2698,11 @@ impl RcloneBackend {
     fn create_remote_dir_sync(&self, relative_path: &str) -> Result<()> {
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-        let _guard = self.rclone_process_lock.blocking_lock();
-        let status = std::process::Command::new(binary)
-            .args(build_mkdir_args(&config, &self.paths, relative_path))
-            .status()
-            .context("failed to execute rclone mkdir")?;
+        let status = self.run_rclone_status_blocking(
+            binary.as_path(),
+            build_mkdir_args(&config, &self.paths, relative_path),
+            "failed to execute rclone mkdir",
+        )?;
         if !status.success() {
             bail!("rclone mkdir failed for {}", relative_path);
         }
@@ -2693,11 +2742,11 @@ impl RcloneBackend {
             } else {
                 build_deletefile_args(&config, &self.paths, relative_path)
             };
-            let _guard = self.rclone_process_lock.blocking_lock();
-            let status = std::process::Command::new(binary)
-                .args(args)
-                .status()
-                .context("failed to execute rclone delete")?;
+            let status = self.run_rclone_status_blocking(
+                binary.as_path(),
+                args,
+                "failed to execute rclone delete",
+            )?;
             if !status.success() {
                 bail!("rclone delete failed for {}", relative_path);
             }
@@ -2744,11 +2793,11 @@ impl RcloneBackend {
         if remote_backed {
             let config = self.config_read_guard().clone();
             let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-            let _guard = self.rclone_process_lock.blocking_lock();
-            let status = std::process::Command::new(binary)
-                .args(build_moveto_args(&config, &self.paths, from, to))
-                .status()
-                .context("failed to execute rclone moveto")?;
+            let status = self.run_rclone_status_blocking(
+                binary.as_path(),
+                build_moveto_args(&config, &self.paths, from, to),
+                "failed to execute rclone moveto",
+            )?;
             if !status.success() {
                 bail!("rclone moveto failed from {} to {}", from, to);
             }
@@ -2793,6 +2842,77 @@ impl RcloneBackend {
         }
         Ok(())
     }
+
+    fn run_rclone_status_blocking(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        context: &str,
+    ) -> Result<ExitStatus> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.run_rclone_status_sync(binary, args, context))
+        } else {
+            self.run_rclone_status_sync(binary, args, context)
+        }
+    }
+
+    fn run_rclone_output_blocking(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        context: &str,
+    ) -> Result<std::process::Output> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.run_rclone_output_sync(binary, args, context))
+        } else {
+            self.run_rclone_output_sync(binary, args, context)
+        }
+    }
+
+    fn read_rclone_version_blocking(&self, binary: PathBuf) -> Result<String> {
+        let output = self.run_rclone_output_blocking(
+            binary.as_path(),
+            vec![OsString::from("version")],
+            "failed to execute rclone version",
+        )?;
+        if !output.status.success() {
+            bail!("rclone version exited with status {}", output.status);
+        }
+        String::from_utf8(output.stdout)
+            .context("rclone version returned invalid utf-8")?
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .context("rclone version did not return any output")
+    }
+
+    fn run_rclone_status_sync(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        context: &str,
+    ) -> Result<ExitStatus> {
+        let _guard = self.rclone_process_lock.blocking_lock();
+        std::process::Command::new(binary)
+            .args(args)
+            .stdin(Stdio::null())
+            .status()
+            .with_context(|| context.to_string())
+    }
+
+    fn run_rclone_output_sync(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        context: &str,
+    ) -> Result<std::process::Output> {
+        let _guard = self.rclone_process_lock.blocking_lock();
+        std::process::Command::new(binary)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| context.to_string())
+    }
 }
 
 struct FuseBridge {
@@ -2826,13 +2946,13 @@ impl Provider for FuseBridge {
         let backend = self.backend()?;
         if tokio::runtime::Handle::try_current().is_ok() {
             tokio::task::block_in_place(|| {
-                backend
-                    .runtime_handle
-                    .block_on(backend.ensure_directory_listing(if path.is_empty() {
+                backend.runtime_handle.block_on(
+                    backend.ensure_directory_listing(if path.is_empty() {
                         None
                     } else {
                         Some(path)
-                    }))
+                    }),
+                )
             })
         } else {
             backend
@@ -3989,23 +4109,6 @@ fn build_moveto_args(
     ]
 }
 
-fn read_rclone_version(binary: PathBuf) -> Result<String> {
-    let output = std::process::Command::new(binary)
-        .arg("version")
-        .output()
-        .context("failed to execute rclone version")?;
-    if !output.status.success() {
-        return Ok(String::new());
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_string())
-}
-
 fn directory_size_bytes(root: &Path) -> Result<u64> {
     if !root.exists() {
         return Ok(0);
@@ -4131,17 +4234,17 @@ fn apply_failed_remote_scan_directories(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionKind, BACKEND_NAME, QueuedAction, RcloneBackend, RcloneListEntry, Runtime,
-        affected_relative_paths,
+        ActionKind, ActionScheduler, BACKEND_NAME, QueuedAction, RcloneBackend, RcloneListEntry,
+        Runtime, affected_relative_paths, apply_failed_remote_scan_directories,
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
-        apply_failed_remote_scan_directories, build_download_args, build_lsjson_args,
-        build_lsjson_directory_args, build_lsjson_single_args, build_moveto_args,
-        build_rmdir_args, build_upload_args, clear_remote_scan_error, derive_path_state,
-        expand_retry_paths, expand_selected_paths, immediate_child_of,
-        is_legacy_onedrive_remote_error, mark_remote_scan_error, normalize_path_state_snapshot,
-        parse_rclone_mod_time_unix, path_matches_query, prefix_lsjson_entries,
-        read_remote_config_section, relative_path_for, remote_config_needs_repair,
-        resolve_rclone_binary_with_path, revision_for_entry, sort_path_states,
+        build_download_args, build_lsjson_args, build_lsjson_directory_args,
+        build_lsjson_single_args, build_moveto_args, build_rmdir_args, build_upload_args,
+        clear_remote_scan_error, derive_path_state, expand_retry_paths, expand_selected_paths,
+        immediate_child_of, is_legacy_onedrive_remote_error, mark_remote_scan_error,
+        normalize_path_state_snapshot, parse_rclone_mod_time_unix, path_matches_query,
+        prefix_lsjson_entries, read_remote_config_section, relative_path_for,
+        remote_config_needs_repair, resolve_rclone_binary_with_path, revision_for_entry,
+        sort_path_states,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::{
@@ -4786,12 +4889,9 @@ mod tests {
             },
         ];
 
-        let selected = expand_selected_paths(
-            &root,
-            &[root.join("docs").display().to_string()],
-            &snapshot,
-        )
-        .expect("expand selected paths");
+        let selected =
+            expand_selected_paths(&root, &[root.join("docs").display().to_string()], &snapshot)
+                .expect("expand selected paths");
 
         assert_eq!(
             selected.into_iter().collect::<Vec<_>>(),
@@ -4971,7 +5071,9 @@ mod tests {
         }];
         let failed = BTreeMap::from([(
             "Vault".to_string(),
-            mark_remote_scan_error("rclone lsjson failed for remote directory Vault: invalidRequest")
+            mark_remote_scan_error(
+                "rclone lsjson failed for remote directory Vault: invalidRequest",
+            ),
         )]);
 
         apply_failed_remote_scan_directories(&mut snapshot, &failed);
@@ -5027,6 +5129,58 @@ mod tests {
 
         let status = backend.status().await.expect("status");
         assert_eq!(status.sync_state, SyncState::Syncing);
+    }
+
+    #[test]
+    fn blocked_queue_prefers_foreground_actions_when_background_sync_is_stopped() {
+        let mut scheduler = ActionScheduler {
+            stop_after_current: true,
+            ..ActionScheduler::default()
+        };
+        scheduler.queue.push_back(QueuedAction {
+            kind: ActionKind::Upload {
+                path: "Docs/report.txt".into(),
+            },
+            responder: None,
+        });
+        scheduler.queue.push_back(QueuedAction {
+            kind: ActionKind::RefreshDirectory {
+                path: None,
+                recursive: true,
+            },
+            responder: None,
+        });
+        scheduler.queue.push_back(QueuedAction {
+            kind: ActionKind::Hydrate {
+                path: "Docs/spec.txt".into(),
+            },
+            responder: None,
+        });
+
+        assert_eq!(scheduler.next_runnable_action_index(), Some(2));
+    }
+
+    #[test]
+    fn blocked_queue_waits_when_only_background_actions_remain() {
+        let mut scheduler = ActionScheduler {
+            stop_after_current: true,
+            ..ActionScheduler::default()
+        };
+        scheduler.queue.push_back(QueuedAction {
+            kind: ActionKind::Upload {
+                path: "Docs/report.txt".into(),
+            },
+            responder: None,
+        });
+        scheduler.queue.push_back(QueuedAction {
+            kind: ActionKind::RefreshDirectory {
+                path: None,
+                recursive: true,
+            },
+            responder: None,
+        });
+
+        assert_eq!(scheduler.next_runnable_action_index(), None);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -5223,7 +5377,10 @@ mod tests {
         RcloneBackend::load(paths, config).await.expect("backend")
     }
 
-    async fn build_backend_with_mock_lsjson(root: &Path, lsjson_payload: &str) -> Arc<RcloneBackend> {
+    async fn build_backend_with_mock_lsjson(
+        root: &Path,
+        lsjson_payload: &str,
+    ) -> Arc<RcloneBackend> {
         let paths = build_paths(root);
         fs::create_dir_all(&paths.rclone_config_dir).expect("rclone config dir");
         fs::write(
