@@ -138,7 +138,7 @@ Kirigami.Page {
         if (state === "Error") {
             return qsTr("Last operation failed")
         }
-        return qsTr("Download only when opened or pinned")
+        return qsTr("Visible now. Downloads when opened or pinned")
     }
 
     function stateColor(entry) {
@@ -156,6 +156,23 @@ Kirigami.Page {
             return "#b53b2d"
         }
         return "#3d77d9"
+    }
+
+    function stateIcon(entry) {
+        const state = String((entry && entry.state) || "")
+        if (state === "PinnedLocal") {
+            return "emblem-favorite"
+        }
+        if (state === "AvailableLocal") {
+            return "emblem-checked"
+        }
+        if (state === "Syncing") {
+            return "emblem-synchronizing"
+        }
+        if (state === "Conflict" || state === "Error") {
+            return "emblem-important"
+        }
+        return "folder-cloud"
     }
 
     function stateGroup(entry) {
@@ -403,7 +420,7 @@ Kirigami.Page {
         if (page.selectedCount() === 1 && page.inspectorEntry) {
             return page.detailText(page.inspectorEntry)
         }
-        return qsTr("Bulk actions apply to every selected path and are queued through the same daemon workflow.")
+        return qsTr("Bulk actions use the same queued daemon workflow as file-manager actions.")
     }
 
     function currentContextPaths() {
@@ -536,7 +553,7 @@ Kirigami.Page {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: page.textMutedColor
-                    text: qsTr("Online-only and local items live in the same list. Browse folders, inspect residency, then keep or release files from here.")
+                    text: qsTr("Online-only files stay visible here. Keep items on this device or free up space from the same list.")
                 }
             }
 
@@ -577,6 +594,14 @@ Kirigami.Page {
             type: Kirigami.MessageType.Information
             showCloseButton: false
             text: qsTr("The file list can still inspect daemon state and queue residency actions, but the visible folder is not mounted yet.")
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: page.loadState === "ready" && page.countForFilter(1) > 0
+            type: Kirigami.MessageType.Information
+            showCloseButton: false
+            text: qsTr("%1 online-only item(s) are visible in this folder right now.").arg(page.countForFilter(1))
         }
 
         Rectangle {
@@ -837,7 +862,7 @@ Kirigami.Page {
             }
 
             Rectangle {
-                Layout.preferredWidth: 300
+                Layout.preferredWidth: 280
                 Layout.fillHeight: true
                 radius: Kirigami.Units.largeSpacing
                 color: page.surfaceColor
@@ -915,17 +940,16 @@ Kirigami.Page {
                             spacing: Kirigami.Units.smallSpacing
 
                             Label {
-                                text: qsTr("Residency legend")
+                                text: qsTr("Visibility")
                                 color: page.textMutedColor
                                 font.bold: true
                             }
 
                             Repeater {
                                 model: [
-                                    { "label": qsTr("Online-only"), "description": qsTr("Visible in the folder but hydrated only when opened or pinned."), "color": "#3d77d9" },
-                                    { "label": qsTr("Available offline"), "description": qsTr("Local bytes are already present on this device."), "color": "#215f9b" },
-                                    { "label": qsTr("Kept on device"), "description": qsTr("Pinned to stay local even after space cleanup."), "color": "#147a51" },
-                                    { "label": qsTr("Attention"), "description": qsTr("The daemon needs retry or recovery work."), "color": "#b53b2d" }
+                                    { "label": qsTr("Online-only"), "value": qsTr("%1").arg(page.countForFilter(1)), "color": "#3d77d9" },
+                                    { "label": qsTr("Local"), "value": qsTr("%1").arg(page.countForFilter(2)), "color": "#147a51" },
+                                    { "label": qsTr("Attention"), "value": qsTr("%1").arg(page.countForFilter(3)), "color": "#b53b2d" }
                                 ]
 
                                 delegate: RowLayout {
@@ -940,23 +964,27 @@ Kirigami.Page {
                                         color: modelData.color
                                     }
 
-                                    ColumnLayout {
+                                    Label {
+                                        text: modelData.label
+                                        color: page.textMutedColor
+                                    }
+
+                                    Item {
                                         Layout.fillWidth: true
-                                        spacing: 0
+                                    }
 
-                                        Label {
-                                            text: modelData.label
-                                            font.bold: true
-                                        }
-
-                                        Label {
-                                            Layout.fillWidth: true
-                                            wrapMode: Text.WordWrap
-                                            color: page.textMutedColor
-                                            text: modelData.description
-                                        }
+                                    Label {
+                                        text: modelData.value
+                                        font.bold: true
                                     }
                                 }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: page.textMutedColor
+                                text: qsTr("Online-only items remain visible and download only when opened or pinned.")
                             }
                         }
                     }
@@ -1136,10 +1164,10 @@ Kirigami.Page {
                         onClicked: page.toggleSelection(entry.path)
                     }
 
-                    RowLayout {
-                        Layout.preferredWidth: 320
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: Kirigami.Units.smallSpacing
+                        RowLayout {
+                            Layout.preferredWidth: 320
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: Kirigami.Units.smallSpacing
 
                         Kirigami.Icon {
                             source: entry.is_dir ? "folder" : "text-x-generic"
@@ -1180,15 +1208,27 @@ Kirigami.Page {
                             color: Qt.rgba(page.stateColor(entry).r, page.stateColor(entry).g, page.stateColor(entry).b, 0.14)
                             border.width: 1
                             border.color: Qt.rgba(page.stateColor(entry).r, page.stateColor(entry).g, page.stateColor(entry).b, 0.24)
-                            implicitHeight: stateLabelText.implicitHeight + Kirigami.Units.smallSpacing * 2
-                            implicitWidth: stateLabelText.implicitWidth + Kirigami.Units.mediumSpacing * 2
+                            implicitHeight: stateBadgeRow.implicitHeight + Kirigami.Units.smallSpacing * 2
+                            implicitWidth: stateBadgeRow.implicitWidth + Kirigami.Units.mediumSpacing * 2
 
-                            Label {
-                                id: stateLabelText
+                            RowLayout {
+                                id: stateBadgeRow
                                 anchors.centerIn: parent
-                                text: page.stateLabel(entry)
-                                color: page.stateColor(entry)
-                                font.bold: true
+                                spacing: Kirigami.Units.smallSpacing
+
+                                Kirigami.Icon {
+                                    source: page.stateIcon(entry)
+                                    implicitWidth: Kirigami.Units.iconSizes.small
+                                    implicitHeight: Kirigami.Units.iconSizes.small
+                                    color: page.stateColor(entry)
+                                }
+
+                                Label {
+                                    id: stateLabelText
+                                    text: page.stateLabel(entry)
+                                    color: page.stateColor(entry)
+                                    font.bold: true
+                                }
                             }
                         }
 

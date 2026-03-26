@@ -2,46 +2,15 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import "../components"
 
 Kirigami.ScrollablePage {
     id: page
-    title: qsTr("Activity")
+    title: qsTr("Dashboard")
 
     property var requestDisconnect: null
     property var requestExplorer: null
     property var requestSetup: null
     property var requestLogs: null
-
-    function headerTitle() {
-        switch (shellBackend.appState) {
-        case "daemon-unavailable":
-            return qsTr("The daemon needs attention")
-        case "welcome":
-            return qsTr("Setup is still the next step")
-        case "connecting":
-            return qsTr("The workspace is still coming online")
-        case "recovery":
-            return qsTr("Recovery work is in progress")
-        default:
-            return qsTr("Queue and sync health")
-        }
-    }
-
-    function headerBody() {
-        switch (shellBackend.appState) {
-        case "daemon-unavailable":
-            return qsTr("Keep Logs nearby, then restart the service before returning to Files.")
-        case "welcome":
-            return qsTr("Choose a visible folder and finish sign-in. Files becomes the main workspace after setup.")
-        case "connecting":
-            return qsTr("Sign-in, mounting, or file activity is still running.")
-        case "recovery":
-            return qsTr("Use Setup for repair actions and Logs for the recent daemon trail.")
-        default:
-            return qsTr("This page stays compact on purpose. It summarizes status while Files remains the dominant workspace.")
-        }
-    }
 
     function bannerType() {
         if (!shellBackend.daemonReachable
@@ -59,20 +28,86 @@ Kirigami.ScrollablePage {
         return Kirigami.MessageType.Information
     }
 
-    function showBanner() {
-        return !shellBackend.daemonReachable
-                || shellBackend.needsRemoteRepair
-                || shellBackend.connectionState === "Connecting"
-                || shellBackend.connectionState === "Error"
-                || shellBackend.mountState === "Error"
-                || shellBackend.mountState === "Degraded"
-                || shellBackend.syncState === "Paused"
-                || shellBackend.syncState === "Error"
-                || shellBackend.conflictCount > 0
+    function statusTitle() {
+        switch (shellBackend.appState) {
+        case "daemon-unavailable":
+            return qsTr("The background service needs to come back first")
+        case "welcome":
+            return qsTr("This device still needs its OneDrive connection")
+        case "connecting":
+            return qsTr("Connection or file work is still in progress")
+        case "recovery":
+            return qsTr("Review recovery work before returning to Files")
+        case "running":
+            return qsTr("The visible OneDrive folder is ready")
+        default:
+            return qsTr("The workspace is ready for the next step")
+        }
+    }
+
+    function statusBody() {
+        switch (shellBackend.appState) {
+        case "daemon-unavailable":
+            return qsTr("Open Logs to inspect the daemon, then restart the user service before browsing files.")
+        case "welcome":
+            return qsTr("Choose the visible folder in Settings, finish the Microsoft sign-in, then start the filesystem.")
+        case "connecting":
+            return qsTr("Keep this page open if you want a compact status view while queue work and sign-in continue.")
+        case "recovery":
+            return qsTr("Settings and Logs stay closest to repair actions. Files will reflect the same daemon state once recovery is finished.")
+        case "running":
+            return qsTr("Browse online-only and local items from Files, then keep or release them without leaving the visible folder workflow.")
+        default:
+            return qsTr("Use this page as the short status summary, then continue in Files.")
+        }
+    }
+
+    function nextStepTitle() {
+        if (shellBackend.appState === "welcome") {
+            return qsTr("Connect OneDrive")
+        }
+        if (shellBackend.appState === "daemon-unavailable") {
+            return qsTr("Open Logs")
+        }
+        if (shellBackend.needsRemoteRepair) {
+            return qsTr("Repair the saved sign-in")
+        }
+        if (shellBackend.canRetry) {
+            return qsTr("Retry the filesystem")
+        }
+        if (shellBackend.canMount) {
+            return qsTr("Start the visible folder")
+        }
+        if (shellBackend.syncState === "Paused") {
+            return qsTr("Resume sync")
+        }
+        return qsTr("Open Files")
+    }
+
+    function nextStepBody() {
+        if (shellBackend.appState === "welcome") {
+            return qsTr("Settings is the only place you need for the first run: choose the folder path and begin sign-in.")
+        }
+        if (shellBackend.appState === "daemon-unavailable") {
+            return qsTr("The main UI can stay open, but the daemon must respond again before Files can refresh.")
+        }
+        if (shellBackend.needsRemoteRepair) {
+            return qsTr("Repair rebuilds only the app-owned remote profile and keeps the local backing store plus path state.")
+        }
+        if (shellBackend.canRetry) {
+            return qsTr("Retry remounts the visible folder after reviewing the recent daemon trail.")
+        }
+        if (shellBackend.canMount) {
+            return qsTr("Start the filesystem to expose OneDrive as the normal visible folder on this device.")
+        }
+        if (shellBackend.syncState === "Paused") {
+            return qsTr("On-demand opens still work while paused, but local writes stay queued until you resume sync.")
+        }
+        return qsTr("Files remains the main workspace for online-only visibility, residency changes, and quick actions.")
     }
 
     ColumnLayout {
-        width: Math.min(parent.width, 1040)
+        width: Math.min(parent.width, 900)
         x: Math.max(0, (parent.width - width) / 2)
         spacing: Kirigami.Units.largeSpacing
 
@@ -80,88 +115,149 @@ Kirigami.ScrollablePage {
             Layout.preferredHeight: Kirigami.Units.smallSpacing
         }
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Kirigami.Heading {
-                Layout.fillWidth: true
-                level: 1
-                wrapMode: Text.WordWrap
-                text: page.headerTitle()
-            }
-
-            Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Kirigami.Theme.neutralTextColor
-                text: page.headerBody()
-            }
-        }
-
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: page.showBanner()
+            visible: shellBackend.statusMessage.length > 0
             showCloseButton: false
             type: page.bannerType()
             text: shellBackend.statusMessage
         }
 
-        GridLayout {
+        Rectangle {
             Layout.fillWidth: true
-            columns: width > 860 ? 4 : width > 560 ? 2 : 1
-            columnSpacing: Kirigami.Units.largeSpacing
-            rowSpacing: Kirigami.Units.largeSpacing
+            radius: Kirigami.Units.largeSpacing
+            color: "#ffffff"
+            border.width: 1
+            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Visible folder")
-                value: shellBackend.effectiveMountPath.length > 0
-                       ? shellBackend.effectiveMountPath
-                       : qsTr("Not set")
-                description: qsTr("The path shown in the file manager and exposed through the mounted workspace.")
-                accentColor: "#295c8a"
-            }
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
+                spacing: Kirigami.Units.largeSpacing
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Queue")
-                value: qsTr("%1 pending").arg(shellBackend.queueDepth)
-                description: qsTr("%1 downloads · %2 uploads").arg(shellBackend.pendingDownloads).arg(shellBackend.pendingUploads)
-                accentColor: shellBackend.syncState === "Syncing" || shellBackend.syncState === "Scanning"
-                             ? "#d38a1b"
-                             : "#295c8a"
-            }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Offline bytes")
-                value: shellBackend.cacheUsageLabel
-                description: qsTr("Hydrated content stays under %1 inside the visible root.").arg(shellBackend.backingDirName)
-                accentColor: "#147a51"
-            }
+                    Label {
+                        text: qsTr("Workspace status")
+                        color: "#627284"
+                        font.capitalization: Font.AllUppercase
+                        font.letterSpacing: 1.1
+                        font.bold: true
+                    }
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Residency")
-                value: qsTr("%1 kept local").arg(shellBackend.pinnedFileCount)
-                description: qsTr("%1 conflicts · last sync %2").arg(shellBackend.conflictCount).arg(shellBackend.lastSyncLabel)
-                accentColor: shellBackend.conflictCount > 0 ? "#b3261e" : "#8b6f00"
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 1
+                        wrapMode: Text.WordWrap
+                        text: page.statusTitle()
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: "#627284"
+                        text: page.statusBody()
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: width > 760 ? 4 : width > 500 ? 2 : 1
+                    columnSpacing: Kirigami.Units.mediumSpacing
+                    rowSpacing: Kirigami.Units.mediumSpacing
+
+                    Repeater {
+                        model: [
+                            { "label": qsTr("Visible folder"), "value": shellBackend.effectiveMountPath.length > 0 ? shellBackend.effectiveMountPath : qsTr("Not set") },
+                            { "label": qsTr("Queue"), "value": qsTr("%1 pending").arg(shellBackend.queueDepth) },
+                            { "label": qsTr("Local bytes"), "value": shellBackend.cacheUsageLabel },
+                            { "label": qsTr("Kept on device"), "value": qsTr("%1 item(s)").arg(shellBackend.pinnedFileCount) }
+                        ]
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            radius: Kirigami.Units.mediumSpacing
+                            color: "#f5f8fb"
+                            border.width: 1
+                            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.08)
+                            implicitHeight: metricColumn.implicitHeight + Kirigami.Units.mediumSpacing * 2
+
+                            ColumnLayout {
+                                id: metricColumn
+                                anchors.fill: parent
+                                anchors.margins: Kirigami.Units.mediumSpacing
+                                spacing: 2
+
+                                Label {
+                                    text: modelData.label
+                                    color: "#627284"
+                                    font.bold: true
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: modelData.value
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Button {
+                        text: qsTr("Open Files")
+                        icon.name: "folder-open"
+                        highlighted: true
+                        enabled: shellBackend.daemonReachable && shellBackend.remoteConfigured
+                        onClicked: requestExplorer ? requestExplorer() : undefined
+                    }
+
+                    Button {
+                        text: qsTr("Open Settings")
+                        icon.name: "settings-configure"
+                        onClicked: requestSetup ? requestSetup() : undefined
+                    }
+
+                    Button {
+                        text: qsTr("Open Logs")
+                        icon.name: "view-list-text"
+                        onClicked: requestLogs ? requestLogs() : undefined
+                    }
+
+                    Button {
+                        text: qsTr("Disconnect")
+                        icon.name: "network-disconnect"
+                        visible: shellBackend.remoteConfigured
+                        onClicked: requestDisconnect ? requestDisconnect() : undefined
+                    }
+                }
             }
         }
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width > 860 ? 2 : 1
+            columns: width > 760 ? 2 : 1
             columnSpacing: Kirigami.Units.largeSpacing
             rowSpacing: Kirigami.Units.largeSpacing
 
-            Frame {
+            Rectangle {
                 Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing
+                radius: Kirigami.Units.largeSpacing
+                color: "#ffffff"
+                border.width: 1
+                border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: Kirigami.Units.largeSpacing
                     spacing: Kirigami.Units.mediumSpacing
 
                     Kirigami.Heading {
@@ -174,6 +270,7 @@ Kirigami.ScrollablePage {
                             { "label": qsTr("Connection"), "value": shellBackend.connectionStateLabel },
                             { "label": qsTr("Filesystem"), "value": shellBackend.mountStateLabel },
                             { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel },
+                            { "label": qsTr("Last sync"), "value": shellBackend.lastSyncLabel },
                             { "label": qsTr("Active transfers"), "value": qsTr("%1").arg(shellBackend.activeTransferCount) }
                         ]
 
@@ -183,7 +280,7 @@ Kirigami.ScrollablePage {
 
                             Label {
                                 text: modelData.label
-                                color: Kirigami.Theme.neutralTextColor
+                                color: "#627284"
                             }
 
                             Item {
@@ -196,67 +293,52 @@ Kirigami.ScrollablePage {
                             }
                         }
                     }
-
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Kirigami.Theme.neutralTextColor
-                        text: shellBackend.lastSyncError.length > 0
-                              ? shellBackend.lastSyncError
-                              : shellBackend.statusMessage
-                    }
                 }
             }
 
-            Frame {
+            Rectangle {
                 Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing
+                radius: Kirigami.Units.largeSpacing
+                color: "#ffffff"
+                border.width: 1
+                border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: Kirigami.Units.largeSpacing
                     spacing: Kirigami.Units.mediumSpacing
 
                     Kirigami.Heading {
-                        text: qsTr("Shortcuts")
+                        text: qsTr("Next step")
                         level: 3
                     }
 
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: Kirigami.Theme.neutralTextColor
-                        text: qsTr("Use Files for residency work, Setup for recovery actions, and Logs when you need the recent daemon trail.")
+                        text: page.nextStepTitle()
+                        font.bold: true
                     }
 
-                    Flow {
+                    Label {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
+                        wrapMode: Text.WordWrap
+                        color: "#627284"
+                        text: page.nextStepBody()
+                    }
 
-                        Button {
-                            text: qsTr("Open Files")
-                            icon.name: "folder-open"
-                            highlighted: true
-                            enabled: shellBackend.daemonReachable && shellBackend.remoteConfigured
-                            onClicked: requestExplorer ? requestExplorer() : undefined
-                        }
-
-                        Button {
-                            text: qsTr("Open Setup")
-                            icon.name: "settings-configure"
-                            onClicked: requestSetup ? requestSetup() : undefined
-                        }
-
-                        Button {
-                            text: qsTr("Open Logs")
-                            icon.name: "view-list-text"
-                            onClicked: requestLogs ? requestLogs() : undefined
-                        }
-
-                        Button {
-                            text: qsTr("Disconnect")
-                            icon.name: "network-disconnect"
-                            visible: shellBackend.remoteConfigured
-                            onClicked: requestDisconnect ? requestDisconnect() : undefined
+                    Button {
+                        text: shellBackend.syncState === "Paused" ? qsTr("Resume Sync") : qsTr("Open Files")
+                        icon.name: shellBackend.syncState === "Paused" ? "media-playback-start" : "folder-open"
+                        enabled: shellBackend.syncState === "Paused"
+                                 ? shellBackend.canResumeSync
+                                 : shellBackend.daemonReachable && shellBackend.remoteConfigured
+                        onClicked: {
+                            if (shellBackend.syncState === "Paused") {
+                                shellBackend.resumeSync()
+                            } else if (requestExplorer) {
+                                requestExplorer()
+                            }
                         }
                     }
                 }

@@ -210,5 +210,7 @@ private:
     QAction *m_pauseSyncAction = nullptr;
     QAction *m_resumeSyncAction = nullptr;
     QAction *m_quitAction = nullptr;
+    quint64 m_statusRefreshToken = 0;
+    quint64 m_logsRefreshToken = 0;
     bool m_allowQuit = false;
 };

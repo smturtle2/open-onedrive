@@ -9,14 +9,15 @@ Kirigami.Page {
 
     property int currentIndex: 0
     property int lastRecommendedIndex: 0
-    readonly property color canvasColor: "#edf2f7"
-    readonly property color sidebarColor: "#12202d"
+    readonly property color canvasColor: "#edf3f7"
+    readonly property color sidebarColor: "#0f1c28"
     readonly property color sidebarLineColor: Qt.rgba(1, 1, 1, 0.08)
     readonly property color surfaceColor: "#fbfdff"
-    readonly property color mutedSurfaceColor: "#f2f6fa"
+    readonly property color mutedSurfaceColor: "#f3f7fb"
     readonly property color lineColor: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
-    readonly property color headingColor: "#102538"
-    readonly property color mutedTextColor: "#607082"
+    readonly property color headingColor: "#102638"
+    readonly property color mutedTextColor: "#617283"
+    readonly property color stateAccentColor: page.stateAccent()
 
     function stateAccent() {
         if (shellBackend.appState === "running") {
@@ -36,7 +37,7 @@ Kirigami.Page {
 
     function stateLabel() {
         if (shellBackend.appState === "daemon-unavailable") {
-            return qsTr("Background service offline")
+            return qsTr("Service offline")
         }
         if (shellBackend.appState === "welcome") {
             return qsTr("Connect OneDrive")
@@ -45,41 +46,38 @@ Kirigami.Page {
             return qsTr("Preparing workspace")
         }
         if (shellBackend.appState === "recovery") {
-            return qsTr("Recovery needed")
-        }
-        if (shellBackend.appState === "running") {
-            return qsTr("Files ready")
+            return qsTr("Attention needed")
         }
         return qsTr("Ready")
     }
 
     function stateSummary() {
         if (shellBackend.appState === "daemon-unavailable") {
-            return qsTr("Use Logs to inspect the daemon, then bring the background service back before browsing files.")
+            return qsTr("Start the background service, then return here to reopen Files.")
         }
         if (shellBackend.appState === "welcome") {
-            return qsTr("Choose the visible folder and finish Microsoft sign-in. Files becomes the main workspace after setup.")
+            return qsTr("Choose the visible folder and complete the browser sign-in.")
         }
         if (shellBackend.appState === "connecting") {
-            return qsTr("Startup or transfer work is still running. The file list and tray reflect the same daemon state.")
+            return qsTr("Connection, mount, or transfer work is still running.")
         }
         if (shellBackend.appState === "recovery") {
-            return qsTr("Recovery actions stay in Setup and Logs while Files keeps the current residency view visible.")
+            return qsTr("Use Settings or Logs for repair, then return to Files.")
         }
         if (shellBackend.appState === "running") {
-            return qsTr("Browse online-only and local items side by side, then keep or release them from the same list.")
+            return qsTr("Online-only and local items are available in the same visible folder.")
         }
-        return qsTr("Refresh status or open the visible folder.")
+        return qsTr("Review the current state or open Files.")
     }
 
     function pageLabel(index) {
         switch (index) {
         case 0:
-            return qsTr("Files")
+            return qsTr("Dashboard")
         case 1:
-            return qsTr("Activity")
+            return qsTr("Files")
         case 2:
-            return qsTr("Setup")
+            return qsTr("Settings")
         default:
             return qsTr("Logs")
         }
@@ -88,11 +86,11 @@ Kirigami.Page {
     function pageDescription(index) {
         switch (index) {
         case 0:
-            return qsTr("Browse, filter, and change residency without leaving the app.")
+            return qsTr("Queue, sync, and the next action in one place.")
         case 1:
-            return qsTr("Compact status, queue, and sync health.")
+            return qsTr("Browse visible online-only and local items together.")
         case 2:
-            return qsTr("Folder path, recovery steps, and connection controls.")
+            return qsTr("Folder path, connection, and recovery controls.")
         default:
             return qsTr("Recent daemon and rclone output.")
         }
@@ -104,6 +102,9 @@ Kirigami.Page {
         }
         if (shellBackend.appState === "daemon-unavailable") {
             return 3
+        }
+        if (shellBackend.appState === "running") {
+            return 1
         }
         return 0
     }
@@ -197,7 +198,7 @@ Kirigami.Page {
             return
         }
         if (shellBackend.remoteConfigured) {
-            page.setPage(0)
+            page.setPage(1)
             return
         }
         shellBackend.refreshStatus()
@@ -221,14 +222,14 @@ Kirigami.Page {
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: qsTr("Disconnect removes the app-owned sign-in, clears local file-state data, and deletes cached offline bytes stored in %1 under the visible folder.").arg(shellBackend.backingDirName)
+                text: qsTr("Disconnect removes the app-owned sign-in and clears local state stored in %1.").arg(shellBackend.backingDirName)
             }
 
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Kirigami.Theme.neutralTextColor
-                text: qsTr("Online files stay in OneDrive. Use this only when you want to fully detach this device or rebuild local state from scratch.")
+                text: qsTr("Online files stay in OneDrive. Use this only when detaching this device or rebuilding local state.")
             }
         }
     }
@@ -310,8 +311,8 @@ Kirigami.Page {
 
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 250
-            Layout.maximumWidth: 278
+            Layout.preferredWidth: 226
+            Layout.maximumWidth: 238
             radius: Kirigami.Units.largeSpacing * 1.1
             color: page.sidebarColor
             border.width: 1
@@ -345,44 +346,8 @@ Kirigami.Page {
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#d0dfed"
+                        color: "#d3e0ec"
                         text: page.stateSummary()
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    radius: Kirigami.Units.largeSpacing
-                    color: Qt.rgba(1, 1, 1, 0.06)
-                    border.width: 1
-                    border.color: page.sidebarLineColor
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: Kirigami.Units.mediumSpacing
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Rectangle {
-                            radius: 999
-                            color: page.stateAccent()
-                            implicitHeight: stateBadge.implicitHeight + Kirigami.Units.smallSpacing * 2
-                            implicitWidth: stateBadge.implicitWidth + Kirigami.Units.largeSpacing
-
-                            Label {
-                                id: stateBadge
-                                anchors.centerIn: parent
-                                color: "white"
-                                font.bold: true
-                                text: shellBackend.mountStateLabel
-                            }
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: "#d9e6f2"
-                            text: shellBackend.statusMessage
-                        }
                     }
                 }
 
@@ -398,19 +363,17 @@ Kirigami.Page {
 
                     Repeater {
                         model: [
-                            { "index": 0, "label": qsTr("Files"), "icon": "folder-open" },
-                            { "index": 1, "label": qsTr("Activity"), "icon": "view-dashboard" },
-                            { "index": 2, "label": qsTr("Setup"), "icon": "settings-configure" },
+                            { "index": 0, "label": qsTr("Dashboard"), "icon": "view-dashboard" },
+                            { "index": 1, "label": qsTr("Files"), "icon": "folder-open" },
+                            { "index": 2, "label": qsTr("Settings"), "icon": "settings-configure" },
                             { "index": 3, "label": qsTr("Logs"), "icon": "view-list-text" }
                         ]
 
                         delegate: Button {
                             required property var modelData
                             Layout.fillWidth: true
-                            text: modelData.label
-                            icon.name: modelData.icon
-                            flat: page.currentIndex !== modelData.index
-                            highlighted: page.currentIndex === modelData.index
+                            flat: true
+                            onClicked: page.setPage(modelData.index)
 
                             background: Rectangle {
                                 radius: Kirigami.Units.mediumSpacing
@@ -436,8 +399,6 @@ Kirigami.Page {
                                     font.bold: page.currentIndex === modelData.index
                                 }
                             }
-
-                            onClicked: page.setPage(modelData.index)
                         }
                     }
                 }
@@ -466,7 +427,7 @@ Kirigami.Page {
                             color: "#edf4fb"
                             text: shellBackend.effectiveMountPath.length > 0
                                   ? shellBackend.effectiveMountPath
-                                  : qsTr("Choose a root folder in Setup.")
+                                  : qsTr("Choose a folder in Settings.")
                         }
 
                         Button {
@@ -483,45 +444,11 @@ Kirigami.Page {
                     Layout.fillHeight: true
                 }
 
-                ColumnLayout {
+                Label {
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    Button {
-                        Layout.fillWidth: true
-                        text: page.primaryActionText()
-                        icon.name: page.primaryActionIcon()
-                        highlighted: true
-                        enabled: page.primaryActionEnabled()
-                        onClicked: page.runPrimaryAction()
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: qsTr("Refresh")
-                            icon.name: "view-refresh"
-                            onClicked: shellBackend.refreshStatus()
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: qsTr("More")
-                            icon.name: "overflow-menu"
-                            onClicked: quickMenu.open()
-                        }
-                    }
-
-                    Button {
-                        Layout.fillWidth: true
-                        visible: shellBackend.remoteConfigured
-                        text: qsTr("Disconnect")
-                        icon.name: "network-disconnect"
-                        onClicked: page.openDisconnectDialog()
-                    }
+                    wrapMode: Text.WordWrap
+                    color: "#a5bbcf"
+                    text: qsTr("Closing the window keeps controls available in the tray.")
                 }
             }
         }
@@ -576,6 +503,23 @@ Kirigami.Page {
                                 }
                             }
 
+                            Rectangle {
+                                radius: 999
+                                color: Qt.rgba(page.stateAccentColor.r, page.stateAccentColor.g, page.stateAccentColor.b, 0.14)
+                                border.width: 1
+                                border.color: Qt.rgba(page.stateAccentColor.r, page.stateAccentColor.g, page.stateAccentColor.b, 0.28)
+                                implicitHeight: stateBadge.implicitHeight + Kirigami.Units.smallSpacing * 2
+                                implicitWidth: stateBadge.implicitWidth + Kirigami.Units.largeSpacing
+
+                                Label {
+                                    id: stateBadge
+                                    anchors.centerIn: parent
+                                    text: page.stateLabel()
+                                    color: page.stateAccentColor
+                                    font.bold: true
+                                }
+                            }
+
                             Button {
                                 text: page.primaryActionText()
                                 icon.name: page.primaryActionIcon()
@@ -585,12 +529,17 @@ Kirigami.Page {
                             }
 
                             Button {
-                                text: qsTr("Open Folder")
-                                icon.name: "document-open-folder"
-                                visible: shellBackend.remoteConfigured
-                                enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
-                                onClicked: shellBackend.openMountLocation()
+                                text: qsTr("More")
+                                icon.name: "overflow-menu"
+                                onClicked: quickMenu.open()
                             }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: page.mutedTextColor
+                            text: shellBackend.statusMessage
                         }
 
                         Flow {
@@ -601,8 +550,7 @@ Kirigami.Page {
                                 model: [
                                     { "label": qsTr("Connection"), "value": shellBackend.connectionStateLabel, "accent": "#2d6cdf" },
                                     { "label": qsTr("Filesystem"), "value": shellBackend.mountStateLabel, "accent": page.stateAccent() },
-                                    { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel, "accent": shellBackend.syncState === "Error" ? "#bd3f2f" : "#2d6cdf" },
-                                    { "label": qsTr("Queue"), "value": qsTr("%1 pending").arg(shellBackend.queueDepth), "accent": "#7b5e15" }
+                                    { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel, "accent": shellBackend.syncState === "Error" ? "#bd3f2f" : "#2d6cdf" }
                                 ]
 
                                 delegate: Rectangle {
@@ -639,6 +587,14 @@ Kirigami.Page {
                                     }
                                 }
                             }
+
+                            Button {
+                                visible: shellBackend.remoteConfigured
+                                text: qsTr("Open Folder")
+                                icon.name: "document-open-folder"
+                                enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
+                                onClicked: shellBackend.openMountLocation()
+                            }
                         }
                     }
                 }
@@ -648,14 +604,14 @@ Kirigami.Page {
                     Layout.fillHeight: true
                     currentIndex: page.currentIndex
 
-                    ExplorerPage { }
-
                     DashboardPage {
                         requestDisconnect: page.openDisconnectDialog
-                        requestExplorer: function() { page.setPage(0) }
+                        requestExplorer: function() { page.setPage(1) }
                         requestSetup: function() { page.setPage(2) }
                         requestLogs: function() { page.setPage(3) }
                     }
+
+                    ExplorerPage { }
 
                     SetupPage {
                         requestDisconnect: page.openDisconnectDialog

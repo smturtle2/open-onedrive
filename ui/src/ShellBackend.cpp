@@ -9,6 +9,8 @@
 #include <QDBusConnection>
 #include <QDBusError>
 #include <QDBusInterface>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDBusReply>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -64,7 +66,7 @@ QString actionLabelForMethod(const QString &method)
         return QObject::tr("Keep on device");
     }
     if (method == QStringLiteral("MakeOnlineOnly")) {
-        return QObject::tr("Make online-only");
+        return QObject::tr("Free up space");
     }
     if (method == QStringLiteral("RetryTransfer")) {
         return QObject::tr("Retry transfer");
@@ -821,10 +823,10 @@ void ShellBackend::openPath(const QString &path)
 
 void ShellBackend::refreshStatus()
 {
-    const QString previousAppState = appState();
-    const bool wasDashboardReady = dashboardReady();
     QDBusInterface iface = daemonInterface();
     if (!iface.isValid()) {
+        const QString previousAppState = appState();
+        const bool wasDashboardReady = dashboardReady();
         if (m_daemonReachable) {
             m_daemonReachable = false;
             emit daemonReachableChanged();
@@ -843,38 +845,53 @@ void ShellBackend::refreshStatus()
         return;
     }
 
-    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
-    if (!reply.isValid()) {
-        const QDBusError error = reply.error();
-        if (isDaemonUnavailableError(error)) {
-            if (m_daemonReachable) {
-                m_daemonReachable = false;
-                emit daemonReachableChanged();
-                emit mountStateChanged();
-                emit syncStateChanged();
-            }
-            updateStatusMessage(
-                tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
-        } else {
-            if (!m_daemonReachable) {
-                m_daemonReachable = true;
-                emit daemonReachableChanged();
-                emit mountStateChanged();
-                emit syncStateChanged();
-            }
-            updateStatusMessage(tr("Daemon status refresh failed: %1").arg(error.message()));
-        }
-        if (previousAppState != appState()) {
-            emit appStateChanged();
-        }
-        if (wasDashboardReady != dashboardReady()) {
-            emit dashboardReadyChanged();
-        }
-        updateTray();
-        return;
-    }
+    const quint64 requestToken = ++m_statusRefreshToken;
+    auto *watcher = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("GetStatusJson")),
+                                                this);
+    connect(watcher,
+            &QDBusPendingCallWatcher::finished,
+            this,
+            [this, watcher, requestToken]() {
+                watcher->deleteLater();
+                if (requestToken != m_statusRefreshToken) {
+                    return;
+                }
 
-    applyStatusJson(reply.value());
+                const QString previousAppState = appState();
+                const bool wasDashboardReady = dashboardReady();
+                QDBusPendingReply<QString> reply = *watcher;
+                if (!reply.isValid()) {
+                    const QDBusError error = reply.error();
+                    if (isDaemonUnavailableError(error)) {
+                        if (m_daemonReachable) {
+                            m_daemonReachable = false;
+                            emit daemonReachableChanged();
+                            emit mountStateChanged();
+                            emit syncStateChanged();
+                        }
+                        updateStatusMessage(
+                            tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
+                    } else {
+                        if (!m_daemonReachable) {
+                            m_daemonReachable = true;
+                            emit daemonReachableChanged();
+                            emit mountStateChanged();
+                            emit syncStateChanged();
+                        }
+                        updateStatusMessage(tr("Daemon status refresh failed: %1").arg(error.message()));
+                    }
+                    if (previousAppState != appState()) {
+                        emit appStateChanged();
+                    }
+                    if (wasDashboardReady != dashboardReady()) {
+                        emit dashboardReadyChanged();
+                    }
+                    updateTray();
+                    return;
+                }
+
+                applyStatusJson(reply.value());
+            });
 }
 
 void ShellBackend::refreshLogs()
@@ -884,36 +901,50 @@ void ShellBackend::refreshLogs()
         return;
     }
 
-    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetRecentLogsJson"), 100U);
-    if (!reply.isValid()) {
-        return;
-    }
+    const quint64 requestToken = ++m_logsRefreshToken;
+    auto *watcher = new QDBusPendingCallWatcher(
+        iface.asyncCall(QStringLiteral("GetRecentLogsJson"), 100U),
+        this);
+    connect(watcher,
+            &QDBusPendingCallWatcher::finished,
+            this,
+            [this, watcher, requestToken]() {
+                watcher->deleteLater();
+                if (requestToken != m_logsRefreshToken) {
+                    return;
+                }
 
-    const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
-    if (!document.isArray()) {
-        return;
-    }
+                QDBusPendingReply<QString> reply = *watcher;
+                if (!reply.isValid()) {
+                    return;
+                }
 
-    const QVariantList entries = document.array().toVariantList();
-    QStringList lines;
-    lines.reserve(entries.size());
-    for (const QVariant &entryVariant : entries) {
-        const QVariantMap entry = entryVariant.toMap();
-        const QString timestamp = formatTimestamp(entry.value(QStringLiteral("timestamp_unix")).toLongLong());
-        const QString source = entry.value(QStringLiteral("source")).toString();
-        const QString level = entry.value(QStringLiteral("level")).toString().toUpper();
-        const QString message = entry.value(QStringLiteral("message")).toString();
-        lines << QStringLiteral("[%1] [%2] [%3] %4").arg(timestamp,
-                                                         level.isEmpty() ? QStringLiteral("INFO") : level,
-                                                         source.isEmpty() ? QStringLiteral("daemon") : source,
-                                                         message);
-    }
+                const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
+                if (!document.isArray()) {
+                    return;
+                }
 
-    if (entries != m_recentLogEntries || lines != m_recentLogs) {
-        m_recentLogEntries = entries;
-        m_recentLogs = lines;
-        emit recentLogsChanged();
-    }
+                const QVariantList entries = document.array().toVariantList();
+                QStringList lines;
+                lines.reserve(entries.size());
+                for (const QVariant &entryVariant : entries) {
+                    const QVariantMap entry = entryVariant.toMap();
+                    const QString timestamp = formatTimestamp(entry.value(QStringLiteral("timestamp_unix")).toLongLong());
+                    const QString source = entry.value(QStringLiteral("source")).toString();
+                    const QString level = entry.value(QStringLiteral("level")).toString().toUpper();
+                    const QString message = entry.value(QStringLiteral("message")).toString();
+                    lines << QStringLiteral("[%1] [%2] [%3] %4").arg(timestamp,
+                                                                     level.isEmpty() ? QStringLiteral("INFO") : level,
+                                                                     source.isEmpty() ? QStringLiteral("daemon") : source,
+                                                                     message);
+                }
+
+                if (entries != m_recentLogEntries || lines != m_recentLogs) {
+                    m_recentLogEntries = entries;
+                    m_recentLogs = lines;
+                    emit recentLogsChanged();
+                }
+            });
 }
 
 void ShellBackend::applyStatusJson(const QString &jsonPayload)

@@ -426,7 +426,7 @@ class OpenOneDriveNautilusExtension(GObject.GObject, Nautilus.MenuProvider, Naut
             submenu.append_item(
                 self._menu_item(
                     "OpenOneDriveMakeOnlineOnly",
-                    "Make online-only",
+                    "Free up space",
                     "Free local space and keep the selected items online",
                     lambda *_args: self._client.invoke_action("MakeOnlineOnly", selected_paths),
                 )

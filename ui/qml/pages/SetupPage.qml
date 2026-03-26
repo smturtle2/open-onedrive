@@ -6,11 +6,7 @@ import "../components"
 
 Kirigami.ScrollablePage {
     id: page
-    title: shellBackend.needsRemoteRepair
-           ? qsTr("Repair Remote")
-           : shellBackend.remoteConfigured
-             ? qsTr("Setup")
-             : qsTr("Set Up")
+    title: qsTr("Settings")
 
     property var requestDisconnect: null
 
@@ -39,19 +35,19 @@ Kirigami.ScrollablePage {
             return qsTr("Repair the saved sign-in")
         }
         if (shellBackend.remoteConfigured) {
-            return qsTr("Manage the visible folder and recovery actions")
+            return qsTr("Manage the visible folder for this device")
         }
         return qsTr("Choose the visible folder and sign in")
     }
 
     function stageBody() {
         if (shellBackend.needsRemoteRepair) {
-            return qsTr("Repair replaces only the app-owned OneDrive sign-in. Offline bytes and local file state remain on this device.")
+            return qsTr("Repair refreshes only the app-owned OneDrive remote. Existing local backing bytes and path state stay on this device.")
         }
         if (shellBackend.remoteConfigured) {
-            return qsTr("Use this page when you need to move the visible folder, restart the filesystem, or disconnect the device cleanly.")
+            return qsTr("This page stays intentionally small: folder path, connection state, and recovery actions only.")
         }
-        return qsTr("The setup flow is short: choose an empty folder, finish the browser sign-in, then let the filesystem expose OneDrive as a normal folder.")
+        return qsTr("The first run is short. Pick an empty folder, complete the browser sign-in, then start the visible filesystem.")
     }
 
     function runPrimaryAction() {
@@ -66,34 +62,8 @@ Kirigami.ScrollablePage {
         shellBackend.beginConnect()
     }
 
-    Menu {
-        id: actionMenu
-
-        MenuItem {
-            text: qsTr("Start filesystem")
-            icon.name: "folder-cloud"
-            visible: shellBackend.canMount
-            onTriggered: shellBackend.mountRemote()
-        }
-
-        MenuItem {
-            text: qsTr("Refresh status")
-            icon.name: "view-refresh"
-            onTriggered: shellBackend.refreshStatus()
-        }
-
-        MenuSeparator { }
-
-        MenuItem {
-            text: qsTr("Disconnect")
-            icon.name: "network-disconnect"
-            visible: shellBackend.remoteConfigured
-            onTriggered: requestDisconnect ? requestDisconnect() : shellBackend.disconnectRemote()
-        }
-    }
-
     ColumnLayout {
-        width: Math.min(parent.width, 920)
+        width: Math.min(parent.width, 860)
         x: Math.max(0, (parent.width - width) / 2)
         spacing: Kirigami.Units.largeSpacing
 
@@ -122,124 +92,133 @@ Kirigami.ScrollablePage {
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
+            showCloseButton: false
             type: !shellBackend.daemonReachable
                   ? Kirigami.MessageType.Warning
                   : shellBackend.needsRemoteRepair
                     ? Kirigami.MessageType.Error
                     : Kirigami.MessageType.Information
-            showCloseButton: false
             text: !shellBackend.daemonReachable
-                  ? qsTr("The background service is offline. You can still review the folder path here and return to Logs while it comes back.")
+                  ? qsTr("The background service is offline. You can still review the folder path while the daemon comes back.")
                   : shellBackend.needsRemoteRepair
-                    ? qsTr("Repair refreshes only the app-owned sign-in. It does not delete online files in OneDrive.")
+                    ? qsTr("Repair replaces only the app-owned sign-in. It does not delete online files in OneDrive.")
                     : qsTr("open-onedrive keeps its own rclone profile for this app and leaves your regular rclone setup untouched.")
         }
 
-        Frame {
+        Rectangle {
             Layout.fillWidth: true
-            padding: Kirigami.Units.largeSpacing
+            radius: Kirigami.Units.largeSpacing
+            color: "#ffffff"
+            border.width: 1
+            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
             ColumnLayout {
                 anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
                 spacing: Kirigami.Units.mediumSpacing
 
                 Label {
-                    text: qsTr("Folder path")
+                    text: qsTr("Visible folder")
                     color: Kirigami.Theme.neutralTextColor
                     font.bold: true
                 }
 
                 MountPathEditor {
-                    helperText: qsTr("Pick an empty folder that should appear as your normal OneDrive path on this device.")
+                    helperText: qsTr("Choose the OneDrive folder path that should appear in the file manager.")
                 }
             }
         }
 
-        GridLayout {
+        Rectangle {
             Layout.fillWidth: true
-            columns: width > 860 ? 2 : 1
-            columnSpacing: Kirigami.Units.largeSpacing
-            rowSpacing: Kirigami.Units.largeSpacing
+            radius: Kirigami.Units.largeSpacing
+            color: "#ffffff"
+            border.width: 1
+            border.color: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
 
-            Frame {
-                Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
+                spacing: Kirigami.Units.mediumSpacing
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: Kirigami.Units.mediumSpacing
+                Kirigami.Heading {
+                    text: qsTr("Connection")
+                    level: 3
+                }
 
-                    Kirigami.Heading {
-                        text: qsTr("Next step")
-                        level: 3
-                    }
+                Repeater {
+                    model: [
+                        { "label": qsTr("Connection"), "value": shellBackend.connectionStateLabel },
+                        { "label": qsTr("Filesystem"), "value": shellBackend.mountStateLabel },
+                        { "label": qsTr("Sync"), "value": shellBackend.syncStateLabel }
+                    ]
 
-                    Label {
+                    delegate: RowLayout {
+                        required property var modelData
                         Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Kirigami.Theme.neutralTextColor
-                        text: shellBackend.remoteConfigured
-                              ? qsTr("Retry or restart the filesystem here. Use Files for residency changes once the folder is ready.")
-                              : qsTr("Set the visible folder first, then begin the browser sign-in. Files becomes the main workspace after setup.")
-                    }
 
-                    Flow {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Button {
-                            text: page.primaryActionText()
-                            icon.name: page.primaryActionIcon()
-                            highlighted: true
-                            enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-                            onClicked: page.runPrimaryAction()
+                        Label {
+                            text: modelData.label
+                            color: Kirigami.Theme.neutralTextColor
                         }
 
-                        Button {
-                            text: qsTr("Open Folder")
-                            icon.name: "document-open-folder"
-                            visible: shellBackend.effectiveMountPath.length > 0
-                            enabled: shellBackend.effectiveMountPath.length > 0
-                            onClicked: shellBackend.openMountLocation()
+                        Item {
+                            Layout.fillWidth: true
                         }
 
-                        Button {
-                            text: qsTr("More actions")
-                            icon.name: "overflow-menu"
-                            onClicked: actionMenu.open()
+                        Label {
+                            text: modelData.value
+                            font.bold: true
                         }
                     }
                 }
-            }
 
-            Frame {
-                Layout.fillWidth: true
-                padding: Kirigami.Units.largeSpacing
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: Kirigami.Units.mediumSpacing
-
-                    Kirigami.Heading {
-                        text: qsTr("Notes")
-                        level: 3
+                    Button {
+                        text: page.primaryActionText()
+                        icon.name: page.primaryActionIcon()
+                        highlighted: true
+                        enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                        onClicked: page.runPrimaryAction()
                     }
 
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Kirigami.Theme.neutralTextColor
-                        text: shellBackend.customClientIdConfigured
-                              ? qsTr("A custom Microsoft client ID is already configured for this device.")
-                              : qsTr("The default setup uses rclone's Microsoft app. Advanced client changes stay in config.toml rather than the first-run UI.")
+                    Button {
+                        text: qsTr("Start Filesystem")
+                        icon.name: "folder-cloud"
+                        visible: shellBackend.canMount
+                        onClicked: shellBackend.mountRemote()
                     }
 
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: Kirigami.Theme.neutralTextColor
-                        text: qsTr("Closing the window keeps tray controls alive, so the daemon can continue running independently.")
+                    Button {
+                        text: qsTr("Open Folder")
+                        icon.name: "document-open-folder"
+                        visible: shellBackend.effectiveMountPath.length > 0
+                        enabled: shellBackend.effectiveMountPath.length > 0
+                        onClicked: shellBackend.openMountLocation()
                     }
+
+                    Button {
+                        text: qsTr("Refresh status")
+                        icon.name: "view-refresh"
+                        onClicked: shellBackend.refreshStatus()
+                    }
+
+                    Button {
+                        text: qsTr("Disconnect")
+                        icon.name: "network-disconnect"
+                        visible: shellBackend.remoteConfigured
+                        onClicked: requestDisconnect ? requestDisconnect() : shellBackend.disconnectRemote()
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("Closing the window keeps tray controls alive, so the daemon can continue working independently.")
                 }
             }
         }

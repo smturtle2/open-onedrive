@@ -164,7 +164,7 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
     }
 
     if (showOnlineOnly) {
-        auto *onlineOnlyAction = new QAction(QStringLiteral("Make online-only"), actionParent);
+        auto *onlineOnlyAction = new QAction(QStringLiteral("Free up space"), actionParent);
         QObject::connect(onlineOnlyAction, &QAction::triggered, this, [selectedPaths] {
             invokePathAction(QStringLiteral("MakeOnlineOnly"), selectedPaths);
         });
