@@ -65,9 +65,9 @@ Kirigami.Page {
             return qsTr("Use Settings or Logs for repair, then return to Files.")
         }
         if (shellBackend.appState === "running") {
-            return qsTr("Online-only and local items are available in the same visible folder.")
+            return qsTr("Files is the main workspace for online-only and local items.")
         }
-        return qsTr("Review the current state or open Files.")
+        return qsTr("Review the current state, then continue in Files.")
     }
 
     function pageLabel(index) {
@@ -86,13 +86,13 @@ Kirigami.Page {
     function pageDescription(index) {
         switch (index) {
         case 0:
-            return qsTr("Queue, sync, and the next action in one place.")
+            return qsTr("Short status, queue, and the next action.")
         case 1:
             return qsTr("Browse visible online-only and local items together.")
         case 2:
-            return qsTr("Folder path, connection, and recovery controls.")
+            return qsTr("Visible folder, connect, repair, and disconnect.")
         default:
-            return qsTr("Recent daemon and rclone output.")
+            return qsTr("Recent daemon and rclone lines.")
         }
     }
 

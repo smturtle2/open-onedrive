@@ -6,20 +6,19 @@
 
 <p align="center">
   <strong>OneDrive as a normal Linux folder.</strong><br/>
-  Visible online-only files, on-demand hydration, per-file residency control, a simple dashboard, a minimal settings surface, and one daemon state shared by the app, tray, CLI, Dolphin, and Nautilus.
+  Visible online-only files, on-demand hydration, per-file residency control, a files-first shell, and one daemon state shared by the app, tray, CLI, Dolphin, and Nautilus.
 </p>
 
 <p align="center">
   <a href="./README.ko.md">한국어</a> ·
   <a href="#highlights">Highlights</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#day-to-day">Day to Day</a> ·
-  <a href="#how-it-works">How It Works</a> ·
+  <a href="#everyday-use">Everyday Use</a> ·
   <a href="#development">Development</a>
 </p>
 
 <p align="center">
-  <img src="./assets/docs/app-shell-screenshot.png" alt="open-onedrive showing the visible OneDrive folder workflow with dashboard and files surfaces" width="100%">
+  <img src="./assets/docs/app-shell-screenshot.png" alt="open-onedrive showing the current dashboard, files view, and simple settings flow" width="100%">
 </p>
 
 <p align="center">
@@ -31,30 +30,16 @@
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-> Stable releases target Linux `x86_64`. The project uses a custom FUSE filesystem for the visible OneDrive root. It does not use `rclone mount`.
-
-## Overview
-
-`open-onedrive` gives Linux a visible folder such as `~/OneDrive` and keeps online-only items visible before hydration.
-
-The split is deliberate:
-
-- `rclone` handles auth, remote listing, and upload/download primitives
-- `openonedrived` owns the custom sync model, metadata cache, on-demand hydration, queueing, retry flow, and path state
-- the Qt shell, separate tray helper, CLI, Dolphin plugins, and Nautilus extension all read the same daemon state
-
-The result is a normal folder path for regular Linux apps, plus explicit `Keep on this device` and `Free up space` controls.
+> Stable releases target Linux `x86_64`. The visible OneDrive root is provided by a custom FUSE filesystem owned by `openonedrived`. This project does not use `rclone mount`.
 
 ## Highlights
 
-- visible online-only files and folders through a custom FUSE root
-- on-demand downloads and queued uploads driven by the daemon, not by `rclone mount`
-- per-file and per-folder residency control from the app, tray, CLI, Dolphin, and Nautilus
-- Dolphin overlays and context-menu actions for `online-only`, `local`, `pinned`, `syncing`, and `attention` states
-- simple Dashboard and Settings surfaces instead of a crowded control panel
-- independent tray helper so the window can close without stopping background controls
-- app-owned `rclone.conf` under XDG paths, isolated from your normal `~/.config/rclone/rclone.conf`
-- one-line installer with checksum verification, existing-install upgrade checks, and automatic `rclone` install when missing
+- online-only files and folders stay visible before hydration
+- `Keep on this device` and `Free up space` work from the app, tray, CLI, Dolphin, and Nautilus
+- `Files` is the main workspace; `Dashboard` stays compact and `Settings` stays intentionally small
+- tray runs independently so background control survives after the window closes
+- app-owned `rclone.conf` is isolated from your regular `~/.config/rclone/rclone.conf`
+- the installer supports one-line install, upgrade checks, checksum verification, and `rclone` bootstrap when missing
 
 ## Quick Start
 
@@ -82,13 +67,7 @@ Skip interactive upgrade prompts in automation:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-The release installer:
-
-- downloads the Linux release archive and SHA256 file
-- detects an existing install and asks before interactive upgrades or reinstalls
-- installs `rclone` automatically if it is missing
-- installs the daemon, UI, tray helper, icon, launcher, user service, Dolphin integration, and Nautilus extension under `~/.local`
-- refuses to replace an existing install non-interactively unless `OPEN_ONEDRIVE_ASSUME_YES=1` is set
+The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing.
 
 Launch and verify:
 
@@ -98,73 +77,36 @@ systemctl --user status openonedrived.service
 openonedrivectl status
 ```
 
-## Day to Day
+## Everyday Use
 
 First run:
 
-1. Choose an empty visible folder such as `~/OneDrive` in `Settings`.
-2. Finish the Microsoft browser sign-in started by `rclone`.
-3. If the filesystem is still stopped, use the primary action on `Dashboard`.
-4. Open `Files` to browse online-only and local items side by side.
-5. Use `Keep on this device` or `Free up space` from the app, tray, Dolphin, Nautilus, or CLI.
+1. Open `Settings` and choose an empty visible folder such as `~/OneDrive`.
+2. Finish the browser sign-in started by `rclone`.
+3. Open `Files` and browse online-only and local items in the same folder tree.
+4. Use `Keep on this device` or `Free up space` from the app, tray, Dolphin, Nautilus, or CLI.
 
 Main surfaces:
 
-- `Dashboard`: compact status, queue, storage, and the next recommended action
-- `Files`: the main workspace for residency changes and online-only visibility
-- `Settings`: folder path, connect, repair, and disconnect
-- `Logs`: recent daemon and `rclone` output for recovery work
-- `Tray`: independent helper that stays resident after the window closes
+- `Dashboard`: short status, queue summary, and the next action
+- `Files`: browsing, search, and residency changes
+- `Settings`: folder path, connect, repair, disconnect
+- `Logs`: recent daemon and `rclone` output
+- `Tray`: separate helper for background control
 
-CLI equivalents:
+File manager integration:
 
-```bash
-openonedrivectl set-root-path ~/OneDrive
-openonedrivectl start-filesystem
-openonedrivectl keep-local ~/OneDrive/Documents/report.pdf
-openonedrivectl make-online-only ~/OneDrive/Documents/report.pdf
-openonedrivectl retry-transfer ~/OneDrive/Documents/report.pdf
-openonedrivectl list-directory Docs
-openonedrivectl refresh-directory Docs
-openonedrivectl search-paths report --limit 20
-openonedrivectl path-states ~/OneDrive/Documents/report.pdf
-```
-
-Project state lives under XDG paths, typically:
-
-- `~/.config/open-onedrive/config.toml`
-- `~/.config/open-onedrive/rclone/rclone.conf`
-- `~/.local/share/open-onedrive/install-metadata.env`
-- `~/.local/state/open-onedrive/runtime-state.toml`
-- `~/.local/state/open-onedrive/path-state.sqlite3`
-
-## Supported Scope
-
-| Area | Status |
-| --- | --- |
-| OS / arch | Linux `x86_64` |
-| Visible root | custom FUSE path managed by `openonedrived` |
-| OneDrive backend | `rclone` auth, list, upload, and download primitives |
-| Native file manager integration | `Dolphin` first-class, `Nautilus` secondary |
-| UI surface | Qt shell plus separate tray helper |
-| Stable installer target | user-local install under `~/.local` |
-
-Current non-goals:
-
-- `rclone mount`
-- native integrations beyond `Dolphin` and `Nautilus`
-- Windows Cloud Files placeholder parity
-- custom Microsoft OAuth stack
-- automatic cache eviction
+- `Dolphin` is the primary stable target for overlays and context actions
+- `Nautilus` remains available for actions and emblems
+- right click actions expose `Keep on this device`, `Free up space`, and retry flows
+- overlay states distinguish online-only, local, syncing, and attention states
 
 ## How It Works
 
-- the daemon owns one serialized action queue so `rclone` work stays isolated from the UI process
-- foreground hydrate, keep, and free-space actions can still run while background sync is paused
-- `rclone lsjson --hash` refreshes remote metadata without hydrating file bytes
-- `rclone copyto` downloads cold files on first open and uploads dirty local writes
-- path state is persisted so online-only, local, conflict, and error status stay visible across the shell, tray, CLI, and file-manager integrations
-- hydrated bytes live in a hidden backing directory inside the visible root while the visible tree stays clean
+- `rclone` handles auth, remote listing, and upload or download primitives
+- `openonedrived` owns the custom sync model, metadata cache, path state, and serialized action queue
+- hydrated bytes live in a hidden backing directory while the visible tree stays clean
+- the Qt shell, tray helper, CLI, Dolphin plugin, and Nautilus extension all read the same daemon state
 
 ## Development
 
@@ -173,7 +115,6 @@ Day-to-day commands:
 ```bash
 ./scripts/dev.sh bootstrap
 ./scripts/dev.sh up
-./scripts/dev.sh status
 ./scripts/dev.sh test
 ```
 
@@ -183,16 +124,14 @@ Workspace tasks:
 cargo run -p xtask -- check
 cargo run -p xtask -- build-ui
 cargo run -p xtask -- build-integrations
-cargo run -p xtask -- install
 ```
 
 ## Troubleshooting
 
 - `Daemon not reachable on D-Bus`: run `open-onedrive` once, or check `systemctl --user status openonedrived.service`.
 - filesystem startup fails: confirm `/dev/fuse` exists and `fusermount3` or `mount.fuse3` is available in `PATH`.
-- Dolphin actions or overlays are missing: run `kbuildsycoca6`, restart Dolphin, and verify plugins under `~/.local/lib/qt6/plugins/kf6/`.
-- Nautilus actions or emblems are missing: confirm `nautilus-python` is installed, then restart Nautilus. Dolphin is the stable-first integration target.
-- sync is paused or degraded: on-demand opens still work, but dirty local writes stay queued until you resume sync.
+- Dolphin overlays or actions are missing: run `kbuildsycoca6`, restart Dolphin, and verify the plugin install under `~/.local/lib/qt6/plugins/kf6/`.
+- Nautilus actions or emblems are missing: confirm `nautilus-python` is installed, then restart Nautilus.
 
 ## License
 
