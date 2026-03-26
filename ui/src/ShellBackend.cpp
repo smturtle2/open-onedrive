@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDebug>
 #include <QEvent>
 #include <QFile>
 #include <QFileInfo>
@@ -120,6 +121,31 @@ QString nearestExistingAncestorPath(const QString &path)
         }
         currentPath = parentPath;
     }
+    return QString();
+}
+
+QString resolvedUiProgramPath()
+{
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    const QStringList relativeCandidates = {
+        QStringLiteral("open-onedrive-ui"),
+        QStringLiteral("../lib/open-onedrive/open-onedrive-ui"),
+        QStringLiteral("../libexec/open-onedrive-ui"),
+        QStringLiteral("../bin/open-onedrive-ui"),
+        QStringLiteral("../bin/open-onedrive")
+    };
+
+    for (const QString &relativeCandidate : relativeCandidates) {
+        const QString candidatePath = QDir::cleanPath(appDir.absoluteFilePath(relativeCandidate));
+        const QFileInfo candidateInfo(candidatePath);
+        if (!candidateInfo.exists() || !candidateInfo.isFile() || !candidateInfo.isExecutable()) {
+            continue;
+        }
+
+        const QString canonicalPath = candidateInfo.canonicalFilePath();
+        return canonicalPath.isEmpty() ? candidateInfo.absoluteFilePath() : canonicalPath;
+    }
+
     return QString();
 }
 }
@@ -457,12 +483,18 @@ void ShellBackend::activateMainWindow()
 
 void ShellBackend::launchUiProcess() const
 {
-    QString program = QStringLiteral("open-onedrive");
-    QStringList arguments;
     if (QCoreApplication::applicationName() == QStringLiteral("open-onedrive")) {
         return;
     }
-    QProcess::startDetached(program, arguments);
+
+    const QString program = resolvedUiProgramPath();
+    if (program.isEmpty()) {
+        qWarning() << "Unable to resolve open-onedrive UI executable from"
+                   << QCoreApplication::applicationFilePath();
+        return;
+    }
+
+    QProcess::startDetached(program, {});
 }
 
 void ShellBackend::beginConnect()
@@ -1296,6 +1328,7 @@ void ShellBackend::initializeTray()
     });
     connect(m_tray, &KStatusNotifierItem::activateRequested, this, [this](bool, const QPoint &) {
         if (m_mainWindow == nullptr) {
+            activateMainWindow();
             return;
         }
         if (m_mainWindow->isVisible()) {

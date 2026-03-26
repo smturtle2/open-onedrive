@@ -104,8 +104,9 @@ File manager integration:
 
 - `rclone` handles auth, remote listing, and upload or download primitives
 - `openonedrived` owns the custom sync model, metadata cache, path state, and serialized action queue
+- every `rclone` invocation runs through an isolated helper binary so long refreshes or transfers do not block the main daemon control path
 - hydrated bytes live in a hidden backing directory while the visible tree stays clean
-- the Qt shell, tray helper, CLI, Dolphin plugin, and Nautilus extension all read the same daemon state
+- the Qt shell stays settings-first, while the tray helper, CLI, Dolphin plugin, and Nautilus extension all read the same daemon state
 
 ## Development
 

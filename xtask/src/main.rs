@@ -132,6 +132,11 @@ fn install() -> Result<()> {
         true,
     )?;
     install_file(
+        "target/debug/openonedrive-rclone-worker",
+        &bin_dir.join("openonedrive-rclone-worker"),
+        true,
+    )?;
+    install_file(
         "build/ui/open-onedrive-ui",
         &libexec_dir.join("open-onedrive-ui"),
         true,
@@ -239,7 +244,9 @@ fn install() -> Result<()> {
     let refresh_kde_cache = Command::new("kbuildsycoca6");
     run_optional(refresh_kde_cache, "kbuildsycoca6");
     let mut refresh_icon_cache = Command::new("gtk-update-icon-cache");
-    refresh_icon_cache.args(["-f", "-t"]).arg(prefix.join("share").join("icons").join("hicolor"));
+    refresh_icon_cache
+        .args(["-f", "-t"])
+        .arg(prefix.join("share").join("icons").join("hicolor"));
     run_optional(refresh_icon_cache, "gtk-update-icon-cache");
 
     println!("Installed open-onedrive into {}", prefix.display());
@@ -459,11 +466,17 @@ fn sync_line_by_prefix(path: &Path, prefix: &str, expected_line: &str, check: bo
     }
 
     if !found {
-        bail!("unable to find line starting with {prefix:?} in {}", path.display());
+        bail!(
+            "unable to find line starting with {prefix:?} in {}",
+            path.display()
+        );
     }
     if check {
         if changed {
-            bail!("{} is out of sync; run `cargo run -p xtask -- sync-version`", path.display());
+            bail!(
+                "{} is out of sync; run `cargo run -p xtask -- sync-version`",
+                path.display()
+            );
         }
         return Ok(());
     }
@@ -493,7 +506,10 @@ fn sync_json_string_field(path: &Path, field_prefix: &str, value: &str, check: b
 
     if check {
         if current != value {
-            bail!("{} is out of sync; run `cargo run -p xtask -- sync-version`", path.display());
+            bail!(
+                "{} is out of sync; run `cargo run -p xtask -- sync-version`",
+                path.display()
+            );
         }
         return Ok(());
     }

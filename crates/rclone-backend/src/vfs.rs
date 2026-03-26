@@ -224,10 +224,7 @@ impl Filesystem for OpenOneDriveFs {
         };
 
         if let Some(size) = size {
-            if self
-                .provider
-                .set_len(&provider_path(&path), size)
-                .is_err()
+            if self.provider.set_len(&provider_path(&path), size).is_err()
                 || self.refresh_snapshot().is_err()
             {
                 reply.error(EIO);
@@ -326,10 +323,7 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self
-            .provider
-            .create_dir(&provider_path(&path))
-            .is_err()
+        if self.provider.create_dir(&provider_path(&path)).is_err()
             || self.refresh_snapshot().is_err()
         {
             reply.error(EIO);
@@ -351,10 +345,7 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self
-            .provider
-            .remove_file(&provider_path(&path))
-            .is_err()
+        if self.provider.remove_file(&provider_path(&path)).is_err()
             || self.refresh_snapshot().is_err()
         {
             reply.error(EIO);
@@ -372,10 +363,7 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self
-            .provider
-            .remove_dir(&provider_path(&path))
-            .is_err()
+        if self.provider.remove_dir(&provider_path(&path)).is_err()
             || self.refresh_snapshot().is_err()
         {
             reply.error(EIO);

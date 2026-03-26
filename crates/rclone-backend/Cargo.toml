@@ -11,6 +11,7 @@ fuser.workspace = true
 libc.workspace = true
 openonedrive-config = { path = "../config" }
 openonedrive-ipc-types = { path = "../ipc-types" }
+openonedrive-rclone-worker = { path = "../rclone-worker" }
 openonedrive-state = { path = "../state" }
 rusqlite.workspace = true
 serde.workspace = true

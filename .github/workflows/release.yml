@@ -64,6 +64,7 @@ jobs:
           mkdir -p dist/open-onedrive-linux-x86_64
           cp target/release/openonedrived dist/open-onedrive-linux-x86_64/
           cp target/release/openonedrivectl dist/open-onedrive-linux-x86_64/
+          cp target/release/openonedrive-rclone-worker dist/open-onedrive-linux-x86_64/
           cp build/ui-release/open-onedrive-ui dist/open-onedrive-linux-x86_64/
           cp build/ui-release/open-onedrive-tray dist/open-onedrive-linux-x86_64/
           cp build/integrations-release/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so dist/open-onedrive-linux-x86_64/
@@ -117,6 +118,7 @@ jobs:
           test -x "${smoke_home}/.local/bin/open-onedrive"
           test -x "${smoke_home}/.local/bin/openonedrived"
           test -x "${smoke_home}/.local/bin/openonedrivectl"
+          test -x "${smoke_home}/.local/bin/openonedrive-rclone-worker"
           test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
           test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
           test -f "${smoke_home}/.local/share/nautilus-python/extensions/openonedrive.py"

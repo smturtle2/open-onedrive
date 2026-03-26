@@ -3,6 +3,7 @@ members = [
   "crates/config",
   "crates/ipc-types",
   "crates/rclone-backend",
+  "crates/rclone-worker",
   "crates/openonedrived",
   "crates/openonedrivectl",
   "crates/state",
@@ -12,7 +13,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-version = "1.4.3"
+version = "1.5.0"
 license = "MIT"
 repository = "https://github.com/smturtle2/open-onedrive"
 

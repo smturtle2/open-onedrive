@@ -2,10 +2,6 @@
     <qresource prefix="/">
         <file alias="qml/Main.qml">../qml/Main.qml</file>
         <file alias="qml/pages/SetupPage.qml">../qml/pages/SetupPage.qml</file>
-        <file alias="qml/pages/DashboardPage.qml">../qml/pages/DashboardPage.qml</file>
-        <file alias="qml/pages/DashboardShell.qml">../qml/pages/DashboardShell.qml</file>
-        <file alias="qml/pages/ExplorerPage.qml">../qml/pages/ExplorerPage.qml</file>
-        <file alias="qml/pages/LogsPage.qml">../qml/pages/LogsPage.qml</file>
         <file alias="qml/components/MountPathEditor.qml">../qml/components/MountPathEditor.qml</file>
     </qresource>
 </RCC>

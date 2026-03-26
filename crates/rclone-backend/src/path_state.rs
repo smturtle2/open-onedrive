@@ -38,9 +38,6 @@ impl PathStateStore {
         transaction
             .execute("DELETE FROM path_states", [])
             .context("unable to clear path states")?;
-        transaction
-            .execute("DELETE FROM directory_metadata", [])
-            .context("unable to clear directory metadata")?;
         for state in states {
             upsert_state(&transaction, state)?;
         }
@@ -54,6 +51,14 @@ impl PathStateStore {
         transaction
             .commit()
             .context("unable to commit path state snapshot")?;
+        Ok(())
+    }
+
+    pub fn clear_directory_metadata(&self) -> Result<()> {
+        let connection = self.connection()?;
+        connection
+            .execute("DELETE FROM directory_metadata", [])
+            .context("unable to clear directory metadata")?;
         Ok(())
     }
 
@@ -177,7 +182,11 @@ impl PathStateStore {
                      ON CONFLICT(path) DO UPDATE SET
                          children_known = excluded.children_known,
                          last_listed_at = excluded.last_listed_at",
-                    params![entry.path, entry.children_known as i64, entry.last_listed_at],
+                    params![
+                        entry.path,
+                        entry.children_known as i64,
+                        entry.last_listed_at
+                    ],
                 )
                 .with_context(|| format!("unable to upsert directory metadata {}", entry.path))?;
         }

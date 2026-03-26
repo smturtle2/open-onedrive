@@ -104,8 +104,9 @@ openonedrivectl status
 
 - `rclone`은 인증, 원격 목록, 업로드/다운로드 primitive를 담당합니다
 - `openonedrived`는 커스텀 sync 모델, metadata cache, path state, 직렬 action queue를 직접 소유합니다
+- 모든 `rclone` 호출은 분리된 helper binary를 통해 실행되어 긴 refresh나 transfer가 메인 daemon 제어 경로를 막지 않게 합니다
 - hydrate된 바이트는 숨김 backing 디렉터리에 저장되고 visible tree는 깔끔하게 유지됩니다
-- Qt 셸, tray helper, CLI, Dolphin 플러그인, Nautilus extension은 모두 같은 daemon 상태를 읽습니다
+- Qt 셸은 settings-first 표면에 집중하고, tray helper, CLI, Dolphin 플러그인, Nautilus extension은 모두 같은 daemon 상태를 읽습니다
 
 ## 개발
 

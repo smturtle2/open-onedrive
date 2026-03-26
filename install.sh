@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.4.3}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.0}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -505,6 +505,7 @@ install_release_tree() {
 
   replace_installed_file "$extracted_root/openonedrived" "$bin_dir/openonedrived" 755
   replace_installed_file "$extracted_root/openonedrivectl" "$bin_dir/openonedrivectl" 755
+  replace_installed_file "$extracted_root/openonedrive-rclone-worker" "$bin_dir/openonedrive-rclone-worker" 755
   replace_installed_file "$extracted_root/open-onedrive-ui" "$libexec_dir/open-onedrive-ui" 755
   replace_installed_file "$extracted_root/open-onedrive-tray" "$libexec_dir/open-onedrive-tray" 755
   replace_installed_file "$extracted_root/openonedrive.py" "$nautilus_extension_dir/openonedrive.py" 755
