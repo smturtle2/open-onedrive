@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.5}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.6}"
 
 print_installer_help() {
   cat <<EOF
@@ -18,7 +18,7 @@ Behavior:
     then install into \$HOME/.local
   - source installs download a source archive and run scripts/install.sh from a temporary checkout
   - release installs refresh the launcher, user service, tray autostart entry, Dolphin plugins,
-    Nautilus extension, icons, and install metadata under ~/.local/share/open-onedrive
+    Nautilus extension, icons, and install metadata at ~/.local/share/open-onedrive/install-metadata.env
   - rclone is installed automatically when missing
 
 Key environment variables:
