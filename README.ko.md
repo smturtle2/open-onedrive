@@ -5,7 +5,22 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  <strong>KDE Plasma 6 + Dolphin</strong> 전용 정식 안정판 <strong>v1.0.2</strong>. 일반 로컬 폴더처럼 보이는 OneDrive 루트, on-demand hydrate, 파일별 장치 유지 / online-only 전환, tray, CLI, Dolphin 통합을 한 daemon 상태 위에 올린 Linux OneDrive 클라이언트입니다.
+  <strong>OneDrive를 KDE의 평범한 폴더처럼.</strong><br/>
+  visible root, on-demand hydrate, 파일별 residency, tray 중심 복구 흐름, 그리고 셸·CLI·Dolphin이 공유하는 하나의 daemon 상태를 제공합니다.
+</p>
+
+<p align="center">
+  <a href="./README.md">English</a> ·
+  <a href="#주요-특징">주요 특징</a> ·
+  <a href="#빠른-시작">빠른 시작</a> ·
+  <a href="#운영-표면">운영 표면</a> ·
+  <a href="#지원-범위">지원 범위</a> ·
+  <a href="#동작-방식">동작 방식</a> ·
+  <a href="#개발">개발</a>
+</p>
+
+<p align="center">
+  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
 </p>
 
 <p align="center">
@@ -17,20 +32,7 @@
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-<p align="center">
-  <a href="./README.md">English</a> ·
-  <a href="#주요-특징">주요 특징</a> ·
-  <a href="#빠른-시작">빠른 시작</a> ·
-  <a href="#지원-범위">지원 범위</a> ·
-  <a href="#동작-방식">동작 방식</a> ·
-  <a href="#개발">개발</a>
-</p>
-
-<p align="center">
-  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
-</p>
-
-> `v1.0.2`는 현재 안정판 라인입니다. 범위는 의도적으로 좁게 유지합니다. 공식 지원은 `Linux x86_64`, `KDE Plasma 6`, `Dolphin`에 한정합니다.
+> `v1.0.3`은 현재 안정화 패치 릴리즈 라인입니다. 범위는 의도적으로 좁게 유지합니다. 공식 지원은 `Linux x86_64`, `KDE Plasma 6`, `Dolphin`에 한정합니다.
 
 ## 개요
 
@@ -49,10 +51,22 @@
 - 커스텀 FUSE 위에 올린 보이는 OneDrive 루트 폴더
 - 일반 Linux 앱에서도 동작하는 on-demand hydrate
 - 파일별 `Keep on this device` / `Make online-only`
+- daemon이 다음으로 필요한 작업에 따라 Setup, Overview, Logs를 먼저 보여주는 상태 인식 셸
+- 큐 깊이, backing 사용량, pinned 파일 수, 마지막 동기화 상태를 한 번에 보는 compact runtime inspector
+- 최근 문제를 상단에 고정하고 검색 가능한 logs 화면
+- 루트 경로를 바꿀 때 안전하면 숨김 hydrated cache도 같이 옮기는 흐름
 - `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`
 - Dolphin overlay와 context action을 통한 탐색기 안 residency 제어
-- tray + overview shell + logs page + CLI가 하나의 daemon 상태를 공유
+- tray 지속성, CLI, Dolphin 통합이 하나의 daemon 상태를 공유
 - release archive 검증과 smoke test가 포함된 `curl ... | bash` 설치 경로
+
+## 운영 표면
+
+- `Overview`: primary action, compact runtime inspector, quick file control, diagnostics를 한 페이지에 모읍니다
+- `Setup`: 첫 연결, root path 변경, remote repair, clean disconnect를 같이 다룹니다
+- `Logs`: 최근 daemon 및 `rclone` 출력을 검색하고, 최신 문제를 고정해서 복구 작업을 돕습니다
+- `Tray`: 창을 닫아도 제어면을 유지하고, 백그라운드에서 actionable error만 알립니다
+- `Dolphin`: visible root에서 바로 per-file residency를 overlay와 context action으로 노출합니다
 
 ## 지원 범위
 
@@ -65,7 +79,7 @@
 | 로컬 파일시스템 모델 | `openonedrived`가 소유하는 커스텀 FUSE mount |
 | 안정판 설치 경로 | `~/.local` 사용자 로컬 설치 |
 
-`v1.0.2`의 비목표:
+`v1.0.3`의 비목표:
 
 - `rclone mount`
 - GNOME / Nautilus 지원
@@ -85,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 정확한 tag로 완전히 고정된 설치:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.3/install.sh | bash
 ```
 
 release artifact 대신 source 설치:
@@ -115,9 +129,10 @@ openonedrivectl status
 
 1. `~/OneDrive` 같은 빈 루트 폴더를 고릅니다.
 2. `rclone`이 시작한 Microsoft 브라우저 로그인 과정을 끝냅니다.
-3. 필요하면 파일시스템을 시작합니다.
-4. Dolphin, 터미널, VS Code, LibreOffice 같은 일반 앱에서 루트 폴더를 엽니다.
-5. overview shell, tray, CLI, Dolphin action으로 파일을 로컬 유지하거나 다시 online-only로 되돌립니다.
+3. daemon이 setup 대기, 정상 실행, 복구 필요 중 어떤 상태인지에 따라 셸이 Setup, Overview, Logs로 먼저 안내합니다.
+4. 필요하면 파일시스템을 시작합니다.
+5. Dolphin, 터미널, VS Code, LibreOffice 같은 일반 앱에서 루트 폴더를 엽니다.
+6. overview shell, tray, CLI, Dolphin action으로 파일을 로컬 유지하거나 다시 online-only로 되돌립니다.
 
 ## 일상 제어
 
@@ -134,8 +149,9 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 
 복구 표면:
 
-- overview shell은 daemon이 불안정해도 setup, 제어, logs 진입점을 같이 유지합니다
-- tray 알림은 백그라운드의 actionable error 중심으로만 보냅니다
+- 셸은 복구가 다음 단계일 때 Setup 또는 Logs를 먼저 열어줍니다
+- logs 페이지는 검색과 간단한 필터 중심으로 최근 daemon / `rclone` 출력을 좁혀볼 수 있습니다
+- tray 알림은 백그라운드의 actionable error 중심으로만 보내고, 창을 닫아도 tray 제어면은 남깁니다
 - Dolphin overlay는 daemon signal로 cache를 무효화해 local-only 추정치에 의존하지 않습니다
 
 ## 설정
@@ -159,13 +175,14 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
-# cache_limit_gb 는 v1.0.2에서 예약만 되어 있고 아직 강제되지 않습니다
+# cache_limit_gb 는 v1.0.3에서도 예약만 되어 있고 아직 강제되지 않습니다
 ```
 
 보장 사항:
 
 - wrapper는 `~/.config/rclone/rclone.conf`를 수정하지 않습니다
 - hydrate된 바이트는 보이는 루트 안의 숨김 backing 디렉터리에 저장됩니다
+- visible root를 옮길 때 목적지가 안전하면 그 숨김 backing 디렉터리도 같이 이동합니다
 - daemon, tray, CLI, Dolphin 통합은 모두 같은 path-state view를 읽습니다
 - disconnect는 OneDrive 온라인 파일이 아니라 app-owned 로컬 상태와 backing byte만 지웁니다
 

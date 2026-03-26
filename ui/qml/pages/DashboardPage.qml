@@ -59,17 +59,17 @@ Kirigami.ScrollablePage {
     function stageBody() {
         switch (shellBackend.appState) {
         case "daemon-unavailable":
-            return qsTr("The UI is running, but the background daemon is unavailable. Start the service, then refresh status here without losing access to logs.")
+            return qsTr("The shell is open, but the background service is offline. Restart it, then return here without losing the recent logs.")
         case "welcome":
-            return qsTr("Pick an empty folder for the visible OneDrive root, then let rclone finish the Microsoft sign-in in your browser.")
+            return qsTr("Pick an empty folder for the visible OneDrive root, then finish the Microsoft sign-in in your browser.")
         case "connecting":
-            return qsTr("Authentication is in progress. Keep this window open if you want to monitor status, or switch to Logs while the browser flow finishes.")
+            return qsTr("Sign-in or startup work is still in progress. Keep this window open if you want live status, or switch to Logs while it finishes.")
         case "recovery":
             return shellBackend.needsRemoteRepair
-                    ? qsTr("The app-owned rclone profile is stale. Repair Remote rebuilds only that private sign-in profile, preserves hydrated bytes and path state on this device, and then restarts the browser sign-in flow.")
-                    : qsTr("The remote is configured, but the filesystem needs attention. Review the status, fix the root path if needed, then retry or restart.")
+                    ? qsTr("The saved OneDrive sign-in for this machine is stale. Repair Remote rebuilds it and keeps your local hydrated files in place.")
+                    : qsTr("The account is connected, but the filesystem needs attention. Review the status, fix the root path if needed, then retry.")
         default:
-            return qsTr("The visible root, tray, logs, and quick file controls all resolve from the same daemon state and path cache.")
+            return qsTr("The visible root, tray, logs, and quick file controls all reflect the same daemon state, so you can act from one place.")
         }
     }
 
@@ -103,12 +103,12 @@ Kirigami.ScrollablePage {
 
     function helperText() {
         if (!shellBackend.daemonReachable) {
-            return qsTr("The path draft is still local. Start the daemon before you apply it with Connect or Start Filesystem.")
+            return qsTr("You can still edit the folder path here. Start the daemon before you apply it.")
         }
         if (!shellBackend.remoteConfigured) {
-            return qsTr("Choose an empty directory before you start the browser sign-in flow.")
+            return qsTr("Choose an empty folder before you start the browser sign-in flow.")
         }
-        return qsTr("Path changes stay local until you trigger Connect, Start Filesystem, or Retry Filesystem from this overview.")
+        return qsTr("Path changes stay local until you connect again or restart the filesystem.")
     }
 
     Dialog {
@@ -309,13 +309,24 @@ Kirigami.ScrollablePage {
                         text: qsTr("Connect OneDrive")
                         icon.name: "network-connect"
                         visible: !shellBackend.remoteConfigured
+                        highlighted: true
                         enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
                         onClicked: shellBackend.beginConnect()
                     }
 
                     Button {
+                        text: qsTr("Repair Remote")
+                        icon.name: "tools-wizard"
+                        visible: shellBackend.needsRemoteRepair
+                        highlighted: true
+                        enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                        onClicked: shellBackend.repairRemote()
+                    }
+
+                    Button {
                         text: qsTr("Start Filesystem")
                         icon.name: "folder-cloud"
+                        highlighted: shellBackend.canMount && !shellBackend.needsRemoteRepair
                         enabled: shellBackend.canMount
                         onClicked: shellBackend.mountRemote()
                     }
@@ -330,6 +341,7 @@ Kirigami.ScrollablePage {
                     Button {
                         text: qsTr("Retry")
                         icon.name: "view-refresh"
+                        highlighted: shellBackend.canRetry
                         enabled: shellBackend.canRetry
                         onClicked: shellBackend.retryMount()
                     }
@@ -422,8 +434,8 @@ Kirigami.ScrollablePage {
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
                     text: shellBackend.remoteConfigured
-                          ? qsTr("The daemon keeps an app-owned rclone profile under the XDG project directory. You can still change the visible root here before the next restart or reconnect.")
-                          : qsTr("Pick where the visible OneDrive root should live on this machine. The folder must be empty except for the hidden backing directory managed by the daemon.")
+                          ? qsTr("Change the visible root here when you need to move OneDrive on this device. open-onedrive carries the hidden local cache to the new root before restart when possible.")
+                          : qsTr("Choose where the visible OneDrive root should live on this machine. The folder must be empty except for the hidden local cache folder managed by the daemon.")
                 }
 
                 MountPathEditor {
@@ -435,48 +447,128 @@ Kirigami.ScrollablePage {
                     visible: !shellBackend.remoteConfigured
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("1. Choose an empty folder. 2. Start the browser sign-in flow. 3. Start the filesystem when the remote becomes ready.")
+                    text: qsTr("1. Choose an empty folder. 2. Start sign-in. 3. Start the filesystem when the account is ready.")
                 }
             }
         }
 
-        GridLayout {
+        Frame {
             Layout.fillWidth: true
             visible: shellBackend.remoteConfigured
-            columns: width > 840 ? 4 : width > 540 ? 2 : 1
-            columnSpacing: Kirigami.Units.largeSpacing
-            rowSpacing: Kirigami.Units.largeSpacing
+            padding: Kirigami.Units.largeSpacing
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Backend")
-                value: shellBackend.rcloneVersion.length > 0 ? shellBackend.rcloneVersion : qsTr("Pending")
-                description: qsTr("Custom FUSE plus rclone primitives for metadata and transfer work")
-                accentColor: "#3c73d4"
-            }
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Kirigami.Units.mediumSpacing
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Sync Queue")
-                value: qsTr("%1 total").arg(shellBackend.queueDepth)
-                description: qsTr("%1 downloads pending · %2 uploads pending").arg(shellBackend.pendingDownloads).arg(shellBackend.pendingUploads)
-                accentColor: page.syncColor()
-            }
+                Kirigami.Heading {
+                    text: qsTr("Runtime inspector")
+                    level: 3
+                }
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Backing Store")
-                value: shellBackend.cacheUsageLabel
-                description: qsTr("Hydrated bytes live in the hidden %1 folder").arg(shellBackend.backingDirName)
-                accentColor: "#5b8f46"
-            }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("A compact view of the runtime so you can judge queue health, local cache size, and recovery status at a glance.")
+                }
 
-            StatusCard {
-                Layout.fillWidth: true
-                title: qsTr("Residency")
-                value: qsTr("%1 pinned").arg(shellBackend.pinnedFileCount)
-                description: qsTr("%1 conflicts · last sync %2").arg(shellBackend.conflictCount).arg(shellBackend.lastSyncLabel)
-                accentColor: page.stateColor()
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: width > 860 ? 4 : width > 540 ? 2 : 1
+                    columnSpacing: Kirigami.Units.largeSpacing
+                    rowSpacing: Kirigami.Units.mediumSpacing
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Label {
+                            text: qsTr("Backend")
+                            color: Kirigami.Theme.neutralTextColor
+                        }
+
+                        Kirigami.Heading {
+                            text: shellBackend.rcloneVersion.length > 0 ? shellBackend.rcloneVersion : qsTr("Pending")
+                            level: 2
+                            wrapMode: Text.Wrap
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.disabledTextColor
+                            text: qsTr("Custom FUSE plus rclone primitives for listing and transfers")
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Label {
+                            text: qsTr("Sync queue")
+                            color: Kirigami.Theme.neutralTextColor
+                        }
+
+                        Kirigami.Heading {
+                            text: qsTr("%1 total").arg(shellBackend.queueDepth)
+                            level: 2
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.disabledTextColor
+                            text: qsTr("%1 downloads pending · %2 uploads pending").arg(shellBackend.pendingDownloads).arg(shellBackend.pendingUploads)
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Label {
+                            text: qsTr("Backing store")
+                            color: Kirigami.Theme.neutralTextColor
+                        }
+
+                        Kirigami.Heading {
+                            text: shellBackend.cacheUsageLabel
+                            level: 2
+                            wrapMode: Text.Wrap
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.disabledTextColor
+                            text: qsTr("Hydrated bytes live in the hidden %1 folder").arg(shellBackend.backingDirName)
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Label {
+                            text: qsTr("Residency")
+                            color: Kirigami.Theme.neutralTextColor
+                        }
+
+                        Kirigami.Heading {
+                            text: qsTr("%1 pinned").arg(shellBackend.pinnedFileCount)
+                            level: 2
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.disabledTextColor
+                            text: qsTr("%1 conflicts · last sync %2").arg(shellBackend.conflictCount).arg(shellBackend.lastSyncLabel)
+                        }
+                    }
+                }
             }
         }
 

@@ -20,6 +20,7 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus QuickDialogs2 Widgets)
 find_package(KF6DBusAddons REQUIRED)
 find_package(KF6Kirigami REQUIRED)
+find_package(KF6KirigamiPlatform REQUIRED)
 find_package(KF6StatusNotifierItem REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.8)
@@ -29,6 +30,10 @@ qt_add_executable(open-onedrive-ui
     src/main.cpp
     src/ShellBackend.cpp
     src/ShellBackend.h
+)
+
+set_target_properties(open-onedrive-ui PROPERTIES
+    QT_QML_MODULE_NO_IMPORT_SCAN TRUE
 )
 
 target_link_libraries(open-onedrive-ui

@@ -1,86 +1,79 @@
 <svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1280" height="720" rx="40" fill="#07111B"/>
+  <rect width="1280" height="720" rx="40" fill="#061019"/>
   <rect x="20" y="20" width="1240" height="680" rx="32" fill="url(#surface)"/>
   <circle cx="104" cy="92" r="10" fill="#FF7B7B"/>
   <circle cx="140" cy="92" r="10" fill="#FFBE6B"/>
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
-  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive overview surface</text>
+  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive v1.0.3 shell</text>
 
-  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="44" font-weight="700">One local folder, explicit recovery, on-demand bytes.</text>
-  <text x="92" y="194" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">The overview shell keeps connection, filesystem, sync, queue, and diagnostics in one place while the custom FUSE layer exposes the visible OneDrive root.</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">State-aware shell, compact recovery, one visible folder.</text>
+  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">The dashboard now opens to Setup, Overview, or Logs based on what the daemon needs next, while the hidden hydrated cache follows safe root-path moves.</text>
 
   <g filter="url(#shadow)">
-    <rect x="88" y="244" width="470" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
-    <text x="124" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Overview</text>
-    <text x="124" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Setup, recovery, file controls, and runtime details stay on the same KDE surface.</text>
+    <rect x="80" y="244" width="658" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>
+    <rect x="104" y="272" width="610" height="108" rx="24" fill="#102234"/>
+    <text x="132" y="316" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="16">State</text>
+    <text x="132" y="350" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="34" font-weight="700">Filesystem running</text>
+    <text x="132" y="374" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="16">Primary action, tray note, and recommended page shift with daemon status.</text>
+    <rect x="534" y="298" width="156" height="34" rx="17" fill="#1D4C77"/>
+    <text x="565" y="320" fill="#F3F8FF" font-family="Arial, sans-serif" font-size="15">Open Folder</text>
+    <rect x="534" y="340" width="156" height="34" rx="17" fill="#152C45"/>
+    <text x="589" y="362" fill="#DCE7F8" font-family="Arial, sans-serif" font-size="15">Logs</text>
 
-    <rect x="124" y="356" width="180" height="118" rx="22" fill="#12233A"/>
-    <rect x="124" y="356" width="180" height="8" rx="4" fill="#4B7CFF"/>
-    <text x="146" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Connection</text>
-    <text x="146" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Ready</text>
-    <text x="146" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">app-owned remote is configured</text>
+    <rect x="104" y="404" width="610" height="92" rx="20" fill="#0F2134"/>
+    <text x="132" y="436" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Compact runtime inspector</text>
+    <text x="132" y="472" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="21" font-weight="700">Queue 3 total</text>
+    <text x="132" y="494" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">2 downloads pending · 1 upload pending</text>
+    <text x="332" y="472" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="21" font-weight="700">Backing 1.8 GB</text>
+    <text x="332" y="494" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">hidden .openonedrive-cache stays under the visible root</text>
+    <text x="560" y="472" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="21" font-weight="700">12 pinned</text>
+    <text x="560" y="494" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">0 conflicts · last sync 14:26</text>
 
-    <rect x="322" y="356" width="200" height="118" rx="22" fill="#12233A"/>
-    <rect x="322" y="356" width="200" height="8" rx="4" fill="#26A269"/>
-    <text x="344" y="396" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Filesystem</text>
-    <text x="344" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Running</text>
-    <text x="344" y="460" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">visible root is active</text>
+    <rect x="104" y="520" width="294" height="100" rx="20" fill="#11263A"/>
+    <text x="132" y="552" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Setup</text>
+    <text x="132" y="586" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Move root safely</text>
+    <text x="132" y="608" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">Changing the visible root carries hydrated bytes to the next folder when the destination is clean.</text>
 
-    <rect x="124" y="494" width="180" height="118" rx="22" fill="#12233A"/>
-    <rect x="124" y="494" width="180" height="8" rx="4" fill="#7D67FF"/>
-    <text x="146" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Sync state</text>
-    <text x="146" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Paused</text>
-    <text x="146" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">reads work, writes stay queued</text>
-
-    <rect x="322" y="494" width="200" height="118" rx="22" fill="#12233A"/>
-    <rect x="322" y="494" width="200" height="8" rx="4" fill="#89A64B"/>
-    <text x="344" y="534" fill="#90A6C8" font-family="Arial, sans-serif" font-size="17">Recovery</text>
-    <text x="344" y="572" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Logs + retry</text>
-    <text x="344" y="598" fill="#C3D1E7" font-family="Arial, sans-serif" font-size="16">stay visible on the same page</text>
+    <rect x="420" y="520" width="294" height="100" rx="20" fill="#11263A"/>
+    <text x="448" y="552" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Logs</text>
+    <text x="448" y="586" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Search the latest issue</text>
+    <text x="448" y="608" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">Pinned recovery text plus quick filters narrow recent daemon and rclone output.</text>
   </g>
 
   <g filter="url(#shadow)">
-    <rect x="592" y="244" width="264" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
-    <text x="626" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Dolphin</text>
-    <text x="626" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">The file explorer becomes the per-file control surface with overlays.</text>
+    <rect x="774" y="244" width="426" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>
+    <text x="808" y="292" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Explorer + tray</text>
+    <text x="808" y="324" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Residency controls stay close to the file path, while background recovery stays close to the tray.</text>
 
-    <rect x="626" y="360" width="196" height="188" rx="24" fill="#13243B"/>
-    <text x="648" y="396" fill="#C9D8ED" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf   overlay: pinned</text>
-    <rect x="648" y="420" width="152" height="36" rx="18" fill="#1C3350"/>
-    <text x="668" y="443" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Keep on this device</text>
-    <rect x="648" y="468" width="152" height="36" rx="18" fill="#1C3350"/>
-    <text x="665" y="491" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Make online-only</text>
-    <rect x="648" y="516" width="122" height="36" rx="18" fill="#1C3350"/>
-    <text x="676" y="539" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="16">Open folder</text>
+    <rect x="808" y="358" width="170" height="220" rx="24" fill="#13243B"/>
+    <text x="830" y="392" fill="#D7E2F2" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf</text>
+    <rect x="830" y="414" width="126" height="30" rx="15" fill="#1A3654"/>
+    <text x="857" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">pinned</text>
+    <rect x="830" y="462" width="126" height="34" rx="17" fill="#183553"/>
+    <text x="842" y="484" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">Keep on device</text>
+    <rect x="830" y="510" width="126" height="34" rx="17" fill="#183553"/>
+    <text x="842" y="532" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">Make online-only</text>
+    <rect x="830" y="558" width="126" height="34" rx="17" fill="#183553"/>
+    <text x="850" y="580" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">Retry transfer</text>
 
-    <rect x="626" y="572" width="196" height="36" rx="18" fill="#153454"/>
-    <circle cx="650" cy="590" r="6" fill="#4FD18B"/>
-    <text x="666" y="596" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="16">Overlay + context menu drive file residency.</text>
-  </g>
+    <rect x="1000" y="358" width="166" height="112" rx="22" fill="#11263A"/>
+    <text x="1026" y="394" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Tray</text>
+    <text x="1026" y="428" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="19" font-weight="700">Window closed</text>
+    <text x="1026" y="450" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Controls stay resident in the system tray.</text>
 
-  <g filter="url(#shadow)">
-    <rect x="888" y="244" width="304" height="392" rx="28" fill="#0E1B2C" stroke="#243B5B"/>
-    <text x="922" y="290" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Recent activity + tray</text>
-    <text x="922" y="322" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Errors notify only when the window is backgrounded, while logs stay available in the shell.</text>
-
-    <rect x="922" y="360" width="236" height="74" rx="20" fill="#12233A"/>
-    <text x="944" y="392" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398132] rescan</text>
-    <text x="944" y="418" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">SQLite path-state cache refreshed from rclone lsjson</text>
-
-    <rect x="922" y="448" width="236" height="74" rx="20" fill="#12233A"/>
-    <text x="944" y="480" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">[1711398190] tray</text>
-    <text x="944" y="506" fill="#BFD0E6" font-family="Arial, sans-serif" font-size="16">Close-to-tray keeps the daemon controls resident</text>
-
-    <rect x="922" y="542" width="236" height="58" rx="20" fill="#14314D"/>
-    <text x="944" y="577" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="17">Logs and retry stay visible during recovery.</text>
+    <rect x="1000" y="488" width="166" height="122" rx="22" fill="#11263A"/>
+    <text x="1026" y="522" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Pinned issue</text>
+    <text x="1026" y="556" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">Retry the filesystem</text>
+    <text x="1026" y="578" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Logs stay one click away while the daemon needs attention.</text>
   </g>
 
   <defs>
-    <linearGradient id="surface" x1="70" y1="32" x2="1196" y2="688" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#11213A"/>
-      <stop offset="1" stop-color="#091421"/>
+    <linearGradient id="surface" x1="60" y1="28" x2="1200" y2="692" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12233C"/>
+      <stop offset="0.5" stop-color="#0A1522"/>
+      <stop offset="1" stop-color="#07111A"/>
     </linearGradient>
-    <filter id="shadow" x="68" y="228" width="1144" height="428" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+    <filter id="shadow" x="60" y="228" width="1160" height="440" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#02060C" flood-opacity="0.42"/>
     </filter>
   </defs>

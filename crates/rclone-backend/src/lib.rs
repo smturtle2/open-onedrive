@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast};
@@ -285,6 +286,7 @@ impl RcloneBackend {
     pub async fn set_root_path(self: &Arc<Self>, raw_path: &str) -> Result<()> {
         let requested_path = PathBuf::from(raw_path);
         let mut updated_config = self.current_config().await;
+        let previous_root_path = updated_config.root_path.clone();
         validate_root_path(&requested_path, &updated_config.backing_dir_name)?;
 
         let should_restart = self.runtime.read().await.filesystem_state == FilesystemState::Running;
@@ -294,6 +296,11 @@ impl RcloneBackend {
             fs::create_dir_all(&requested_path)
                 .with_context(|| format!("unable to create {}", requested_path.display()))?;
         }
+        migrate_backing_root(
+            &previous_root_path,
+            &requested_path,
+            &updated_config.backing_dir_name,
+        )?;
         updated_config.root_path = requested_path;
         updated_config.save(&self.paths)?;
         *self.config.write().await = updated_config;
@@ -660,19 +667,32 @@ impl RcloneBackend {
 
         self.begin_sync_activity(SyncState::Syncing)?;
         let mut changed = Vec::new();
-        for relative_path in &selected_paths {
-            self.hydrate_relative_path_sync(relative_path)?;
-            changed.push(relative_path.clone());
+        let result = (|| -> Result<u32> {
+            for relative_path in &selected_paths {
+                self.hydrate_relative_path_sync(relative_path)?;
+                changed.push(relative_path.clone());
+            }
+            self.set_pinned_state(&changed, true)?;
+            self.rebuild_path_state_snapshot_sync()?;
+            Ok(changed.len() as u32)
+        })();
+
+        match result {
+            Ok(count) => {
+                self.complete_sync_activity(None).await?;
+                self.append_log(format!("kept {count} item(s) available on this device"));
+                self.emit_path_state_refresh(&changed);
+                Ok(count)
+            }
+            Err(error) => {
+                if !changed.is_empty() {
+                    let _ = self.rebuild_path_state_snapshot_sync();
+                    self.emit_path_state_refresh(&changed);
+                }
+                self.complete_sync_activity(Some(error.to_string())).await?;
+                Err(error)
+            }
         }
-        self.set_pinned_state(&changed, true)?;
-        self.rebuild_path_state_snapshot_sync()?;
-        self.complete_sync_activity(None).await?;
-        self.append_log(format!(
-            "kept {} item(s) available on this device",
-            changed.len()
-        ));
-        self.emit_path_state_refresh(&changed);
-        Ok(changed.len() as u32)
     }
 
     pub async fn make_online_only(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
@@ -684,19 +704,32 @@ impl RcloneBackend {
 
         self.begin_sync_activity(SyncState::Syncing)?;
         let mut changed = Vec::new();
-        for relative_path in &selected_paths {
-            self.evict_relative_path_sync(relative_path)?;
-            changed.push(relative_path.clone());
+        let result = (|| -> Result<u32> {
+            for relative_path in &selected_paths {
+                self.evict_relative_path_sync(relative_path)?;
+                changed.push(relative_path.clone());
+            }
+            self.set_pinned_state(&changed, false)?;
+            self.rebuild_path_state_snapshot_sync()?;
+            Ok(changed.len() as u32)
+        })();
+
+        match result {
+            Ok(count) => {
+                self.complete_sync_activity(None).await?;
+                self.append_log(format!("returned {count} item(s) to online-only mode"));
+                self.emit_path_state_refresh(&changed);
+                Ok(count)
+            }
+            Err(error) => {
+                if !changed.is_empty() {
+                    let _ = self.rebuild_path_state_snapshot_sync();
+                    self.emit_path_state_refresh(&changed);
+                }
+                self.complete_sync_activity(Some(error.to_string())).await?;
+                Err(error)
+            }
         }
-        self.set_pinned_state(&changed, false)?;
-        self.rebuild_path_state_snapshot_sync()?;
-        self.complete_sync_activity(None).await?;
-        self.append_log(format!(
-            "returned {} item(s) to online-only mode",
-            changed.len()
-        ));
-        self.emit_path_state_refresh(&changed);
-        Ok(changed.len() as u32)
     }
 
     pub async fn retry_transfer(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
@@ -1039,6 +1072,15 @@ impl RcloneBackend {
             let conflict_reason = existing_state
                 .map(|state| state.conflict_reason.clone())
                 .unwrap_or_default();
+            let modified_unix = if dirty {
+                existing_state
+                    .map(|state| state.last_sync_at)
+                    .unwrap_or_else(unix_timestamp)
+            } else {
+                parse_rclone_mod_time_unix(&entry.mod_time)
+                    .or_else(|| existing_state.map(|state| state.last_sync_at))
+                    .unwrap_or_else(unix_timestamp)
+            };
 
             let mut state = PathState {
                 path: entry.path.clone(),
@@ -1049,7 +1091,7 @@ impl RcloneBackend {
                 hydrated,
                 dirty,
                 error,
-                last_sync_at: unix_timestamp(),
+                last_sync_at: modified_unix,
                 base_revision: revision_for_entry(entry),
                 conflict_reason,
             };
@@ -1218,10 +1260,7 @@ impl RcloneBackend {
 
         {
             let mut runtime = self.runtime.write().await;
-            apply_filesystem_start_failure(
-                &mut runtime,
-                message.clone(),
-            );
+            apply_filesystem_start_failure(&mut runtime, message.clone());
         }
         self.persist_runtime().await?;
         self.append_log(message.clone());
@@ -1962,7 +2001,10 @@ fn has_remote_config(config_file: &Path, remote_name: &str) -> Result<bool> {
     Ok(read_remote_config_section(config_file, remote_name)?.is_some())
 }
 
-fn read_remote_config_section(config_file: &Path, remote_name: &str) -> Result<Option<RemoteConfigSection>> {
+fn read_remote_config_section(
+    config_file: &Path,
+    remote_name: &str,
+) -> Result<Option<RemoteConfigSection>> {
     if !config_file.exists() {
         return Ok(None);
     }
@@ -1985,7 +2027,11 @@ fn read_remote_config_section(config_file: &Path, remote_name: &str) -> Result<O
             continue;
         }
 
-        if !in_target_section || trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+        if !in_target_section
+            || trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.starts_with(';')
+        {
             continue;
         }
 
@@ -2036,13 +2082,16 @@ fn refresh_onedrive_access_token(section: &RemoteConfigSection, binary: &Path) -
     let token = section
         .option("token")
         .context("the app-owned rclone profile is missing its OAuth token")?;
-    let token_json = serde_json::from_str::<Value>(token).context("unable to parse the stored OAuth token")?;
+    let token_json =
+        serde_json::from_str::<Value>(token).context("unable to parse the stored OAuth token")?;
     let refresh_token = token_json
         .get("refresh_token")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .context("the stored OAuth token does not include a refresh_token")?;
-    let client_id = section.option("client_id").unwrap_or(RCLONE_ONEDRIVE_DEFAULT_CLIENT_ID);
+    let client_id = section
+        .option("client_id")
+        .unwrap_or(RCLONE_ONEDRIVE_DEFAULT_CLIENT_ID);
     let client_secret = match (section.option("client_id"), section.option("client_secret")) {
         (_, Some(secret)) => Some(reveal_rclone_secret_or_raw(binary, secret)),
         (Some(_), None) => None,
@@ -2074,7 +2123,10 @@ fn refresh_onedrive_access_token(section: &RemoteConfigSection, binary: &Path) -
     Ok(refreshed.access_token)
 }
 
-fn read_onedrive_drive_metadata(section: &RemoteConfigSection, access_token: &str) -> Result<DriveMetadata> {
+fn read_onedrive_drive_metadata(
+    section: &RemoteConfigSection,
+    access_token: &str,
+) -> Result<DriveMetadata> {
     let region = section.option("region").unwrap_or("global");
     let drive_url = format!("{}/v1.0/me/drive", onedrive_graph_base_url(region)?);
     let drive = ureq::get(&drive_url)
@@ -2307,6 +2359,16 @@ fn relative_string(path: &Path) -> String {
         .join("/")
 }
 
+fn parse_rclone_mod_time_unix(raw: &str) -> Option<u64> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+
+    OffsetDateTime::parse(raw, &Rfc3339)
+        .ok()
+        .and_then(|value| u64::try_from(value.unix_timestamp()).ok())
+}
+
 fn remove_empty_parent_dirs(path: &Path, stop_at: &Path) -> Result<()> {
     let mut current = path.parent();
     while let Some(dir) = current {
@@ -2345,13 +2407,118 @@ fn remove_local_backing_path(path: &Path, is_dir: bool) -> Result<()> {
     Ok(())
 }
 
+fn migrate_backing_root(
+    previous_root: &Path,
+    next_root: &Path,
+    backing_dir_name: &str,
+) -> Result<()> {
+    if previous_root == next_root {
+        return Ok(());
+    }
+
+    let source = previous_root.join(backing_dir_name);
+    if !source.exists() {
+        return Ok(());
+    }
+    if !source.is_dir() {
+        bail!(
+            "local backing path is not a directory: {}",
+            source.display()
+        );
+    }
+
+    let destination = next_root.join(backing_dir_name);
+    if destination.exists() {
+        if !destination.is_dir() {
+            bail!(
+                "target backing path is not a directory: {}",
+                destination.display()
+            );
+        }
+        if !directory_is_empty(&destination)? {
+            bail!(
+                "target root already contains hydrated bytes in {}",
+                destination.display()
+            );
+        }
+        fs::remove_dir_all(&destination)
+            .with_context(|| format!("unable to clear {}", destination.display()))?;
+    }
+
+    move_dir_all(&source, &destination)
+}
+
+fn move_dir_all(source: &Path, destination: &Path) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create {}", parent.display()))?;
+    }
+
+    match fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+            copy_dir_all(source, destination)?;
+            fs::remove_dir_all(source)
+                .with_context(|| format!("unable to remove {}", source.display()))?;
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "unable to move {} to {}",
+                source.display(),
+                destination.display()
+            )
+        }),
+    }
+}
+
+fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)
+        .with_context(|| format!("unable to create {}", destination.display()))?;
+
+    for entry in
+        fs::read_dir(source).with_context(|| format!("unable to inspect {}", source.display()))?
+    {
+        let entry = entry.with_context(|| format!("unable to read {}", source.display()))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("unable to stat {}", source_path.display()))?;
+        if metadata.is_dir() {
+            copy_dir_all(&source_path, &destination_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "unable to copy {} to {}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn directory_is_empty(path: &Path) -> Result<bool> {
+    let mut entries =
+        fs::read_dir(path).with_context(|| format!("unable to inspect {}", path.display()))?;
+    Ok(entries.next().is_none())
+}
+
 fn rename_local_backing_path(source: &Path, target: &Path) -> Result<()> {
     if !source.exists() {
         return Ok(());
     }
 
-    fs::rename(source, target)
-        .with_context(|| format!("unable to rename {} to {}", source.display(), target.display()))
+    fs::rename(source, target).with_context(|| {
+        format!(
+            "unable to rename {} to {}",
+            source.display(),
+            target.display()
+        )
+    })
 }
 
 fn should_ignore_missing_local_path(error: &anyhow::Error) -> bool {
@@ -2772,9 +2939,9 @@ mod tests {
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
         build_download_args, build_lsjson_args, build_moveto_args, build_rmdir_args,
         build_upload_args, derive_path_state, expand_retry_paths, expand_selected_paths,
-        is_legacy_onedrive_remote_error, normalize_path_state_snapshot, read_remote_config_section,
-        relative_path_for, remote_config_needs_repair, resolve_rclone_binary_with_path,
-        revision_for_entry,
+        is_legacy_onedrive_remote_error, normalize_path_state_snapshot, parse_rclone_mod_time_unix,
+        read_remote_config_section, relative_path_for, remote_config_needs_repair,
+        resolve_rclone_binary_with_path, revision_for_entry,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::{
@@ -2865,11 +3032,17 @@ mod tests {
     }
 
     #[test]
-    fn filesystem_start_failure_sets_error_state() {
-        let mut runtime = Runtime::from_state(
-            RuntimeState::default(),
-            true,
+    fn parses_rclone_mod_time_as_unix_timestamp() {
+        assert_eq!(
+            parse_rclone_mod_time_unix("2026-03-25T00:00:00Z"),
+            Some(1_774_396_800)
         );
+        assert_eq!(parse_rclone_mod_time_unix(""), None);
+    }
+
+    #[test]
+    fn filesystem_start_failure_sets_error_state() {
+        let mut runtime = Runtime::from_state(RuntimeState::default(), true);
         runtime.filesystem_state = FilesystemState::Starting;
         runtime.connection_state = ConnectionState::Ready;
 
@@ -2926,7 +3099,10 @@ mod tests {
         }
         backend.persist_runtime().await.expect("persist runtime");
 
-        backend.prepare_remote_repair().await.expect("prepare repair");
+        backend
+            .prepare_remote_repair()
+            .await
+            .expect("prepare repair");
 
         assert!(!paths.rclone_config_file.exists());
         assert!(cache_file.exists());
@@ -2938,6 +3114,66 @@ mod tests {
         assert!(!status.remote_configured);
         assert!(!status.needs_remote_repair);
         assert_eq!(status.connection_state, ConnectionState::Disconnected);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn keep_local_failure_marks_sync_error_instead_of_staying_syncing() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let requested = dir.path().join("OneDrive").join("Docs").join("missing.txt");
+        fs::create_dir_all(requested.parent().expect("parent")).expect("docs dir");
+        fs::write(&requested, "").expect("placeholder file");
+
+        let error = backend
+            .keep_local(&[requested.display().to_string()])
+            .await
+            .expect_err("keep-local should fail without path state");
+        assert!(error.to_string().contains("unknown path"));
+
+        let status = backend.status().await.expect("status");
+        assert_eq!(status.sync_state, SyncState::Error);
+        assert!(status.last_sync_error.contains("unknown path"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn make_online_only_failure_marks_sync_error_instead_of_staying_syncing() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let requested = dir.path().join("OneDrive").join("Docs").join("missing.txt");
+        fs::create_dir_all(requested.parent().expect("parent")).expect("docs dir");
+        fs::write(&requested, "").expect("placeholder file");
+
+        let error = backend
+            .make_online_only(&[requested.display().to_string()])
+            .await
+            .expect_err("make-online-only should fail without path state");
+        assert!(error.to_string().contains("unknown path"));
+
+        let status = backend.status().await.expect("status");
+        assert_eq!(status.sync_state, SyncState::Error);
+        assert!(status.last_sync_error.contains("unknown path"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_snapshot_uses_remote_mod_time_for_virtual_entries() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let snapshot = backend
+            .build_snapshot_from_remote_entries(&[RcloneListEntry {
+                path: "Docs/report.pdf".into(),
+                is_dir: false,
+                size: 42,
+                mod_time: "2026-03-25T00:00:00Z".into(),
+                hashes: BTreeMap::new(),
+            }])
+            .expect("snapshot");
+
+        assert_eq!(snapshot.len(), 2);
+        let file_state = snapshot
+            .into_iter()
+            .find(|state| state.path == "Docs/report.pdf")
+            .expect("file state");
+        assert_eq!(file_state.last_sync_at, 1_774_396_800);
     }
 
     #[test]
@@ -2967,7 +3203,9 @@ mod tests {
         assert!(is_legacy_onedrive_remote_error(
             "unable to get drive_id and drive_type - if you are upgrading from older versions"
         ));
-        assert!(!is_legacy_onedrive_remote_error("some other rclone failure"));
+        assert!(!is_legacy_onedrive_remote_error(
+            "some other rclone failure"
+        ));
     }
 
     #[test]
@@ -3194,11 +3432,41 @@ mod tests {
 
         assert!(!paths.rclone_config_file.exists());
         assert!(cached_file.exists());
-        assert_eq!(backend.path_state_store.all().expect("path states").len(), 1);
+        assert_eq!(
+            backend.path_state_store.all().expect("path states").len(),
+            1
+        );
 
         let status = backend.status().await.expect("status");
         assert!(!status.remote_configured);
         assert!(!status.needs_remote_repair);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_root_path_moves_hydrated_backing_bytes_to_new_root() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let current_root = dir.path().join("OneDrive");
+        let hydrated = current_root
+            .join(".openonedrive-cache")
+            .join("Docs")
+            .join("keep.txt");
+        fs::create_dir_all(hydrated.parent().expect("parent")).expect("cache dir");
+        fs::write(&hydrated, "cached").expect("cached file");
+
+        let next_root = dir.path().join("OneDrive-Next");
+        backend
+            .set_root_path(next_root.to_str().expect("utf-8 path"))
+            .await
+            .expect("set root path");
+
+        let moved = next_root
+            .join(".openonedrive-cache")
+            .join("Docs")
+            .join("keep.txt");
+        assert!(moved.exists());
+        assert!(!hydrated.exists());
+        assert_eq!(backend.current_config().await.root_path, next_root);
     }
 
     fn build_paths(root: &Path) -> ProjectPaths {

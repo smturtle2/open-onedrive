@@ -35,10 +35,10 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             text: shellBackend.needsRemoteRepair
-                  ? qsTr("This machine still has an app-owned rclone profile from an older release. Repair Remote rebuilds only that private sign-in profile, preserves hydrated bytes and path state on this device, and restarts the browser sign-in flow.")
+                  ? qsTr("This machine still has an older saved sign-in. Repair Remote rebuilds that sign-in, keeps your hydrated files on this device, and restarts the browser flow.")
                   : shellBackend.remoteConfigured
-                    ? qsTr("The app-owned rclone remote already exists. Choose whether to restart the filesystem, retry a failed session, or disconnect it completely.")
-                  : qsTr("Choose where the visible OneDrive root folder should appear on this machine, then start the browser sign-in flow managed by rclone.")
+                    ? qsTr("The account is already connected. Use this page to move the visible root, retry the filesystem, or disconnect this device cleanly.")
+                  : qsTr("Choose where the visible OneDrive root folder should appear on this machine, then start sign-in in your browser.")
         }
 
         Kirigami.InlineMessage {
@@ -49,14 +49,14 @@ Kirigami.ScrollablePage {
                     ? Kirigami.MessageType.Error
                   : Kirigami.MessageType.Information
             text: !shellBackend.daemonReachable
-                  ? qsTr("The daemon is not reachable yet. You can still review the root path and return to Logs while the service comes back.")
+                  ? qsTr("The daemon is not reachable yet. You can still review the root path and switch to Logs while the service comes back.")
                   : shellBackend.needsRemoteRepair
-                    ? qsTr("Repair removes only the stale app-owned rclone profile under XDG config paths. It does not wipe the hydrated backing store or your saved path state.")
-                  : qsTr("open-onedrive keeps its own rclone profile under XDG config paths and leaves your default ~/.config/rclone/rclone.conf untouched.")
+                    ? qsTr("Repair replaces only the saved sign-in for this app. It does not wipe the hydrated local cache or your saved file state.")
+                  : qsTr("open-onedrive keeps its own private sign-in for this app and leaves your normal rclone setup untouched.")
         }
 
         MountPathEditor {
-            helperText: qsTr("The daemon only writes its own rclone config under XDG config/open-onedrive/rclone/rclone.conf and never touches ~/.config/rclone/rclone.conf.")
+            helperText: qsTr("open-onedrive stores its own sign-in details for this app only and never takes over your normal rclone configuration.")
         }
 
         Frame {
@@ -75,8 +75,8 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: shellBackend.customClientIdConfigured
-                          ? qsTr("A custom client ID is already configured in the app config file.")
-                          : qsTr("This flow uses rclone's default Microsoft OAuth app. Custom client IDs stay out of the default UI and can be added manually in config.toml.")
+                          ? qsTr("A custom client ID is already configured for this machine.")
+                          : qsTr("The default setup uses rclone's Microsoft app. Advanced client ID changes stay in config.toml instead of the first-run UI.")
                 }
             }
         }
@@ -134,6 +134,13 @@ Kirigami.ScrollablePage {
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.neutralTextColor
             text: shellBackend.statusMessage
+        }
+
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.neutralTextColor
+            text: qsTr("Closing the window keeps open-onedrive in the system tray. You can return later without stopping the daemon.")
         }
     }
 }

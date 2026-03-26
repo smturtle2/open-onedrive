@@ -5,7 +5,22 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  Stable <strong>v1.0.2</strong> for <strong>KDE Plasma 6 + Dolphin</strong>: a Linux OneDrive client that exposes a real local root folder, hydrates files on demand, lets you keep files on this device or return them to online-only, and keeps the daemon, tray, CLI, and Dolphin in sync.
+  <strong>OneDrive as a normal KDE folder.</strong><br/>
+  Visible root, on-demand hydration, per-file residency, tray-aware recovery, and one daemon state shared by the shell, CLI, and Dolphin.
+</p>
+
+<p align="center">
+  <a href="./README.ko.md">한국어</a> ·
+  <a href="#highlights">Highlights</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#operator-surfaces">Operator Surfaces</a> ·
+  <a href="#supported-scope">Supported Scope</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#development">Development</a>
+</p>
+
+<p align="center">
+  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
 </p>
 
 <p align="center">
@@ -17,20 +32,7 @@
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-<p align="center">
-  <a href="./README.ko.md">한국어</a> ·
-  <a href="#highlights">Highlights</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#supported-scope">Supported Scope</a> ·
-  <a href="#how-it-works">How It Works</a> ·
-  <a href="#development">Development</a>
-</p>
-
-<p align="center">
-  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
-</p>
-
-> `v1.0.2` is the current stable release line. The scope is intentionally narrow: Linux `x86_64`, `KDE Plasma 6`, and `Dolphin`. The goal is a reliable local-first OneDrive experience, not broad desktop coverage.
+> `v1.0.3` is the current stable patch release line. The scope is intentionally narrow: Linux `x86_64`, `KDE Plasma 6`, and `Dolphin`. The goal is a reliable local-first OneDrive experience, not broad desktop coverage.
 
 ## Overview
 
@@ -49,10 +51,22 @@ The result is a normal local path for regular Linux apps, with explicit per-file
 - visible root folder backed by a custom FUSE filesystem
 - on-demand hydration for normal Linux apps, not only KDE apps
 - per-file `Keep on this device` and `Make online-only`
+- status-aware shell that defaults to Setup, Overview, or Logs based on what the daemon needs next
+- compact runtime inspector for queue depth, backing usage, pinned files, and last sync state
+- searchable logs with a pinned latest issue for recovery work
+- root-path moves carry the hidden hydrated backing store to the new root when it is safe to do so
 - app-owned `rclone.conf` under XDG paths, isolated from `~/.config/rclone/rclone.conf`
 - Dolphin overlays and file actions for residency control inside the visible root
-- tray + overview shell + logs page + CLI, all backed by the same daemon state
+- tray persistence, CLI, and Dolphin integration, all backed by the same daemon state
 - stable one-line installer with release archive verification and staged release smoke tests
+
+## Operator Surfaces
+
+- `Overview`: the primary action, compact runtime inspector, quick file controls, and diagnostics live on one page
+- `Setup`: first-run connection, root-path edits, remote repair, and clean disconnect stay together
+- `Logs`: search recent daemon and `rclone` output, pin the latest issue, and work recovery without leaving the shell
+- `Tray`: closing the window keeps the controls resident and reserves notifications for actionable background errors
+- `Dolphin`: overlays and context actions expose per-file residency from the visible root itself
 
 ## Supported Scope
 
@@ -65,7 +79,7 @@ The result is a normal local path for regular Linux apps, with explicit per-file
 | Local filesystem model | custom FUSE mount owned by `openonedrived` |
 | Stable installer target | user-local install under `~/.local` |
 
-Non-goals for `v1.0.2`:
+Non-goals for `v1.0.3`:
 
 - `rclone mount`
 - GNOME / Nautilus support
@@ -85,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 Install an exact tag with a fully pinned bootstrap path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.3/install.sh | bash
 ```
 
 Install from source instead of release artifacts:
@@ -115,9 +129,10 @@ Typical first run:
 
 1. Choose an empty visible root such as `~/OneDrive`.
 2. Finish the Microsoft browser sign-in flow started by `rclone`.
-3. Start the filesystem if it is not already running.
-4. Open the visible root from Dolphin, a terminal, VS Code, LibreOffice, or another regular app.
-5. Keep selected files local or return them to online-only mode from the overview shell, tray, CLI, or Dolphin actions.
+3. Let the shell route you to Setup, Overview, or Logs depending on whether the daemon is waiting for setup, running normally, or needs recovery.
+4. Start the filesystem if it is not already running.
+5. Open the visible root from Dolphin, a terminal, VS Code, LibreOffice, or another regular app.
+6. Keep selected files local or return them to online-only mode from the overview shell, tray, CLI, or Dolphin actions.
 
 ## Day-to-Day Controls
 
@@ -134,8 +149,9 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 
 Recovery surfaces:
 
-- the overview shell keeps setup, control, and logs reachable even when the daemon needs attention
-- tray notifications are reserved for actionable background errors
+- the shell routes to Setup or Logs first when recovery is the next meaningful step
+- the logs page supports quick search plus filtered recovery work around recent daemon and `rclone` output
+- tray notifications are reserved for actionable background errors, while closing the window keeps the tray controls resident
 - Dolphin overlays invalidate from daemon signals rather than using a disconnected local cache
 
 ## Configuration
@@ -159,13 +175,14 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
-# cache_limit_gb is reserved in v1.0.2 and is not enforced yet
+# cache_limit_gb is reserved in v1.0.3 and is not enforced yet
 ```
 
 Design guarantees:
 
 - the wrapper never writes to `~/.config/rclone/rclone.conf`
 - hydrated bytes live in the hidden backing directory inside the visible root
+- moving the visible root carries that hidden backing directory to the new root when the destination is safe
 - the daemon, tray, CLI, and Dolphin integrations resolve from the same path-state view
 - disconnecting removes only app-owned local state and backing bytes, not your online files in OneDrive
 
