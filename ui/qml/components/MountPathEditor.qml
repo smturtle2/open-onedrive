@@ -11,20 +11,41 @@ Item {
     readonly property string trimmedMountPath: shellBackend.mountPath.trim()
     readonly property bool hasDraftPath: trimmedMountPath.length > 0
     readonly property bool hasPathIssue: shellBackend.mountPathIssue.length > 0
+    readonly property bool hasAppliedPath: hasDraftPath
+                                           && !hasPathIssue
+                                           && !shellBackend.mountPathPending
+                                           && shellBackend.effectiveMountPath.length > 0
     readonly property string stateLabel: !hasDraftPath
-                                         ? qsTr("Choose a folder")
+                                         ? qsTr("Not set")
                                          : hasPathIssue
-                                           ? qsTr("Check path")
+                                           ? qsTr("Path issue")
                                            : shellBackend.mountPathPending
                                              ? qsTr("Pending apply")
-                                             : qsTr("Ready")
+                                             : qsTr("Current root")
     readonly property color stateColor: !hasDraftPath
-                                         ? "#8b6f00"
+                                         ? "#617182"
                                          : hasPathIssue
                                            ? "#b53b2d"
                                            : shellBackend.mountPathPending
                                              ? "#245f92"
-                                             : "#1f7a4d"
+                                             : "#51606f"
+    readonly property string helperLabelText: {
+        if (hasPathIssue) {
+            return shellBackend.mountPathIssue
+        }
+        if (shellBackend.mountPathPending) {
+            return qsTr("The next connect or filesystem restart applies this path.")
+        }
+        if (hasAppliedPath) {
+            return qsTr("This path is currently active. Hydrated bytes stay in the hidden %1 folder inside this root.")
+                .arg(shellBackend.backingDirName)
+        }
+        if (helperText.length > 0) {
+            return helperText + qsTr(" Hydrated bytes stay in the hidden %1 folder inside this root.")
+                .arg(shellBackend.backingDirName)
+        }
+        return ""
+    }
 
     Layout.fillWidth: true
     implicitHeight: content.implicitHeight
@@ -101,18 +122,15 @@ Item {
             visible: root.hasPathIssue
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.negativeTextColor
-            text: shellBackend.mountPathIssue
+            text: root.helperLabelText
         }
 
         Label {
             Layout.fillWidth: true
-            visible: !root.hasPathIssue && (root.hasDraftPath || helperText.length > 0)
+            visible: !root.hasPathIssue && root.helperLabelText.length > 0
             wrapMode: Text.WordWrap
             color: "#617182"
-            text: shellBackend.mountPathPending
-                  ? qsTr("The next connect or filesystem restart applies this path. ")
-                    + helperText
-                  : helperText + qsTr(" The daemon stores hydrated bytes in the hidden %1 folder inside this root.").arg(shellBackend.backingDirName)
+            text: root.helperLabelText
         }
     }
 }

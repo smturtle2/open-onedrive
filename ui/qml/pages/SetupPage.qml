@@ -387,7 +387,7 @@ Kirigami.ScrollablePage {
                     }
 
                     MountPathEditor {
-                        helperText: qsTr("Pick an empty directory. Explorer overlays and residency actions appear there after connection.")
+                        helperText: qsTr("Choose an empty directory the first time you set up the visible OneDrive root. Explorer overlays and residency actions appear here after connection.")
                     }
 
                     Flow {
