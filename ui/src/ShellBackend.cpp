@@ -87,6 +87,54 @@ QVariantMap explorerResult(const QString &state,
     return result;
 }
 
+QString decodeMountinfoPath(const QByteArray &rawPath)
+{
+    QByteArray decoded;
+    decoded.reserve(rawPath.size());
+
+    for (int index = 0; index < rawPath.size(); ++index) {
+        if (rawPath.at(index) == '\\'
+            && index + 3 < rawPath.size()
+            && rawPath.at(index + 1) >= '0'
+            && rawPath.at(index + 1) <= '7'
+            && rawPath.at(index + 2) >= '0'
+            && rawPath.at(index + 2) <= '7'
+            && rawPath.at(index + 3) >= '0'
+            && rawPath.at(index + 3) <= '7') {
+            const int value = (rawPath.at(index + 1) - '0') * 64
+                + (rawPath.at(index + 2) - '0') * 8
+                + (rawPath.at(index + 3) - '0');
+            decoded.append(static_cast<char>(value));
+            index += 3;
+            continue;
+        }
+
+        decoded.append(rawPath.at(index));
+    }
+
+    return QDir::cleanPath(QFile::decodeName(decoded));
+}
+
+QString canonicalPathForComparison(const QString &path)
+{
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return canonical.isEmpty() ? QString() : QDir::cleanPath(canonical);
+}
+
+bool pathsReferToSameLocation(const QString &leftPath, const QString &rightPath)
+{
+    const QString normalizedLeft = QDir::cleanPath(leftPath);
+    const QString normalizedRight = QDir::cleanPath(rightPath);
+    if (normalizedLeft == normalizedRight) {
+        return true;
+    }
+
+    const QString leftCanonical = canonicalPathForComparison(normalizedLeft);
+    const QString rightCanonical = canonicalPathForComparison(normalizedRight);
+    return !leftCanonical.isEmpty() && leftCanonical == rightCanonical;
+}
+
 QString mountSourceFor(const QString &path)
 {
     QFile mountInfo(QStringLiteral("/proc/self/mountinfo"));
@@ -94,12 +142,14 @@ QString mountSourceFor(const QString &path)
         return QString();
     }
 
-    const QByteArray encodedPath = QFile::encodeName(path);
+    const QString normalizedPath = QDir::cleanPath(path);
     while (!mountInfo.atEnd()) {
         const QList<QByteArray> fields = mountInfo.readLine().trimmed().split(' ');
         const qsizetype separatorIndex = fields.indexOf("-");
-        if (fields.size() > 4 && separatorIndex >= 0 && fields.at(4) == encodedPath
-            && separatorIndex + 2 < fields.size()) {
+        if (fields.size() > 4
+            && separatorIndex >= 0
+            && separatorIndex + 2 < fields.size()
+            && pathsReferToSameLocation(normalizedPath, decodeMountinfoPath(fields.at(4)))) {
             return QString::fromLocal8Bit(fields.at(separatorIndex + 2));
         }
     }
@@ -249,7 +299,10 @@ QString ShellBackend::effectiveMountPath() const
 
 bool ShellBackend::mountPathPending() const
 {
-    return m_mountPath != m_effectiveMountPath;
+    if (m_mountPath.isEmpty() || m_effectiveMountPath.isEmpty()) {
+        return m_mountPath != m_effectiveMountPath;
+    }
+    return !pathsReferToSameLocation(m_mountPath, m_effectiveMountPath);
 }
 
 bool ShellBackend::mountPathValid() const
@@ -1025,12 +1078,15 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const bool preserveDraftPath = pendingBefore;
 
     const QString normalizedMountPath = normalizeMountPath(mountPath);
-    if (!normalizedMountPath.isEmpty() && normalizedMountPath != m_effectiveMountPath) {
+    if (!normalizedMountPath.isEmpty()
+        && !pathsReferToSameLocation(normalizedMountPath, m_effectiveMountPath)) {
         m_effectiveMountPath = normalizedMountPath;
         emit effectiveMountPathChanged();
     }
 
-    if (!preserveDraftPath && !normalizedMountPath.isEmpty() && normalizedMountPath != m_mountPath) {
+    if (!preserveDraftPath
+        && !normalizedMountPath.isEmpty()
+        && !pathsReferToSameLocation(normalizedMountPath, m_mountPath)) {
         m_mountPath = normalizedMountPath;
         emit mountPathChanged();
     }
@@ -1363,7 +1419,7 @@ bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &e
         return false;
     }
 
-    if (m_mountPath == m_effectiveMountPath) {
+    if (!mountPathPending()) {
         return true;
     }
 

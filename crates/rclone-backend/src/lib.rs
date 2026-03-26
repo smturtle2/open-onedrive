@@ -3883,7 +3883,7 @@ fn relative_string(path: &Path) -> String {
 fn parse_mount_point_info(line: &str, path: &Path) -> Option<MountPointInfo> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
     let separator_index = fields.iter().position(|field| *field == "-")?;
-    if fields.get(4).copied()? != path.to_string_lossy() {
+    if !mount_point_matches(path, fields.get(4).copied()?) {
         return None;
     }
     Some(MountPointInfo {
@@ -3898,6 +3898,39 @@ fn mount_point_info(path: &Path) -> Result<Option<MountPointInfo>> {
     Ok(mountinfo
         .lines()
         .find_map(|line| parse_mount_point_info(line, path)))
+}
+
+fn mount_point_matches(path: &Path, mount_point: &str) -> bool {
+    let decoded_mount_point = decode_mountinfo_path(mount_point);
+    path == decoded_mount_point
+        || fs::canonicalize(path)
+            .ok()
+            .zip(fs::canonicalize(&decoded_mount_point).ok())
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn decode_mountinfo_path(raw: &str) -> PathBuf {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\'
+            && index + 3 < bytes.len()
+            && bytes[index + 1].is_ascii_digit()
+            && bytes[index + 2].is_ascii_digit()
+            && bytes[index + 3].is_ascii_digit()
+        {
+            let value = (bytes[index + 1] - b'0') * 64
+                + (bytes[index + 2] - b'0') * 8
+                + (bytes[index + 3] - b'0');
+            decoded.push(value);
+            index += 4;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    PathBuf::from(String::from_utf8_lossy(&decoded).into_owned())
 }
 
 fn is_openonedrive_mount(info: &MountPointInfo) -> bool {
@@ -6306,6 +6339,20 @@ mod tests {
             }
         );
         assert!(is_openonedrive_mount(&info));
+    }
+
+    #[test]
+    fn parses_openonedrive_mountinfo_records_with_escaped_paths() {
+        let line = "284 24 0:143 / /tmp/One\\040Drive rw,nosuid,nodev,relatime - fuse openonedrive rw,user_id=1000,group_id=1000";
+        let info = parse_mount_point_info(line, Path::new("/tmp/One Drive")).expect("mount info");
+
+        assert_eq!(
+            info,
+            MountPointInfo {
+                fs_type: "fuse".to_string(),
+                source: "openonedrive".to_string(),
+            }
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

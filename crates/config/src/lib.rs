@@ -194,12 +194,46 @@ pub fn validate_root_path(path: &Path, backing_dir_name: &str) -> Result<()> {
 fn is_known_mount_point(path: &Path) -> Result<bool> {
     let mountinfo = fs::read_to_string("/proc/self/mountinfo")
         .context("unable to inspect existing mount points")?;
-    let canonical = path.to_string_lossy();
 
     Ok(mountinfo.lines().any(|line| {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        fields.get(4).copied() == Some(canonical.as_ref())
+        fields
+            .get(4)
+            .is_some_and(|mount_point| mount_point_matches(path, mount_point))
     }))
+}
+
+fn mount_point_matches(path: &Path, mount_point: &str) -> bool {
+    let decoded_mount_point = decode_mountinfo_path(mount_point);
+    path == decoded_mount_point
+        || fs::canonicalize(path)
+            .ok()
+            .zip(fs::canonicalize(&decoded_mount_point).ok())
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn decode_mountinfo_path(raw: &str) -> PathBuf {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\'
+            && index + 3 < bytes.len()
+            && bytes[index + 1].is_ascii_digit()
+            && bytes[index + 2].is_ascii_digit()
+            && bytes[index + 3].is_ascii_digit()
+        {
+            let value = (bytes[index + 1] - b'0') * 64
+                + (bytes[index + 2] - b'0') * 8
+                + (bytes[index + 3] - b'0');
+            decoded.push(value);
+            index += 4;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    PathBuf::from(String::from_utf8_lossy(&decoded).into_owned())
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<()> {
@@ -224,7 +258,10 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, ProjectPaths, validate_root_path};
+    use super::{
+        AppConfig, ProjectPaths, decode_mountinfo_path, mount_point_matches, validate_root_path,
+    };
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     #[test]
@@ -257,6 +294,22 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         std::fs::write(dir.path().join("occupied"), "busy").expect("write marker");
         assert!(validate_root_path(dir.path(), ".openonedrive-cache").is_err());
+    }
+
+    #[test]
+    fn decodes_escaped_mountinfo_paths() {
+        assert_eq!(
+            decode_mountinfo_path("/tmp/One\\040Drive"),
+            PathBuf::from("/tmp/One Drive")
+        );
+    }
+
+    #[test]
+    fn mount_point_matches_escaped_paths() {
+        assert!(mount_point_matches(
+            Path::new("/tmp/One Drive"),
+            "/tmp/One\\040Drive"
+        ));
     }
 
     #[test]
