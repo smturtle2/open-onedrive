@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   linux-x86_64:
     runs-on: ubuntu-24.04
@@ -16,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install build dependencies
         run: |
@@ -27,6 +30,7 @@ jobs:
             extra-cmake-modules \
             fuse3 \
             git \
+            github-cli \
             kdbusaddons \
             ninja \
             pkgconf \
@@ -131,8 +135,19 @@ jobs:
           test -x "${smoke_home}/.local/bin/openonedrived"
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/open-onedrive-linux-x86_64.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${tag}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${tag}" \
+              --verify-tag
+          fi
+
+          gh release upload "${tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber \
+            dist/open-onedrive-linux-x86_64.tar.gz \
             dist/open-onedrive-linux-x86_64.tar.gz.sha256
