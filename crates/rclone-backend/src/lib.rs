@@ -30,7 +30,7 @@ use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 const MAX_RECENT_LOGS: usize = 200;
 const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
-const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(20);
+const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(2);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
 const LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR: &str = "unable to get drive_id and drive_type";
 const REMOTE_SCAN_ERROR_PREFIX: &str = "remote scan failed: ";
@@ -342,6 +342,7 @@ impl ActionScheduler {
 struct RemoteScanResult {
     entries: Vec<RcloneListEntry>,
     failed_directories: BTreeMap<String, String>,
+    listed_directories: BTreeSet<String>,
 }
 
 pub struct RcloneBackend {
@@ -408,6 +409,7 @@ impl RcloneBackend {
             event_tx,
         });
 
+        backend.ensure_visible_root_exists();
         backend.spawn_action_worker();
         backend.refresh_rclone_version().await;
         backend.refresh_virtual_snapshot()?;
@@ -1219,8 +1221,9 @@ impl RcloneBackend {
             tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
                 .await
                 .context("path-state write task join failed")??;
-            self.path_state_store
-                .set_directory_metadata_many(&directory_metadata_for_snapshot(&snapshot))?;
+            self.path_state_store.set_directory_metadata_many(
+                &directory_metadata_for_listed_directories(&remote_scan.listed_directories),
+            )?;
             self.refresh_virtual_snapshot_with_states(&snapshot);
             self.sync_runtime_sets_from_states(&snapshot)?;
             self.complete_sync_activity(None).await?;
@@ -1665,6 +1668,24 @@ impl RcloneBackend {
         Ok(path)
     }
 
+    fn ensure_visible_root_exists(&self) {
+        let root_path = self.config_read_guard().root_path.clone();
+        match create_root_path_if_missing(&root_path) {
+            Ok(true) => self.append_log(format!(
+                "prepared visible root folder at {}",
+                root_path.display()
+            )),
+            Ok(false) => {}
+            Err(error) => self.append_warning_log(
+                "filesystem",
+                format!(
+                    "unable to prepare visible root folder {}: {error}",
+                    root_path.display()
+                ),
+            ),
+        }
+    }
+
     fn refresh_virtual_snapshot(&self) -> Result<()> {
         let states = self.path_state_store.all()?;
         self.refresh_virtual_snapshot_with_states(&states);
@@ -1684,6 +1705,7 @@ impl RcloneBackend {
             .await
         {
             Ok(entries) => Ok(RemoteScanResult {
+                listed_directories: fully_listed_directories_for_entries(&entries),
                 entries,
                 failed_directories: BTreeMap::new(),
             }),
@@ -1716,6 +1738,7 @@ impl RcloneBackend {
             )
             .await?;
         let mut result = RemoteScanResult::default();
+        result.listed_directories.insert(String::new());
         let mut queue = VecDeque::new();
 
         for entry in root_entries {
@@ -1739,6 +1762,7 @@ impl RcloneBackend {
                 .await
             {
                 Ok(children) => {
+                    result.listed_directories.insert(relative_path.clone());
                     for child in prefix_lsjson_entries(&relative_path, children) {
                         if child.path.is_empty() {
                             continue;
@@ -1762,8 +1786,12 @@ impl RcloneBackend {
             }
 
             if seed_progressively {
-                self.persist_remote_scan_progress(&result.entries, &result.failed_directories)
-                    .await?;
+                self.persist_remote_scan_progress(
+                    &result.entries,
+                    &result.failed_directories,
+                    &result.listed_directories,
+                )
+                .await?;
             }
         }
 
@@ -1875,6 +1903,7 @@ impl RcloneBackend {
         &self,
         entries: &[RcloneListEntry],
         failed_directories: &BTreeMap<String, String>,
+        listed_directories: &BTreeSet<String>,
     ) -> Result<()> {
         let mut snapshot = self.build_snapshot_from_remote_entries(entries)?;
         apply_failed_remote_scan_directories(&mut snapshot, failed_directories);
@@ -1883,8 +1912,9 @@ impl RcloneBackend {
         tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
             .await
             .context("path-state progress write task join failed")??;
-        self.path_state_store
-            .set_directory_metadata_many(&directory_metadata_for_snapshot(&snapshot))?;
+        self.path_state_store.set_directory_metadata_many(
+            &directory_metadata_for_listed_directories(listed_directories),
+        )?;
         self.refresh_virtual_snapshot_with_states(&snapshot);
         self.sync_runtime_sets_from_states(&snapshot)?;
         self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
@@ -3532,6 +3562,28 @@ fn relative_string(path: &Path) -> String {
         .join("/")
 }
 
+fn create_root_path_if_missing(path: &Path) -> Result<bool> {
+    if path.exists() {
+        if !path.is_dir() {
+            bail!("root path must be a directory");
+        }
+        return Ok(false);
+    }
+
+    let parent = path
+        .parent()
+        .context("root path must have a writable parent directory")?;
+    if !parent.exists() {
+        bail!("root path parent directory does not exist");
+    }
+    if !parent.is_dir() {
+        bail!("root path parent is not a directory");
+    }
+
+    fs::create_dir_all(path).with_context(|| format!("unable to create {}", path.display()))?;
+    Ok(true)
+}
+
 fn normalize_directory_query_path(root_path: &Path, raw_path: &str) -> Result<Option<String>> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() || trimmed == "/" {
@@ -3942,23 +3994,12 @@ fn affected_relative_paths(paths: &[String]) -> Vec<String> {
     affected.into_iter().collect()
 }
 
-fn directory_metadata_for_snapshot(states: &[PathState]) -> Vec<DirectoryMetadata> {
-    let mut directories = BTreeSet::from([String::new()]);
-    for state in states {
-        if state.is_dir {
-            directories.insert(state.path.clone());
-        }
-        let mut current = Path::new(&state.path).parent();
-        while let Some(parent) = current {
-            if parent.as_os_str().is_empty() {
-                break;
-            }
-            directories.insert(relative_string(parent));
-            current = parent.parent();
-        }
-    }
-
+fn directory_metadata_for_listed_directories(
+    listed_directories: &BTreeSet<String>,
+) -> Vec<DirectoryMetadata> {
     let listed_at = unix_timestamp();
+    let mut directories = listed_directories.clone();
+    directories.insert(String::new());
     directories
         .into_iter()
         .map(|path| DirectoryMetadata {
@@ -3967,6 +4008,27 @@ fn directory_metadata_for_snapshot(states: &[PathState]) -> Vec<DirectoryMetadat
             last_listed_at: listed_at,
         })
         .collect()
+}
+
+fn fully_listed_directories_for_entries(entries: &[RcloneListEntry]) -> BTreeSet<String> {
+    let mut directories = BTreeSet::from([String::new()]);
+    for entry in entries {
+        if entry.path.is_empty() {
+            continue;
+        }
+        if entry.is_dir {
+            directories.insert(entry.path.clone());
+        }
+        let mut current = Path::new(&entry.path).parent();
+        while let Some(parent) = current {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            directories.insert(relative_string(parent));
+            current = parent.parent();
+        }
+    }
+    directories
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
@@ -4292,10 +4354,11 @@ mod tests {
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
         build_download_args, build_lsjson_args, build_lsjson_directory_args,
         build_lsjson_single_args, build_moveto_args, build_rmdir_args, build_upload_args,
-        clear_remote_scan_error, derive_path_state, expand_retry_paths, expand_selected_paths,
-        immediate_child_of, is_legacy_onedrive_remote_error, mark_remote_scan_error,
-        normalize_path_state_snapshot, parse_rclone_mod_time_unix, path_matches_query,
-        prefix_lsjson_entries, read_remote_config_section, relative_path_for,
+        clear_remote_scan_error, create_root_path_if_missing, derive_path_state,
+        directory_metadata_for_listed_directories, expand_retry_paths, expand_selected_paths,
+        fully_listed_directories_for_entries, immediate_child_of, is_legacy_onedrive_remote_error,
+        mark_remote_scan_error, normalize_path_state_snapshot, parse_rclone_mod_time_unix,
+        path_matches_query, prefix_lsjson_entries, read_remote_config_section, relative_path_for,
         remote_config_needs_repair, resolve_rclone_binary_with_path, revision_for_entry,
         sort_path_states,
     };
@@ -4304,7 +4367,7 @@ mod tests {
         ConnectionState, FilesystemState, PathState, PathSyncState, SyncState,
     };
     use openonedrive_state::RuntimeState;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::Path;
     use std::sync::{Arc, mpsc};
@@ -5109,6 +5172,45 @@ mod tests {
     }
 
     #[test]
+    fn listed_directory_metadata_only_marks_completed_directory_scans() {
+        let metadata = directory_metadata_for_listed_directories(&BTreeSet::from([
+            String::new(),
+            "Docs".to_string(),
+        ]));
+        let paths = metadata
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec![String::new(), "Docs".to_string()]);
+        assert!(!paths.contains(&"Docs/Sub".to_string()));
+    }
+
+    #[test]
+    fn recursive_listing_marks_all_known_directories() {
+        let directories = fully_listed_directories_for_entries(&[
+            RcloneListEntry {
+                path: "Docs".into(),
+                is_dir: true,
+                size: 0,
+                mod_time: String::new(),
+                hashes: BTreeMap::new(),
+            },
+            RcloneListEntry {
+                path: "Docs/Sub/report.txt".into(),
+                is_dir: false,
+                size: 1,
+                mod_time: String::new(),
+                hashes: BTreeMap::new(),
+            },
+        ]);
+
+        assert!(directories.contains(""));
+        assert!(directories.contains("Docs"));
+        assert!(directories.contains("Docs/Sub"));
+    }
+
+    #[test]
     fn failed_remote_scan_directories_mark_existing_directory_entries() {
         let mut snapshot = vec![PathState {
             path: "Vault".into(),
@@ -5492,6 +5594,33 @@ mod tests {
         assert!(moved.exists());
         assert!(!hydrated.exists());
         assert_eq!(backend.current_config().await.root_path, next_root);
+    }
+
+    #[test]
+    fn missing_root_path_is_created_when_requested() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("OneDrive");
+
+        assert!(!root.exists());
+        let created = create_root_path_if_missing(&root).expect("create root path");
+
+        assert!(created);
+        assert!(root.is_dir());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn backend_load_prepares_visible_root_folder() {
+        let dir = tempdir().expect("tempdir");
+        let paths = build_paths(dir.path());
+        let mut config = AppConfig::default();
+        config.root_path = dir.path().join("OneDrive");
+
+        assert!(!config.root_path.exists());
+        let _backend = RcloneBackend::load(paths, config.clone())
+            .await
+            .expect("backend");
+
+        assert!(config.root_path.is_dir());
     }
 
     fn build_paths(root: &Path) -> ProjectPaths {

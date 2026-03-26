@@ -35,7 +35,7 @@
 ## 주요 특징
 
 - hydrate 전에도 online-only 파일과 폴더를 계속 표시합니다
-- 앱, 트레이, CLI, Dolphin, Nautilus에서 `Keep on this device`와 `Free up space`를 제공합니다
+- `Keep on this device`와 `Free up space`는 CLI, Dolphin, Nautilus에서 제공하고, 앱과 트레이는 설정 및 백그라운드 제어에 집중합니다
 - 메인 창은 폴더 경로, daemon 상태, 핵심 sync 제어만 남긴 settings-first 표면입니다
 - 창을 닫아도 background 제어를 유지하는 독립 tray helper가 있습니다
 - 일반 `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`를 사용합니다
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치를 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI가 재시작되므로 active transfer가 끝난 뒤 진행하는 편이 안전합니다.
+installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치를 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI를 중지한 뒤 파일을 교체하고 user service를 다시 활성화하므로, active transfer가 끝난 뒤 진행하고 필요하면 앱 창을 다시 열어 주세요.
 
 실행과 확인:
 
@@ -84,7 +84,7 @@ openonedrivectl status
 1. 앱 창에서 `~/OneDrive` 같은 빈 보이는 폴더를 고릅니다.
 2. `rclone`이 여는 브라우저 로그인 절차를 마칩니다.
 3. Dolphin 또는 Nautilus에서 보이는 폴더를 열고 online-only와 local 항목을 같은 트리에서 확인합니다.
-4. 파일 탐색기, 트레이, 앱, CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
+4. 파일 탐색기 또는 CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
 
 주요 화면:
 
@@ -116,6 +116,8 @@ openonedrivectl status
 ./scripts/dev.sh up
 ./scripts/dev.sh test
 ```
+
+`./scripts/dev.sh up`는 빠른 반복 작업을 위해 UI만 직접 실행합니다. 분리된 tray helper 경로까지 확인하려면 설치된 `open-onedrive` launcher를 사용하세요.
 
 source 빌드 준비물:
 

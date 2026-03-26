@@ -35,7 +35,7 @@
 ## Highlights
 
 - online-only files and folders stay visible before hydration
-- `Keep on this device` and `Free up space` work from the app, tray, CLI, Dolphin, and Nautilus
+- `Keep on this device` and `Free up space` work from the CLI, Dolphin, and Nautilus while the app and tray stay focused on setup plus background control
 - the main window stays settings-first: folder path, daemon state, and essential sync controls only
 - tray runs independently so background control survives after the window closes
 - app-owned `rclone.conf` is isolated from your regular `~/.config/rclone/rclone.conf`
@@ -67,7 +67,7 @@ Skip interactive upgrade prompts in automation:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing. Upgrades restart the running daemon, tray, and UI, so let active transfers finish first.
+The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing. Upgrades stop the running daemon, tray, and UI, refresh the installed files, and re-enable the user service, so let active transfers finish first and reopen the window afterward if needed.
 
 Launch and verify:
 
@@ -84,7 +84,7 @@ First run:
 1. Open the app window and choose an empty visible folder such as `~/OneDrive`.
 2. Finish the browser sign-in started by `rclone`.
 3. Open the visible folder in Dolphin or Nautilus and browse online-only and local items in the same tree.
-4. Use `Keep on this device` or `Free up space` from the file manager, tray, app, or CLI.
+4. Use `Keep on this device` or `Free up space` from the file manager or CLI.
 
 Main surfaces:
 
@@ -116,6 +116,8 @@ Day-to-day commands:
 ./scripts/dev.sh up
 ./scripts/dev.sh test
 ```
+
+`./scripts/dev.sh up` launches the UI directly for fast iteration. Use the installed `open-onedrive` launcher when you need to verify the separate tray helper path.
 
 Source build prerequisites:
 

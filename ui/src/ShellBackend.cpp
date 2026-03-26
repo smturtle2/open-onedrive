@@ -1323,7 +1323,9 @@ void ShellBackend::updateTray()
     if (!m_daemonReachable) {
         trayStatus = KStatusNotifierItem::NeedsAttention;
         overlayIcon = QStringLiteral("network-disconnect");
-    } else if (m_mountState == QStringLiteral("Error")
+    } else if (m_needsRemoteRepair
+        || m_mountState == QStringLiteral("Error")
+        || m_mountState == QStringLiteral("Degraded")
         || m_connectionState == QStringLiteral("Error")
         || m_syncState == QStringLiteral("Error")
         || m_conflictCount > 0) {
