@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>OneDrive as a normal Linux folder.</strong><br/>
-  Visible online-only files, on-demand hydration, per-file residency control, a files-first shell, and one daemon state shared by the app, tray, CLI, Dolphin, and Nautilus.
+  Visible online-only files, on-demand hydration, per-file residency control, a simple settings window, and one daemon state shared by the app, tray, CLI, Dolphin, and Nautilus.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/docs/app-shell-screenshot.png" alt="open-onedrive showing the current dashboard, files view, and simple settings flow" width="100%">
+  <img src="./assets/docs/app-shell-screenshot.png" alt="open-onedrive showing the compact settings and status window for the visible OneDrive folder" width="100%">
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 - online-only files and folders stay visible before hydration
 - `Keep on this device` and `Free up space` work from the app, tray, CLI, Dolphin, and Nautilus
-- `Files` is the main workspace; `Dashboard` stays compact and `Settings` stays intentionally small
+- the main window stays settings-first: folder path, daemon state, and essential sync controls only
 - tray runs independently so background control survives after the window closes
 - app-owned `rclone.conf` is isolated from your regular `~/.config/rclone/rclone.conf`
 - the installer supports one-line install, upgrade checks, checksum verification, and `rclone` bootstrap when missing
@@ -67,7 +67,7 @@ Skip interactive upgrade prompts in automation:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing.
+The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing. Upgrades restart the running daemon, tray, and UI, so let active transfers finish first.
 
 Launch and verify:
 
@@ -81,18 +81,17 @@ openonedrivectl status
 
 First run:
 
-1. Open `Settings` and choose an empty visible folder such as `~/OneDrive`.
+1. Open the app window and choose an empty visible folder such as `~/OneDrive`.
 2. Finish the browser sign-in started by `rclone`.
-3. Open `Files` and browse online-only and local items in the same folder tree.
-4. Use `Keep on this device` or `Free up space` from the app, tray, Dolphin, Nautilus, or CLI.
+3. Open the visible folder in Dolphin or Nautilus and browse online-only and local items in the same tree.
+4. Use `Keep on this device` or `Free up space` from the file manager, tray, app, or CLI.
 
 Main surfaces:
 
-- `Dashboard`: short status, queue summary, and the next action
-- `Files`: browsing, search, and residency changes
-- `Settings`: folder path, connect, repair, disconnect
-- `Logs`: recent daemon and `rclone` output
-- `Tray`: separate helper for background control
+- `Window`: folder path, connect or repair, filesystem start or stop, pause or resume sync
+- `Dolphin` / `Nautilus`: the main workspace for residency actions and overlay states
+- `Tray`: separate helper for background control after the window closes
+- `CLI`: status checks and residency actions from scripts or terminals
 
 File manager integration:
 
@@ -117,6 +116,12 @@ Day-to-day commands:
 ./scripts/dev.sh up
 ./scripts/dev.sh test
 ```
+
+Source build prerequisites:
+
+- Rust toolchain with `cargo`
+- Qt 6 and KDE Frameworks 6 development packages used by the UI and tray
+- `cmake`, `ninja` or `make`, `pkg-config`, and `fuse3`
 
 Workspace tasks:
 

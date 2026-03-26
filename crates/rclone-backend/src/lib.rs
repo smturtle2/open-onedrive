@@ -155,6 +155,9 @@ enum ActionKind {
     Hydrate {
         path: String,
     },
+    Evict {
+        path: String,
+    },
     Upload {
         path: String,
     },
@@ -181,6 +184,7 @@ impl ActionKind {
                 recursive: false, ..
             } => "refresh-directory",
             Self::Hydrate { .. } => "hydrate",
+            Self::Evict { .. } => "evict",
             Self::Upload { .. } => "upload",
             Self::CreateDir { .. } => "mkdir",
             Self::RemovePath { is_dir: true, .. } => "rmdir",
@@ -226,6 +230,12 @@ impl ActionKind {
                 secondary_path: String::new(),
                 recursive: false,
             },
+            Self::Evict { path } => QueuedActionState {
+                kind: QueuedActionKind::Evict,
+                path: path.clone(),
+                secondary_path: String::new(),
+                recursive: false,
+            },
             Self::Upload { path } => QueuedActionState {
                 kind: QueuedActionKind::Upload,
                 path: path.clone(),
@@ -265,6 +275,9 @@ impl ActionKind {
             }),
             QueuedActionKind::Hydrate if !state.path.is_empty() => {
                 Some(Self::Hydrate { path: state.path })
+            }
+            QueuedActionKind::Evict if !state.path.is_empty() => {
+                Some(Self::Evict { path: state.path })
             }
             QueuedActionKind::Upload if !state.path.is_empty() => {
                 Some(Self::Upload { path: state.path })
@@ -530,6 +543,12 @@ impl RcloneBackend {
                 .block_on(self.refresh_directory_action(path.clone(), *recursive)),
             ActionKind::Hydrate { path } => {
                 self.hydrate_relative_path_sync(path)?;
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(std::slice::from_ref(path));
+                Ok(())
+            }
+            ActionKind::Evict { path } => {
+                self.evict_relative_path_sync(path)?;
                 self.rebuild_path_state_snapshot_sync()?;
                 self.emit_path_state_refresh(std::slice::from_ref(path));
                 Ok(())
@@ -1301,32 +1320,49 @@ impl RcloneBackend {
 
         self.begin_sync_activity(SyncState::Syncing)?;
         let mut changed = Vec::new();
-        let result = (|| -> Result<u32> {
-            let selected_paths = expand_selected_paths(&config.root_path, raw_paths, &states)?;
-            if selected_paths.is_empty() {
-                bail!("select at least one file or directory inside the OneDrive folder");
+        let selected_paths = match expand_selected_paths(&config.root_path, raw_paths, &states) {
+            Ok(selected_paths) if !selected_paths.is_empty() => selected_paths,
+            Ok(_) => {
+                let message =
+                    "select at least one file or directory inside the OneDrive folder".to_string();
+                self.complete_sync_activity(Some(message.clone())).await?;
+                bail!(message);
             }
-            let state_map = states
-                .iter()
-                .map(|state| (state.path.clone(), state))
-                .collect::<HashMap<_, _>>();
-            for relative_path in &selected_paths {
-                let Some(state) = state_map.get(relative_path) else {
-                    bail!("unknown path {relative_path}");
-                };
-                if !state.is_dir && (state.dirty || state.state == PathSyncState::Conflict) {
-                    bail!("cannot evict {} while it has local changes", relative_path);
-                }
+            Err(error) => {
+                let message = error.to_string();
+                self.complete_sync_activity(Some(message.clone())).await?;
+                return Err(error);
             }
-            let eviction_order = sort_paths_for_eviction(&selected_paths, &state_map);
+        };
+        let state_map = states
+            .iter()
+            .map(|state| (state.path.clone(), state))
+            .collect::<HashMap<_, _>>();
+        for relative_path in &selected_paths {
+            let Some(state) = state_map.get(relative_path) else {
+                let error = anyhow!("unknown path {relative_path}");
+                self.complete_sync_activity(Some(error.to_string())).await?;
+                return Err(error);
+            };
+            if !state.is_dir && (state.dirty || state.state == PathSyncState::Conflict) {
+                let error = anyhow!("cannot evict {} while it has local changes", relative_path);
+                self.complete_sync_activity(Some(error.to_string())).await?;
+                return Err(error);
+            }
+        }
+
+        let eviction_order = sort_paths_for_eviction(&selected_paths, &state_map);
+        let result: Result<u32> = async {
             for relative_path in &eviction_order {
-                self.evict_relative_path_sync(relative_path)?;
+                self.run_queued_action(ActionKind::Evict {
+                    path: relative_path.clone(),
+                })
+                .await?;
                 changed.push(relative_path.clone());
             }
-            self.set_pinned_state(&changed, false)?;
-            self.rebuild_path_state_snapshot_sync()?;
             Ok(changed.len() as u32)
-        })();
+        }
+        .await;
 
         match result {
             Ok(count) => {
@@ -2385,7 +2421,11 @@ impl RcloneBackend {
                     .expect("action scheduler poisoned");
                 scheduler.active_action_kind.clone()
             };
-            if active_action_kind != "upload" && active_action_kind != "refresh-tree" {
+            if active_action_kind != "upload"
+                && active_action_kind != "refresh-tree"
+                && active_action_kind != "hydrate"
+                && active_action_kind != "evict"
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2397,16 +2437,29 @@ impl RcloneBackend {
                 .0
                 .lock()
                 .expect("action scheduler poisoned");
-            scheduler.queue.retain(|queued| {
-                !matches!(
+            let mut retained = VecDeque::with_capacity(scheduler.queue.len());
+            while let Some(queued) = scheduler.queue.pop_front() {
+                let cancel = matches!(
                     queued.kind,
-                    ActionKind::Upload { .. }
+                    ActionKind::Hydrate { .. }
+                        | ActionKind::Evict { .. }
+                        | ActionKind::Upload { .. }
                         | ActionKind::RefreshDirectory {
                             recursive: true,
                             ..
                         }
-                )
-            });
+                );
+                if cancel {
+                    if let Some(responder) = queued.responder {
+                        let _ = responder.send(Err(anyhow!(
+                            "queued action cancelled for lifecycle transition"
+                        )));
+                    }
+                } else {
+                    retained.push_back(queued);
+                }
+            }
+            scheduler.queue = retained;
         }
 
         self.sync_runtime_from_action_scheduler_blocking()?;
@@ -4254,7 +4307,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
@@ -5218,6 +5272,93 @@ mod tests {
         let status = backend.status().await.expect("status");
         assert_eq!(status.pending_uploads, 0);
         assert_eq!(status.sync_state, SyncState::Paused);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pause_lifecycle_waits_for_hydrate_and_cancels_queued_transfer_actions() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let (hydrate_tx, hydrate_rx) = mpsc::channel();
+        let (evict_tx, evict_rx) = mpsc::channel();
+        let (upload_tx, upload_rx) = mpsc::channel();
+        let (refresh_tx, refresh_rx) = mpsc::channel();
+        {
+            let mut scheduler = backend
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            scheduler.active_action_kind = "hydrate".into();
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::Hydrate {
+                    path: "Docs/keep.txt".into(),
+                },
+                responder: Some(hydrate_tx),
+            });
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::Evict {
+                    path: "Docs/evict.txt".into(),
+                },
+                responder: Some(evict_tx),
+            });
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::Upload {
+                    path: "Docs/upload.txt".into(),
+                },
+                responder: Some(upload_tx),
+            });
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::RefreshDirectory {
+                    path: None,
+                    recursive: true,
+                },
+                responder: Some(refresh_tx),
+            });
+        }
+
+        let scheduler = backend.action_scheduler.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let mut scheduler = scheduler.0.lock().expect("action scheduler poisoned");
+            scheduler.active_action_kind.clear();
+        });
+
+        let started_at = std::time::Instant::now();
+        backend
+            .pause_uploads_for_lifecycle(true)
+            .await
+            .expect("pause lifecycle");
+
+        assert!(started_at.elapsed() >= Duration::from_millis(50));
+        let scheduler = backend
+            .action_scheduler
+            .0
+            .lock()
+            .expect("action scheduler poisoned");
+        assert!(scheduler.queue.is_empty());
+        assert!(scheduler.stop_after_current);
+        drop(scheduler);
+
+        let hydrate_error = hydrate_rx
+            .recv()
+            .expect("hydrate cancellation")
+            .expect_err("hydrate should cancel");
+        assert!(hydrate_error.to_string().contains("lifecycle transition"));
+        let evict_error = evict_rx
+            .recv()
+            .expect("evict cancellation")
+            .expect_err("evict should cancel");
+        assert!(evict_error.to_string().contains("lifecycle transition"));
+        let upload_error = upload_rx
+            .recv()
+            .expect("upload cancellation")
+            .expect_err("upload should cancel");
+        assert!(upload_error.to_string().contains("lifecycle transition"));
+        let refresh_error = refresh_rx
+            .recv()
+            .expect("refresh cancellation")
+            .expect_err("refresh should cancel");
+        assert!(refresh_error.to_string().contains("lifecycle transition"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

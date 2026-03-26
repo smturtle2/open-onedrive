@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>OneDrive를 Linux의 평범한 폴더처럼.</strong><br/>
-  online-only 파일 가시성, on-demand hydrate, 파일 단위 residency 제어, files-first 셸, 그리고 앱·트레이·CLI·Dolphin·Nautilus가 공유하는 하나의 daemon 상태를 제공합니다.
+  online-only 파일 가시성, on-demand hydrate, 파일 단위 residency 제어, 단순한 설정 창, 그리고 앱·트레이·CLI·Dolphin·Nautilus가 공유하는 하나의 daemon 상태를 제공합니다.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/docs/app-shell-screenshot.png" alt="현재 대시보드, 파일 화면, 단순한 설정 흐름을 보여주는 open-onedrive" width="100%">
+  <img src="./assets/docs/app-shell-screenshot.png" alt="보이는 OneDrive 폴더를 관리하는 간결한 설정 및 상태 창을 보여주는 open-onedrive" width="100%">
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 - hydrate 전에도 online-only 파일과 폴더를 계속 표시합니다
 - 앱, 트레이, CLI, Dolphin, Nautilus에서 `Keep on this device`와 `Free up space`를 제공합니다
-- `Files`를 메인 작업 화면으로 두고 `Dashboard`와 `Settings`는 작고 단순하게 유지합니다
+- 메인 창은 폴더 경로, daemon 상태, 핵심 sync 제어만 남긴 settings-first 표면입니다
 - 창을 닫아도 background 제어를 유지하는 독립 tray helper가 있습니다
 - 일반 `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`를 사용합니다
 - installer는 one-line 설치, 업그레이드 확인, checksum 검증, `rclone` bootstrap을 지원합니다
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치를 처리합니다.
+installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치를 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI가 재시작되므로 active transfer가 끝난 뒤 진행하는 편이 안전합니다.
 
 실행과 확인:
 
@@ -81,18 +81,17 @@ openonedrivectl status
 
 첫 실행:
 
-1. `Settings`에서 `~/OneDrive` 같은 빈 보이는 폴더를 고릅니다.
+1. 앱 창에서 `~/OneDrive` 같은 빈 보이는 폴더를 고릅니다.
 2. `rclone`이 여는 브라우저 로그인 절차를 마칩니다.
-3. `Files`에서 online-only와 local 항목을 같은 트리에서 확인합니다.
-4. 앱, 트레이, Dolphin, Nautilus, CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
+3. Dolphin 또는 Nautilus에서 보이는 폴더를 열고 online-only와 local 항목을 같은 트리에서 확인합니다.
+4. 파일 탐색기, 트레이, 앱, CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
 
 주요 화면:
 
-- `Dashboard`: 현재 상태, 큐 요약, 다음 작업
-- `Files`: 탐색, 검색, residency 변경
-- `Settings`: 폴더 경로, 연결, 복구, 연결 해제
-- `Logs`: daemon과 `rclone` 최근 출력
-- `Tray`: 분리된 background 제어 표면
+- `Window`: 폴더 경로, 연결 또는 복구, 파일시스템 시작 또는 중지, sync 일시정지 또는 재개
+- `Dolphin` / `Nautilus`: residency 액션과 overlay 상태를 다루는 메인 작업 표면
+- `Tray`: 창을 닫은 뒤에도 남는 background 제어 표면
+- `CLI`: 스크립트와 터미널에서 상태 확인과 residency 제어
 
 파일 탐색기 통합:
 
@@ -117,6 +116,12 @@ openonedrivectl status
 ./scripts/dev.sh up
 ./scripts/dev.sh test
 ```
+
+source 빌드 준비물:
+
+- `cargo`가 포함된 Rust toolchain
+- UI와 tray에 필요한 Qt 6 / KDE Frameworks 6 개발 패키지
+- `cmake`, `ninja` 또는 `make`, `pkg-config`, `fuse3`
 
 워크스페이스 작업:
 

@@ -10,6 +10,7 @@ pub enum QueuedActionKind {
     #[default]
     RefreshDirectory,
     Hydrate,
+    Evict,
     Upload,
     CreateDir,
     RemoveFile,
@@ -174,6 +175,20 @@ mod tests {
         store.save(&snapshot).expect("save");
 
         assert_eq!(store.load().expect("reload"), snapshot);
+    }
+
+    #[test]
+    fn queued_evict_action_round_trips() {
+        let action = QueuedActionState {
+            kind: QueuedActionKind::Evict,
+            path: "Docs/report.txt".into(),
+            secondary_path: String::new(),
+            recursive: false,
+        };
+
+        let raw = toml::to_string(&action).expect("serialize");
+        let restored: QueuedActionState = toml::from_str(&raw).expect("deserialize");
+        assert_eq!(restored, action);
     }
 
     #[test]

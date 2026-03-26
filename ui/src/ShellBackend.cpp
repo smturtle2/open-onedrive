@@ -1222,7 +1222,7 @@ void ShellBackend::initializeTray()
     m_tray->setToolTip(QStringLiteral("folder-cloud"), QStringLiteral("open-onedrive"), m_statusMessage);
 
     m_trayMenu = new QMenu;
-    m_showWindowAction = m_trayMenu->addAction(tr("Open Dashboard"));
+    m_showWindowAction = m_trayMenu->addAction(tr("Open Window"));
     m_mountAction = m_trayMenu->addAction(tr("Start Filesystem"));
     m_unmountAction = m_trayMenu->addAction(tr("Stop Filesystem"));
     m_rescanAction = m_trayMenu->addAction(tr("Rescan"));
@@ -1311,7 +1311,7 @@ void ShellBackend::updateTray()
 
     m_showWindowAction->setText(m_mainWindow != nullptr && m_mainWindow->isVisible()
                                     ? tr("Hide Window")
-                                    : tr("Open Dashboard"));
+                                    : tr("Open Window"));
     m_mountAction->setEnabled(canMount());
     m_unmountAction->setEnabled(canUnmount());
     m_rescanAction->setEnabled(m_daemonReachable && m_remoteConfigured);

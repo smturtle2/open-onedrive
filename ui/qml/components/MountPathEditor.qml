@@ -4,32 +4,30 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Frame {
+Item {
     id: root
 
     property string helperText: ""
     readonly property string trimmedMountPath: shellBackend.mountPath.trim()
     readonly property bool hasDraftPath: trimmedMountPath.length > 0
     readonly property bool hasAbsoluteDraftPath: hasDraftPath && trimmedMountPath.startsWith("/")
-    readonly property string feedbackLabel: !hasDraftPath
-                                           ? qsTr("Choose a folder")
-                                           : !hasAbsoluteDraftPath
-                                             ? qsTr("Absolute path required")
-                                             : shellBackend.mountPathPending
-                                               ? qsTr("Pending apply")
-                                               : qsTr("Ready")
-    readonly property color feedbackColor: !hasDraftPath
-                                           ? "#8b6f00"
-                                           : !hasAbsoluteDraftPath
-                                             ? "#b3261e"
-                                             : shellBackend.mountPathPending
-                                               ? "#295c8a"
-                                               : "#1f7a4d"
+    readonly property string stateLabel: !hasDraftPath
+                                         ? qsTr("Choose a folder")
+                                         : !hasAbsoluteDraftPath
+                                           ? qsTr("Absolute path required")
+                                           : shellBackend.mountPathPending
+                                             ? qsTr("Pending apply")
+                                             : qsTr("Ready")
+    readonly property color stateColor: !hasDraftPath
+                                         ? "#8b6f00"
+                                         : !hasAbsoluteDraftPath
+                                           ? "#b53b2d"
+                                           : shellBackend.mountPathPending
+                                             ? "#245f92"
+                                             : "#1f7a4d"
 
     Layout.fillWidth: true
-    padding: 0
-
-    background: Item { }
+    implicitHeight: content.implicitHeight
 
     FolderDialog {
         id: folderDialog
@@ -40,6 +38,7 @@ Frame {
     }
 
     ColumnLayout {
+        id: content
         anchors.fill: parent
         spacing: Kirigami.Units.mediumSpacing
 
@@ -49,17 +48,17 @@ Frame {
 
             Rectangle {
                 radius: 999
-                color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.12)
+                color: Qt.rgba(root.stateColor.r, root.stateColor.g, root.stateColor.b, 0.12)
                 border.width: 1
-                border.color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.26)
-                implicitHeight: feedbackText.implicitHeight + Kirigami.Units.smallSpacing * 2
-                implicitWidth: feedbackText.implicitWidth + Kirigami.Units.largeSpacing
+                border.color: Qt.rgba(root.stateColor.r, root.stateColor.g, root.stateColor.b, 0.24)
+                implicitWidth: feedback.implicitWidth + Kirigami.Units.largeSpacing
+                implicitHeight: feedback.implicitHeight + Kirigami.Units.smallSpacing * 2
 
                 Label {
-                    id: feedbackText
+                    id: feedback
                     anchors.centerIn: parent
-                    text: root.feedbackLabel
-                    color: root.feedbackColor
+                    text: root.stateLabel
+                    color: root.stateColor
                     font.bold: true
                 }
             }
@@ -67,7 +66,7 @@ Frame {
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                color: Kirigami.Theme.neutralTextColor
+                color: "#617182"
                 text: shellBackend.effectiveMountPath.length > 0
                       ? qsTr("Current root: %1").arg(shellBackend.effectiveMountPath)
                       : qsTr("No visible root has been applied yet.")
@@ -86,7 +85,7 @@ Frame {
             }
 
             Button {
-                text: qsTr("Browse…")
+                text: qsTr("Browse")
                 icon.name: "document-open-folder"
                 onClicked: {
                     const folder = shellBackend.mountPathDialogFolder()
@@ -107,22 +106,13 @@ Frame {
 
         Label {
             Layout.fillWidth: true
-            visible: root.hasAbsoluteDraftPath
+            visible: root.hasAbsoluteDraftPath || helperText.length > 0
             wrapMode: Text.WordWrap
-            color: shellBackend.mountPathPending
-                   ? Kirigami.Theme.neutralTextColor
-                   : Kirigami.Theme.disabledTextColor
+            color: "#617182"
             text: shellBackend.mountPathPending
-                  ? qsTr("Pending change. Apply it with Connect, Start Filesystem, Repair Remote, or Retry Filesystem.")
-                  : qsTr("Changes take effect the next time you connect or restart the filesystem.")
-        }
-
-        Label {
-            Layout.fillWidth: true
-            visible: helperText.length > 0
-            wrapMode: Text.WordWrap
-            color: Kirigami.Theme.neutralTextColor
-            text: helperText + qsTr(" Choose an empty directory. The daemon manages a hidden %1 folder inside this root for hydrated file bytes.").arg(shellBackend.backingDirName)
+                  ? qsTr("The next connect or filesystem restart applies this path. ")
+                    + helperText
+                  : helperText + qsTr(" The daemon stores hydrated bytes in the hidden %1 folder inside this root.").arg(shellBackend.backingDirName)
         }
     }
 }
