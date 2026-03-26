@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=open-onedrive Tray
+Comment=Start the open-onedrive tray helper on login
+Exec=@INSTALL_LIBEXEC_DIR@/open-onedrive-tray
+TryExec=@INSTALL_LIBEXEC_DIR@/open-onedrive-tray
+Icon=io.github.smturtle2.OpenOneDrive
+Terminal=false
+Categories=Network;Office;Utility;
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

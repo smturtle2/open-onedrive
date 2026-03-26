@@ -123,6 +123,7 @@ jobs:
           test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
           test -f "${smoke_home}/.local/share/nautilus-python/extensions/openonedrive.py"
           test -f "${smoke_home}/.config/systemd/user/openonedrived.service"
+          test -f "${smoke_home}/.config/autostart/io.github.smturtle2.OpenOneDriveTray.desktop"
           test -f "${smoke_home}/.local/share/applications/io.github.smturtle2.OpenOneDrive.desktop"
           test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-online-only.svg"
           test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-local.svg"

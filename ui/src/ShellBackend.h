@@ -16,6 +16,7 @@ class KStatusNotifierItem;
 class ShellBackend : public QObject
 {
     Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "io.github.smturtle2.OpenOneDriveUi1")
     Q_PROPERTY(bool remoteConfigured READ remoteConfigured NOTIFY remoteConfiguredChanged)
     Q_PROPERTY(bool needsRemoteRepair READ needsRemoteRepair NOTIFY needsRemoteRepairChanged)
     Q_PROPERTY(bool dashboardReady READ dashboardReady NOTIFY dashboardReadyChanged)
@@ -127,6 +128,7 @@ public:
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshLogs();
+    Q_INVOKABLE void quitWindowProcess();
 
 Q_SIGNALS:
     void remoteConfiguredChanged();
@@ -161,6 +163,7 @@ private:
     void updateStatusMessage(const QString &message);
     void updateTray();
     void launchUiProcess() const;
+    void quitOpenOneDrive();
     bool invokePathAction(const QString &method, const QString &path, const QString &emptyPathMessage);
     bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);
     QVariantMap parseExplorerEntries(const QString &jsonPayload, const QString &invalidMessage) const;

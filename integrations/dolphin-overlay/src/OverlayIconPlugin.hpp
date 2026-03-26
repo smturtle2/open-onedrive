@@ -3,6 +3,7 @@
 #include <KOverlayIconPlugin>
 
 #include <QHash>
+#include <QJsonObject>
 #include <QSet>
 #include <QStringList>
 
@@ -21,10 +22,13 @@ private Q_SLOTS:
 
 private:
     void requestPathState(const QString &absolutePath);
+    QJsonObject currentStatusObject() const;
     QString currentMountRoot() const;
     QString currentBackingDirName() const;
     static QStringList overlaysForState(const QString &state);
 
+    mutable QJsonObject m_statusCache;
+    mutable qint64 m_statusCacheAtMs = 0;
     QHash<QString, QStringList> m_cache;
     QSet<QString> m_pending;
 };

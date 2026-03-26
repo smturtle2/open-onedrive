@@ -76,6 +76,10 @@ impl OpenOneDriveBus {
         self.app.disconnect().await.map_err(map_error)
     }
 
+    async fn shutdown(&self) -> zbus::fdo::Result<()> {
+        self.app.shutdown().await.map_err(map_error)
+    }
+
     async fn repair_remote(&self) -> zbus::fdo::Result<()> {
         self.app.repair_remote().await.map_err(map_error)
     }

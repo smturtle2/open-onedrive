@@ -34,12 +34,23 @@ namespace {
 constexpr auto kService = "io.github.smturtle2.OpenOneDrive1";
 constexpr auto kPath = "/io/github/smturtle2/OpenOneDrive1";
 constexpr auto kInterface = "io.github.smturtle2.OpenOneDrive1";
+constexpr auto kUiControlService = "io.github.smturtle2.OpenOneDriveUi1";
+constexpr auto kUiControlPath = "/io/github/smturtle2/OpenOneDriveUi1";
+constexpr auto kUiControlInterface = "io.github.smturtle2.OpenOneDriveUi1";
 
 QDBusInterface daemonInterface()
 {
     return QDBusInterface(QString::fromLatin1(kService),
                           QString::fromLatin1(kPath),
                           QString::fromLatin1(kInterface),
+                          QDBusConnection::sessionBus());
+}
+
+QDBusInterface uiControlInterface()
+{
+    return QDBusInterface(QString::fromLatin1(kUiControlService),
+                          QString::fromLatin1(kUiControlPath),
+                          QString::fromLatin1(kUiControlInterface),
                           QDBusConnection::sessionBus());
 }
 
@@ -525,6 +536,13 @@ void ShellBackend::setMainWindow(QWindow *window)
 void ShellBackend::activateMainWindow()
 {
     if (m_mainWindow == nullptr) {
+        QDBusInterface iface = uiControlInterface();
+        if (iface.isValid()) {
+            const QDBusReply<void> reply = iface.call(QStringLiteral("ActivateMainWindow"));
+            if (reply.isValid()) {
+                return;
+            }
+        }
         launchUiProcess();
         return;
     }
@@ -548,6 +566,29 @@ void ShellBackend::launchUiProcess() const
     }
 
     QProcess::startDetached(program, {});
+}
+
+void ShellBackend::quitWindowProcess()
+{
+    m_allowQuit = true;
+    QCoreApplication::quit();
+}
+
+void ShellBackend::quitOpenOneDrive()
+{
+    if (m_mainWindow == nullptr) {
+        QDBusInterface uiIface = uiControlInterface();
+        if (uiIface.isValid()) {
+            uiIface.call(QStringLiteral("QuitWindowProcess"));
+        }
+    }
+
+    QDBusInterface iface = daemonInterface();
+    if (iface.isValid()) {
+        iface.call(QStringLiteral("Shutdown"));
+    }
+    m_allowQuit = true;
+    QCoreApplication::quit();
 }
 
 void ShellBackend::beginConnect()
@@ -1378,10 +1419,7 @@ void ShellBackend::initializeTray()
     connect(m_rescanAction, &QAction::triggered, this, &ShellBackend::rescanRemote);
     connect(m_pauseSyncAction, &QAction::triggered, this, &ShellBackend::pauseSync);
     connect(m_resumeSyncAction, &QAction::triggered, this, &ShellBackend::resumeSync);
-    connect(m_quitAction, &QAction::triggered, this, [this]() {
-        m_allowQuit = true;
-        QCoreApplication::quit();
-    });
+    connect(m_quitAction, &QAction::triggered, this, &ShellBackend::quitOpenOneDrive);
     connect(m_tray, &KStatusNotifierItem::activateRequested, this, [this](bool, const QPoint &) {
         if (m_mainWindow == nullptr) {
             activateMainWindow();
@@ -1394,10 +1432,7 @@ void ShellBackend::initializeTray()
         }
         updateTray();
     });
-    connect(m_tray, &KStatusNotifierItem::quitRequested, this, [this]() {
-        m_allowQuit = true;
-        QCoreApplication::quit();
-    });
+    connect(m_tray, &KStatusNotifierItem::quitRequested, this, &ShellBackend::quitOpenOneDrive);
 
     m_tray->setContextMenu(m_trayMenu);
     if (m_mainWindow != nullptr) {

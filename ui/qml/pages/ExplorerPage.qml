@@ -362,6 +362,38 @@ Kirigami.Page {
         page.refresh(false)
     }
 
+    function selectionEntries() {
+        const selected = []
+        for (let index = 0; index < page.selectedPaths.length; ++index) {
+            const entry = page.entryForPath(page.selectedPaths[index])
+            if (entry) {
+                selected.push(entry)
+            }
+        }
+        return selected
+    }
+
+    function canKeepSelection() {
+        const selected = page.selectionEntries()
+        return selected.length > 0 && selected.every(entry => String(entry.state || "") === "OnlineOnly")
+    }
+
+    function canMakeOnlineOnlySelection() {
+        const selected = page.selectionEntries()
+        return selected.length > 0 && selected.every(entry => {
+            const state = String(entry.state || "")
+            return state === "PinnedLocal" || state === "AvailableLocal"
+        })
+    }
+
+    function canRetrySelection() {
+        const selected = page.selectionEntries()
+        return selected.length > 0 && selected.every(entry => {
+            const state = String(entry.state || "")
+            return state === "Conflict" || state === "Error"
+        })
+    }
+
     function quickActionText(entry) {
         const state = String((entry && entry.state) || "")
         if (state === "Conflict" || state === "Error") {
@@ -390,8 +422,10 @@ Kirigami.Page {
             shellBackend.retryTransferPath(entry.path)
         } else if (state === "OnlineOnly") {
             shellBackend.keepLocalPath(entry.path)
-        } else {
+        } else if (state === "PinnedLocal" || state === "AvailableLocal") {
             shellBackend.makeOnlineOnlyPath(entry.path)
+        } else {
+            return
         }
         page.refresh(false)
     }
@@ -458,7 +492,7 @@ Kirigami.Page {
         readonly property string contextState: contextEntry ? String(contextEntry.state || "") : ""
         readonly property bool canRetryContext: contextState === "Conflict" || contextState === "Error"
         readonly property bool canKeepContext: contextState === "OnlineOnly"
-        readonly property bool canMakeOnlineOnlyContext: contextEntry && !canRetryContext && contextState !== "OnlineOnly"
+        readonly property bool canMakeOnlineOnlyContext: contextState === "PinnedLocal" || contextState === "AvailableLocal"
 
         MenuItem {
             text: entryContextMenu.contextEntry && entryContextMenu.contextEntry.is_dir ? qsTr("Browse folder") : qsTr("Open")
@@ -751,22 +785,22 @@ Kirigami.Page {
                 Button {
                     text: qsTr("Keep on device")
                     icon.name: "emblem-favorite"
-                    highlighted: true
-                    enabled: page.canManageResidencyActions
+                    highlighted: page.canKeepSelection()
+                    enabled: page.canManageResidencyActions && page.canKeepSelection()
                     onClicked: page.runSelectionAction(shellBackend.keepLocalPaths)
                 }
 
                 Button {
                     text: qsTr("Free up space")
                     icon.name: "folder-download"
-                    enabled: page.canManageResidencyActions
+                    enabled: page.canManageResidencyActions && page.canMakeOnlineOnlySelection()
                     onClicked: page.runSelectionAction(shellBackend.makeOnlineOnlyPaths)
                 }
 
                 Button {
                     text: qsTr("Retry transfer")
                     icon.name: "view-refresh"
-                    enabled: page.canManageResidencyActions
+                    enabled: page.canManageResidencyActions && page.canRetrySelection()
                     onClicked: page.runSelectionAction(shellBackend.retryTransferPaths)
                 }
 

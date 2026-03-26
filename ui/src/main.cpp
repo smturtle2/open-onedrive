@@ -3,6 +3,7 @@
 #include <KDBusService>
 
 #include <QApplication>
+#include <QDBusConnection>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QWindow>
@@ -30,6 +31,10 @@ int main(int argc, char *argv[])
     if (!engine.rootObjects().isEmpty()) {
         backend.setMainWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
     }
+    QDBusConnection::sessionBus().registerService(QStringLiteral("io.github.smturtle2.OpenOneDriveUi1"));
+    QDBusConnection::sessionBus().registerObject(QStringLiteral("/io/github/smturtle2/OpenOneDriveUi1"),
+                                                 &backend,
+                                                 QDBusConnection::ExportAllInvokables);
     QObject::connect(&service,
                      &KDBusService::activateRequested,
                      &backend,

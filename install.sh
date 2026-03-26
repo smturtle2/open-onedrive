@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.1}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.2}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -451,6 +451,28 @@ EOF
   mv -f "$temp_path" "$path"
 }
 
+write_tray_autostart_entry() {
+  local path="$1"
+  local libexec_dir="$2"
+  local temp_path
+  temp_path="$(mktemp "${path}.XXXXXX")"
+  cat > "$temp_path" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=open-onedrive Tray
+Comment=Start the open-onedrive tray helper on login
+Exec=${libexec_dir}/open-onedrive-tray
+TryExec=${libexec_dir}/open-onedrive-tray
+Icon=io.github.smturtle2.OpenOneDrive
+Terminal=false
+Categories=Network;Office;Utility;
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+  mv -f "$temp_path" "$path"
+}
+
 write_systemd_service() {
   local path="$1"
   local bin_dir="$2"
@@ -482,6 +504,7 @@ install_release_tree() {
   local bin_dir="$prefix/bin"
   local libexec_dir="$prefix/lib/open-onedrive"
   local app_dir="$prefix/share/applications"
+  local autostart_dir="$home_dir/.config/autostart"
   local icon_dir="$prefix/share/icons/hicolor/scalable/apps"
   local emblem_dir="$prefix/share/icons/hicolor/scalable/emblems"
   local nautilus_extension_dir="$prefix/share/nautilus-python/extensions"
@@ -494,6 +517,7 @@ install_release_tree() {
     "$bin_dir" \
     "$libexec_dir" \
     "$app_dir" \
+    "$autostart_dir" \
     "$icon_dir" \
     "$emblem_dir" \
     "$nautilus_extension_dir" \
@@ -520,6 +544,7 @@ install_release_tree() {
 
   write_launcher "$bin_dir/open-onedrive" "$bin_dir" "$libexec_dir"
   write_desktop_entry "$app_dir/io.github.smturtle2.OpenOneDrive.desktop" "$bin_dir"
+  write_tray_autostart_entry "$autostart_dir/io.github.smturtle2.OpenOneDriveTray.desktop" "$libexec_dir"
   write_systemd_service "$service_dir/openonedrived.service" "$bin_dir"
 
   if have_cmd systemctl; then

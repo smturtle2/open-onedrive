@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use openonedrive_ipc_types::{PathState, PathSyncState};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
@@ -230,8 +231,21 @@ impl PathStateStore {
     }
 
     fn connection(&self) -> Result<Connection> {
-        Connection::open(&self.db_path)
-            .with_context(|| format!("unable to open {}", self.db_path.display()))
+        let connection = Connection::open(&self.db_path)
+            .with_context(|| format!("unable to open {}", self.db_path.display()))?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .context("unable to configure sqlite busy timeout")?;
+        connection
+            .execute_batch(
+                "
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA foreign_keys = ON;
+                ",
+            )
+            .context("unable to configure sqlite pragmas")?;
+        Ok(connection)
     }
 }
 

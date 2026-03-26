@@ -37,7 +37,7 @@
 - hydrate 전에도 online-only 파일과 폴더를 계속 표시합니다
 - `Keep on this device`와 `Free up space`는 CLI, Dolphin, Nautilus에서 제공하고, 앱과 트레이는 설정 및 백그라운드 제어에 집중합니다
 - 메인 창은 폴더 경로, daemon 상태, 핵심 sync 제어만 남긴 settings-first 표면입니다
-- 창을 닫아도 background 제어를 유지하는 독립 tray helper가 있습니다
+- 세션 로그인 시 자동 시작되는 독립 tray helper가 있고, `Quit`는 창·tray·daemon을 함께 정상 종료합니다
 - 일반 `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`를 사용합니다
 - installer는 one-line 설치, 업그레이드 확인, checksum 검증, `rclone` bootstrap을 지원합니다
 
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치를 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI를 중지한 뒤 파일을 교체하고 user service를 다시 활성화하므로, active transfer가 끝난 뒤 진행하고 필요하면 앱 창을 다시 열어 주세요.
+installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치, 이후 로그인에 사용할 tray autostart entry 생성을 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI를 중지한 뒤 파일을 교체하고 user service를 다시 활성화하므로, active transfer가 끝난 뒤 진행하고 필요하면 앱 창을 다시 열어 주세요.
 
 실행과 확인:
 
@@ -75,6 +75,7 @@ installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, 
 open-onedrive
 systemctl --user status openonedrived.service
 openonedrivectl status
+openonedrivectl shutdown
 ```
 
 ## 일상 사용
@@ -90,7 +91,8 @@ openonedrivectl status
 
 - `Window`: 폴더 경로, 연결 또는 복구, 파일시스템 시작 또는 중지, sync 일시정지 또는 재개
 - `Dolphin` / `Nautilus`: residency 액션과 overlay 상태를 다루는 메인 작업 표면
-- `Tray`: 창을 닫은 뒤에도 남는 background 제어 표면
+- `Tray`: 창을 닫은 뒤에도 남고, 로그인 시 자동 시작되는 background 제어 표면
+- tray의 `Quit`는 열려 있는 창을 닫고 daemon까지 정상 종료합니다
 - `CLI`: 스크립트와 터미널에서 상태 확인과 residency 제어
 
 파일 탐색기 통합:

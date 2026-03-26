@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 use tracing::warn;
 use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 
@@ -34,6 +34,9 @@ const MAX_RECENT_LOGS: usize = 200;
 const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(2);
+const RCLONE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RCLONE_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+const RCLONE_VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
 const OPENONEDRIVE_MOUNT_SOURCE: &str = "openonedrive";
 const LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR: &str = "unable to get drive_id and drive_type";
@@ -70,6 +73,7 @@ struct Runtime {
     pending_uploads: u32,
     queued_action_count: u32,
     active_action_kind: String,
+    backing_usage_bytes: u64,
     last_sync_at: u64,
     sync_paused: bool,
 }
@@ -114,6 +118,7 @@ impl Runtime {
             pending_uploads: state.pending_uploads,
             queued_action_count: state.queued_actions.len() as u32,
             active_action_kind: state.active_action_kind,
+            backing_usage_bytes: state.backing_usage_bytes,
             last_sync_at: state.last_sync_at,
             sync_paused: state.sync_paused,
         }
@@ -317,9 +322,15 @@ impl ActionKind {
 }
 
 #[derive(Debug)]
+enum QueuedActionResponder {
+    Blocking(mpsc::Sender<Result<()>>),
+    Async(oneshot::Sender<Result<()>>),
+}
+
+#[derive(Debug)]
 struct QueuedAction {
     kind: ActionKind,
-    responder: Option<mpsc::Sender<Result<()>>>,
+    responder: Option<QueuedActionResponder>,
 }
 
 #[derive(Debug, Default)]
@@ -420,6 +431,7 @@ impl RcloneBackend {
         backend.ensure_visible_root_exists();
         backend.spawn_action_worker();
         backend.refresh_rclone_version().await;
+        backend.refresh_backing_usage_bytes().await?;
         backend.refresh_virtual_snapshot()?;
 
         Ok(backend)
@@ -496,18 +508,36 @@ impl RcloneBackend {
                 }
                 let _ = backend.sync_runtime_from_action_scheduler_blocking();
                 if let Some(responder) = queued.responder {
-                    let _ = responder.send(result);
+                    match responder {
+                        QueuedActionResponder::Blocking(tx) => {
+                            let _ = tx.send(result);
+                        }
+                        QueuedActionResponder::Async(tx) => {
+                            let _ = tx.send(result);
+                        }
+                    }
                 }
             }
         });
     }
 
     async fn run_queued_action(&self, action: ActionKind) -> Result<()> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.run_queued_action_sync(action))
-        } else {
-            self.run_queued_action_sync(action)
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut state = self
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            state.queue.push_back(QueuedAction {
+                kind: action,
+                responder: Some(QueuedActionResponder::Async(tx)),
+            });
+            self.action_scheduler.1.notify_one();
         }
+        self.sync_runtime_from_action_scheduler_blocking()?;
+        rx.await
+            .map_err(|_| anyhow!("queued action worker exited before completing the request"))?
     }
 
     fn run_queued_action_sync(&self, action: ActionKind) -> Result<()> {
@@ -520,7 +550,7 @@ impl RcloneBackend {
                 .expect("action scheduler poisoned");
             state.queue.push_back(QueuedAction {
                 kind: action,
-                responder: Some(tx),
+                responder: Some(QueuedActionResponder::Blocking(tx)),
             });
             self.action_scheduler.1.notify_one();
         }
@@ -647,6 +677,40 @@ impl RcloneBackend {
         } else {
             self.runtime_handle.block_on(self.persist_runtime())
         }
+    }
+
+    async fn refresh_backing_usage_bytes(&self) -> Result<()> {
+        let root = self.backing_root_access_path()?;
+        let usage = tokio::task::spawn_blocking(move || directory_size_bytes(&root))
+            .await
+            .context("backing usage task join failed")??;
+        self.set_backing_usage_bytes(usage).await?;
+        Ok(())
+    }
+
+    async fn set_backing_usage_bytes(&self, usage: u64) -> Result<()> {
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.backing_usage_bytes = usage;
+        }
+        self.persist_runtime().await
+    }
+
+    fn set_backing_usage_bytes_sync(&self, usage: u64) -> Result<()> {
+        {
+            let mut runtime = self.runtime_write_guard();
+            runtime.backing_usage_bytes = usage;
+        }
+        self.persist_runtime_blocking()
+    }
+
+    fn adjust_backing_usage_bytes_sync(&self, delta: i128) -> Result<()> {
+        let next = {
+            let runtime = self.runtime_read_guard();
+            let current = runtime.backing_usage_bytes as i128;
+            current.saturating_add(delta).clamp(0, u64::MAX as i128) as u64
+        };
+        self.set_backing_usage_bytes_sync(next)
     }
 
     pub async fn get_path_states(&self, raw_paths: &[String]) -> Result<Vec<PathState>> {
@@ -955,6 +1019,7 @@ impl RcloneBackend {
         for removed_root in &removed_roots {
             if let Some(state) = state_map.get(removed_root) {
                 let local_path = self.backing_file_path(removed_root)?;
+                let removed_bytes = directory_size_bytes(&local_path).unwrap_or(0);
                 if let Err(error) = remove_local_backing_path(&local_path, state.is_dir) {
                     if !should_ignore_missing_local_path(&error) {
                         self.append_warning_log(
@@ -964,6 +1029,8 @@ impl RcloneBackend {
                             ),
                         );
                     }
+                } else {
+                    let _ = self.adjust_backing_usage_bytes_sync(-(removed_bytes as i128));
                 }
             }
         }
@@ -1013,6 +1080,7 @@ impl RcloneBackend {
         for removed_root in &removed_roots {
             if let Some(state) = state_map.get(removed_root) {
                 let local_path = self.backing_file_path(removed_root)?;
+                let removed_bytes = directory_size_bytes(&local_path).unwrap_or(0);
                 if let Err(error) = remove_local_backing_path(&local_path, state.is_dir) {
                     if !should_ignore_missing_local_path(&error) {
                         self.append_warning_log(
@@ -1022,6 +1090,8 @@ impl RcloneBackend {
                             ),
                         );
                     }
+                } else {
+                    let _ = self.adjust_backing_usage_bytes_sync(-(removed_bytes as i128));
                 }
             }
         }
@@ -1043,7 +1113,7 @@ impl RcloneBackend {
         self.pause_uploads_for_lifecycle(true).await?;
 
         let should_restart = self.runtime.read().await.filesystem_state == FilesystemState::Running;
-        self.stop_filesystem().await?;
+        Self::stop_filesystem(self).await?;
 
         create_dir_all_with_reason(&requested_path)?;
         migrate_backing_root(
@@ -1058,6 +1128,7 @@ impl RcloneBackend {
         if should_restart && self.runtime.read().await.remote_configured {
             self.start_filesystem().await?;
         } else {
+            self.refresh_backing_usage_bytes().await?;
             self.persist_runtime().await?;
         }
         if !self.runtime.read().await.sync_paused && self.runtime.read().await.remote_configured {
@@ -1192,6 +1263,82 @@ impl RcloneBackend {
         self.begin_connect().await
     }
 
+    async fn wait_for_action_worker_idle(&self) {
+        loop {
+            let active_action_kind = {
+                let scheduler = self
+                    .action_scheduler
+                    .0
+                    .lock()
+                    .expect("action scheduler poisoned");
+                scheduler.active_action_kind.clone()
+            };
+            if active_action_kind.is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    fn cancel_queued_actions(&self, reason: &'static str) -> Result<()> {
+        let mut scheduler = self
+            .action_scheduler
+            .0
+            .lock()
+            .expect("action scheduler poisoned");
+        while let Some(queued) = scheduler.queue.pop_front() {
+            if let Some(responder) = queued.responder {
+                let error = Err(anyhow!(reason));
+                match responder {
+                    QueuedActionResponder::Blocking(tx) => {
+                        let _ = tx.send(error);
+                    }
+                    QueuedActionResponder::Async(tx) => {
+                        let _ = tx.send(error);
+                    }
+                }
+            }
+        }
+        scheduler.active_action_kind.clear();
+        scheduler.stop_after_current = false;
+        drop(scheduler);
+        self.sync_runtime_from_action_scheduler_blocking()
+    }
+
+    pub async fn shutdown(self: &Arc<Self>) -> Result<()> {
+        self.stop_connect_process().await?;
+        self.stop_rescan_loop().await;
+        {
+            let mut scheduler = self
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            scheduler.stop_after_current = true;
+        }
+        self.wait_for_action_worker_idle().await;
+        self.cancel_queued_actions("queued action cancelled for shutdown")?;
+        self.stop_filesystem().await?;
+        {
+            let mut runtime = self.runtime.write().await;
+            runtime.pending_downloads = 0;
+            runtime.pending_uploads = 0;
+            runtime.queued_action_count = 0;
+            runtime.active_action_kind.clear();
+            runtime.sync_state = if runtime.sync_paused {
+                SyncState::Paused
+            } else if runtime.last_sync_error.is_empty() {
+                SyncState::Idle
+            } else {
+                SyncState::Error
+            };
+        }
+        self.persist_runtime().await?;
+        self.emit_event(BackendEvent::FilesystemStateChanged);
+        self.emit_event(BackendEvent::SyncStateChanged);
+        Ok(())
+    }
+
     pub async fn disconnect(self: &Arc<Self>) -> Result<()> {
         self.stop_connect_process().await?;
         self.stop_rescan_loop().await;
@@ -1213,6 +1360,7 @@ impl RcloneBackend {
             runtime.conflict_relative_paths.clear();
             runtime.pending_downloads = 0;
             runtime.pending_uploads = 0;
+            runtime.backing_usage_bytes = 0;
             runtime.last_sync_at = 0;
             runtime.sync_paused = false;
         }
@@ -1461,6 +1609,11 @@ impl RcloneBackend {
             }
             let remote_scan = self.scan_remote_entries(seed_progressively).await?;
             let mut snapshot = self.build_snapshot_from_remote_entries(&remote_scan.entries)?;
+            preserve_failed_remote_scan_descendants(
+                &mut snapshot,
+                &existing_states,
+                &remote_scan.failed_directories,
+            );
             apply_failed_remote_scan_directories(&mut snapshot, &remote_scan.failed_directories);
             let store = self.path_state_store.clone();
             let snapshot_for_store = snapshot.clone();
@@ -1671,7 +1824,7 @@ impl RcloneBackend {
             sync_state: runtime.sync_state,
             root_path: config.root_path.display().to_string(),
             backing_dir_name: config.backing_dir_name.clone(),
-            backing_usage_bytes: directory_size_bytes(&self.backing_root_access_path()?)?,
+            backing_usage_bytes: runtime.backing_usage_bytes,
             pinned_file_count: runtime.pinned_relative_paths.len() as u32,
             pending_downloads: runtime.pending_downloads,
             pending_uploads: runtime.pending_uploads,
@@ -2172,7 +2325,9 @@ impl RcloneBackend {
         failed_directories: &BTreeMap<String, String>,
         listed_directories: &BTreeSet<String>,
     ) -> Result<()> {
+        let existing_states = self.path_state_store.all()?;
         let mut snapshot = self.build_snapshot_from_remote_entries(entries)?;
+        preserve_failed_remote_scan_descendants(&mut snapshot, &existing_states, failed_directories);
         apply_failed_remote_scan_directories(&mut snapshot, failed_directories);
         let store = self.path_state_store.clone();
         let snapshot_for_store = snapshot.clone();
@@ -2196,6 +2351,7 @@ impl RcloneBackend {
             binary.as_path(),
             build_lsjson_single_args(&config, &self.paths, relative_path),
             "failed to execute rclone lsjson for single path",
+            Some(RCLONE_QUERY_TIMEOUT),
         )?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -2602,6 +2758,7 @@ impl RcloneBackend {
             pending_downloads: runtime.pending_downloads,
             pending_uploads: runtime.pending_uploads,
             conflict_relative_paths: runtime.conflict_relative_paths.iter().cloned().collect(),
+            backing_usage_bytes: runtime.backing_usage_bytes,
             last_sync_at: runtime.last_sync_at,
             sync_paused: runtime.sync_paused,
             active_action_kind,
@@ -2749,9 +2906,15 @@ impl RcloneBackend {
                 );
                 if cancel {
                     if let Some(responder) = queued.responder {
-                        let _ = responder.send(Err(anyhow!(
-                            "queued action cancelled for lifecycle transition"
-                        )));
+                        let error = Err(anyhow!("queued action cancelled for lifecycle transition"));
+                        match responder {
+                            QueuedActionResponder::Blocking(tx) => {
+                                let _ = tx.send(error);
+                            }
+                            QueuedActionResponder::Async(tx) => {
+                                let _ = tx.send(error);
+                            }
+                        }
                     }
                 } else {
                     retained.push_back(queued);
@@ -2880,6 +3043,7 @@ impl RcloneBackend {
                 binary.as_path(),
                 build_download_args(&config, &self.paths, relative_path, &local_path),
                 "failed to execute rclone copyto",
+                Some(RCLONE_TRANSFER_TIMEOUT),
             )?;
             if !status.success() {
                 bail!("rclone copyto failed for {relative_path}");
@@ -2890,10 +3054,12 @@ impl RcloneBackend {
             state.error.clear();
             state.state = derive_path_state(&state);
             state.last_sync_at = unix_timestamp();
-            state.size_bytes = fs::metadata(&local_path)
+            let actual_size = fs::metadata(&local_path)
                 .map(|metadata| metadata.len())
                 .unwrap_or(state.size_bytes);
+            state.size_bytes = actual_size;
             self.path_state_store.upsert_many(&[state])?;
+            self.adjust_backing_usage_bytes_sync(actual_size as i128)?;
             Ok(local_path.clone())
         })();
         {
@@ -2929,6 +3095,7 @@ impl RcloneBackend {
             bail!("cannot evict {} while it has local changes", relative_path);
         }
         let path = self.backing_file_path(relative_path)?;
+        let removed_bytes = directory_size_bytes(&path).unwrap_or(0);
         if path.exists() {
             if state.is_dir {
                 fs::remove_dir_all(&path)
@@ -2944,6 +3111,7 @@ impl RcloneBackend {
         state.state = derive_path_state(&state);
         state.last_sync_at = unix_timestamp();
         self.path_state_store.upsert_many(&[state])?;
+        self.adjust_backing_usage_bytes_sync(-(removed_bytes as i128))?;
         Ok(())
     }
 
@@ -2983,6 +3151,7 @@ impl RcloneBackend {
             binary.as_path(),
             build_upload_args(&config, &self.paths, relative_path, &local_path),
             "failed to execute rclone copyto",
+            Some(RCLONE_TRANSFER_TIMEOUT),
         )?;
         if !status.success() {
             bail!("rclone copyto upload failed for {}", relative_path);
@@ -3052,6 +3221,7 @@ impl RcloneBackend {
             binary.as_path(),
             build_mkdir_args(&config, &self.paths, relative_path),
             "failed to execute rclone mkdir",
+            Some(RCLONE_QUERY_TIMEOUT),
         )?;
         if !status.success() {
             bail!("rclone mkdir failed for {}", relative_path);
@@ -3096,6 +3266,7 @@ impl RcloneBackend {
                 binary.as_path(),
                 args,
                 "failed to execute rclone delete",
+                Some(RCLONE_QUERY_TIMEOUT),
             )?;
             if !status.success() {
                 bail!("rclone delete failed for {}", relative_path);
@@ -3103,6 +3274,7 @@ impl RcloneBackend {
         }
 
         let local_path = self.backing_file_path(relative_path)?;
+        let removed_bytes = directory_size_bytes(&local_path).unwrap_or(0);
         let local_cleanup_error = if remote_backed {
             match remove_local_backing_path(&local_path, is_dir) {
                 Ok(()) => None,
@@ -3123,6 +3295,7 @@ impl RcloneBackend {
             })
             .collect::<Vec<_>>();
         self.path_state_store.replace_all(&remaining)?;
+        self.adjust_backing_usage_bytes_sync(-(removed_bytes as i128))?;
         if let Some(error) = local_cleanup_error {
             self.append_log(format!(
                 "remote delete succeeded for {relative_path}, but local cleanup needs attention: {error:#}"
@@ -3147,6 +3320,7 @@ impl RcloneBackend {
                 binary.as_path(),
                 build_moveto_args(&config, &self.paths, from, to),
                 "failed to execute rclone moveto",
+                Some(RCLONE_QUERY_TIMEOUT),
             )?;
             if !status.success() {
                 bail!("rclone moveto failed from {} to {}", from, to);
@@ -3198,11 +3372,14 @@ impl RcloneBackend {
         binary: &Path,
         args: Vec<OsString>,
         context: &str,
+        timeout: Option<Duration>,
     ) -> Result<ExitStatus> {
         if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.run_rclone_status_sync(binary, args, context))
+            tokio::task::block_in_place(|| {
+                self.run_rclone_status_sync(binary, args, context, timeout)
+            })
         } else {
-            self.run_rclone_status_sync(binary, args, context)
+            self.run_rclone_status_sync(binary, args, context, timeout)
         }
     }
 
@@ -3211,11 +3388,14 @@ impl RcloneBackend {
         binary: &Path,
         args: Vec<OsString>,
         context: &str,
+        timeout: Option<Duration>,
     ) -> Result<std::process::Output> {
         if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| self.run_rclone_output_sync(binary, args, context))
+            tokio::task::block_in_place(|| {
+                self.run_rclone_output_sync(binary, args, context, timeout)
+            })
         } else {
-            self.run_rclone_output_sync(binary, args, context)
+            self.run_rclone_output_sync(binary, args, context, timeout)
         }
     }
 
@@ -3224,6 +3404,7 @@ impl RcloneBackend {
             binary.as_path(),
             vec![OsString::from("version")],
             "failed to execute rclone version",
+            Some(RCLONE_VERSION_TIMEOUT),
         )?;
         if !output.status.success() {
             bail!("rclone version exited with status {}", output.status);
@@ -3241,6 +3422,7 @@ impl RcloneBackend {
         binary: &Path,
         args: Vec<OsString>,
         context: &str,
+        timeout: Option<Duration>,
     ) -> Result<ExitStatus> {
         #[cfg(test)]
         {
@@ -3252,7 +3434,7 @@ impl RcloneBackend {
                     runtime.block_on(openonedrive_rclone_worker::run_request(WorkerRequest {
                         binary: binary.to_path_buf(),
                         args,
-                        timeout: None,
+                        timeout,
                         stream_output: false,
                     }))
                 })
@@ -3260,7 +3442,7 @@ impl RcloneBackend {
                 runtime.block_on(openonedrive_rclone_worker::run_request(WorkerRequest {
                     binary: binary.to_path_buf(),
                     args,
-                    timeout: None,
+                    timeout,
                     stream_output: false,
                 }))
             }
@@ -3272,7 +3454,7 @@ impl RcloneBackend {
         {
             let worker = resolve_worker_binary()?;
             std::process::Command::new(worker)
-                .args(build_cli_args(binary, args, None, false))
+                .args(build_cli_args(binary, args, timeout, false))
                 .stdin(Stdio::null())
                 .status()
                 .with_context(|| context.to_string())
@@ -3284,6 +3466,7 @@ impl RcloneBackend {
         binary: &Path,
         args: Vec<OsString>,
         context: &str,
+        timeout: Option<Duration>,
     ) -> Result<std::process::Output> {
         #[cfg(test)]
         {
@@ -3295,7 +3478,7 @@ impl RcloneBackend {
                     runtime.block_on(openonedrive_rclone_worker::run_request(WorkerRequest {
                         binary: binary.to_path_buf(),
                         args,
-                        timeout: None,
+                        timeout,
                         stream_output: false,
                     }))
                 })
@@ -3303,7 +3486,7 @@ impl RcloneBackend {
                 runtime.block_on(openonedrive_rclone_worker::run_request(WorkerRequest {
                     binary: binary.to_path_buf(),
                     args,
-                    timeout: None,
+                    timeout,
                     stream_output: false,
                 }))
             }
@@ -3319,7 +3502,7 @@ impl RcloneBackend {
         {
             let worker = resolve_worker_binary()?;
             std::process::Command::new(worker)
-                .args(build_cli_args(binary, args, None, false))
+                .args(build_cli_args(binary, args, timeout, false))
                 .stdin(Stdio::null())
                 .output()
                 .with_context(|| context.to_string())
@@ -3462,6 +3645,7 @@ impl Provider for FuseBridge {
             .into_iter()
             .next()
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        let previous_size = state.size_bytes;
         state.size_bytes = size;
         state.dirty = true;
         state.hydrated = true;
@@ -3474,6 +3658,9 @@ impl Provider for FuseBridge {
         backend
             .rebuild_path_state_snapshot_sync()
             .map_err(io_error)?;
+        backend
+            .adjust_backing_usage_bytes_sync(size as i128 - previous_size as i128)
+            .map_err(io_error)?;
         backend.emit_path_state_refresh(&[path.to_string()]);
         backend.enqueue_upload(path.to_string(), false);
         Ok(())
@@ -3481,6 +3668,7 @@ impl Provider for FuseBridge {
 
     fn finish_write(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
+        let target = backend.backing_file_path(path).map_err(io_error)?;
         let mut state = backend
             .path_state_store
             .get_many(&[path.to_string()])
@@ -3488,6 +3676,9 @@ impl Provider for FuseBridge {
             .into_iter()
             .next()
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        let previous_size = state.size_bytes;
+        let actual_size = fs::metadata(&target).map(|metadata| metadata.len()).unwrap_or(previous_size);
+        state.size_bytes = actual_size;
         state.dirty = true;
         state.hydrated = true;
         state.state = PathSyncState::Syncing;
@@ -3498,6 +3689,9 @@ impl Provider for FuseBridge {
             .map_err(io_error)?;
         backend
             .rebuild_path_state_snapshot_sync()
+            .map_err(io_error)?;
+        backend
+            .adjust_backing_usage_bytes_sync(actual_size as i128 - previous_size as i128)
             .map_err(io_error)?;
         backend.emit_path_state_refresh(&[path.to_string()]);
         backend.enqueue_upload(path.to_string(), false);
@@ -4557,7 +4751,7 @@ fn run_worker_output_once(
             .block_on(openonedrive_rclone_worker::run_request(WorkerRequest {
                 binary: binary.to_path_buf(),
                 args,
-                timeout: None,
+                timeout: Some(RCLONE_QUERY_TIMEOUT),
                 stream_output: false,
             }))
             .with_context(|| context.to_string())?;
@@ -4572,7 +4766,7 @@ fn run_worker_output_once(
     {
         let worker = resolve_worker_binary()?;
         std::process::Command::new(worker)
-            .args(build_cli_args(binary, args, None, false))
+            .args(build_cli_args(binary, args, Some(RCLONE_QUERY_TIMEOUT), false))
             .stdin(Stdio::null())
             .output()
             .with_context(|| context.to_string())
@@ -4737,6 +4931,12 @@ fn directory_size_bytes(root: &Path) -> Result<u64> {
         return Ok(0);
     }
 
+    let metadata =
+        fs::metadata(root).with_context(|| format!("unable to stat {}", root.display()))?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
     let mut total = 0_u64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(path) = stack.pop() {
@@ -4826,6 +5026,30 @@ fn prefix_lsjson_entries(parent_path: &str, entries: Vec<RcloneListEntry>) -> Ve
         .collect()
 }
 
+fn preserve_failed_remote_scan_descendants(
+    snapshot: &mut Vec<PathState>,
+    existing_states: &[PathState],
+    failed_directories: &BTreeMap<String, String>,
+) {
+    if failed_directories.is_empty() {
+        return;
+    }
+
+    let mut known_paths = snapshot
+        .iter()
+        .map(|state| state.path.clone())
+        .collect::<BTreeSet<_>>();
+    for state in existing_states {
+        if failed_directories
+            .keys()
+            .any(|root| path_is_descendant_of_root(&state.path, root))
+            && known_paths.insert(state.path.clone())
+        {
+            snapshot.push(state.clone());
+        }
+    }
+}
+
 fn apply_failed_remote_scan_directories(
     snapshot: &mut Vec<PathState>,
     failed_directories: &BTreeMap<String, String>,
@@ -4857,8 +5081,9 @@ fn apply_failed_remote_scan_directories(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionKind, ActionScheduler, BACKEND_NAME, MountPointInfo, QueuedAction, RcloneBackend,
-        RcloneListEntry, Runtime, affected_relative_paths, apply_failed_remote_scan_directories,
+        ActionKind, ActionScheduler, BACKEND_NAME, MountPointInfo, QueuedAction,
+        QueuedActionResponder, RcloneBackend, RcloneListEntry, Runtime,
+        affected_relative_paths, apply_failed_remote_scan_directories,
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
         build_download_args, build_lsjson_args, build_lsjson_directory_args,
         build_lsjson_single_args, build_moveto_args, build_rmdir_args, build_upload_args,
@@ -4867,9 +5092,9 @@ mod tests {
         fully_listed_directories_for_entries, immediate_child_of, is_legacy_onedrive_remote_error,
         is_openonedrive_mount, mark_remote_scan_error, normalize_path_state_snapshot,
         parse_mount_point_info, parse_rclone_mod_time_unix, path_matches_query,
-        prefix_lsjson_entries, read_remote_config_section, relative_path_for,
-        remote_config_needs_repair, resolve_rclone_binary_with_path, revision_for_entry,
-        sort_path_states,
+        prefix_lsjson_entries, preserve_failed_remote_scan_descendants,
+        read_remote_config_section, relative_path_for, remote_config_needs_repair,
+        resolve_rclone_binary_with_path, revision_for_entry, sort_path_states,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::{
@@ -5960,6 +6185,56 @@ mod tests {
     }
 
     #[test]
+    fn failed_remote_scan_preserves_existing_descendants() {
+        let existing = vec![
+            PathState {
+                path: "Vault".into(),
+                is_dir: true,
+                state: PathSyncState::AvailableLocal,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: true,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "Vault/report.txt".into(),
+                is_dir: false,
+                state: PathSyncState::AvailableLocal,
+                size_bytes: 42,
+                pinned: false,
+                hydrated: true,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 2,
+                base_revision: "42".into(),
+                conflict_reason: String::new(),
+            },
+        ];
+        let mut snapshot = vec![existing[0].clone()];
+        let failed = BTreeMap::from([(
+            "Vault".to_string(),
+            mark_remote_scan_error(
+                "rclone lsjson failed for remote directory Vault: invalidRequest",
+            ),
+        )]);
+
+        preserve_failed_remote_scan_descendants(&mut snapshot, &existing, &failed);
+        apply_failed_remote_scan_directories(&mut snapshot, &failed);
+
+        let child = snapshot
+            .into_iter()
+            .find(|state| state.path == "Vault/report.txt")
+            .expect("existing child state should remain available");
+        assert_eq!(child.state, PathSyncState::AvailableLocal);
+        assert!(child.hydrated);
+        assert_eq!(child.size_bytes, 42);
+    }
+
+    #[test]
     fn affected_paths_include_parent_directories() {
         assert_eq!(
             affected_relative_paths(&["Docs/nested/spec.txt".into()]),
@@ -6097,10 +6372,10 @@ mod tests {
     async fn pause_lifecycle_waits_for_hydrate_and_cancels_queued_transfer_actions() {
         let dir = tempdir().expect("tempdir");
         let backend = build_backend(dir.path()).await;
-        let (hydrate_tx, hydrate_rx) = mpsc::channel();
-        let (evict_tx, evict_rx) = mpsc::channel();
-        let (upload_tx, upload_rx) = mpsc::channel();
-        let (refresh_tx, refresh_rx) = mpsc::channel();
+        let (hydrate_tx, hydrate_rx) = mpsc::channel::<anyhow::Result<()>>();
+        let (evict_tx, evict_rx) = mpsc::channel::<anyhow::Result<()>>();
+        let (upload_tx, upload_rx) = mpsc::channel::<anyhow::Result<()>>();
+        let (refresh_tx, refresh_rx) = mpsc::channel::<anyhow::Result<()>>();
         {
             let mut scheduler = backend
                 .action_scheduler
@@ -6112,26 +6387,26 @@ mod tests {
                 kind: ActionKind::Hydrate {
                     path: "Docs/keep.txt".into(),
                 },
-                responder: Some(hydrate_tx),
+                responder: Some(QueuedActionResponder::Blocking(hydrate_tx)),
             });
             scheduler.queue.push_back(QueuedAction {
                 kind: ActionKind::Evict {
                     path: "Docs/evict.txt".into(),
                 },
-                responder: Some(evict_tx),
+                responder: Some(QueuedActionResponder::Blocking(evict_tx)),
             });
             scheduler.queue.push_back(QueuedAction {
                 kind: ActionKind::Upload {
                     path: "Docs/upload.txt".into(),
                 },
-                responder: Some(upload_tx),
+                responder: Some(QueuedActionResponder::Blocking(upload_tx)),
             });
             scheduler.queue.push_back(QueuedAction {
                 kind: ActionKind::RefreshDirectory {
                     path: None,
                     recursive: true,
                 },
-                responder: Some(refresh_tx),
+                responder: Some(QueuedActionResponder::Blocking(refresh_tx)),
             });
         }
 

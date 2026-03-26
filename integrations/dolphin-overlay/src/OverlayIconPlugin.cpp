@@ -5,6 +5,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDBusReply>
+#include <QDateTime>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,7 @@ namespace {
 constexpr auto kService = "io.github.smturtle2.OpenOneDrive1";
 constexpr auto kPath = "/io/github/smturtle2/OpenOneDrive1";
 constexpr auto kInterface = "io.github.smturtle2.OpenOneDrive1";
+constexpr qint64 kStatusCacheTtlMs = 2000;
 }
 
 QStringList OpenOneDriveOverlayIconPlugin::getOverlays(const QUrl &item)
@@ -113,42 +115,44 @@ void OpenOneDriveOverlayIconPlugin::requestPathState(const QString &absolutePath
     });
 }
 
-QString OpenOneDriveOverlayIconPlugin::currentMountRoot() const
+QJsonObject OpenOneDriveOverlayIconPlugin::currentStatusObject() const
 {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!m_statusCache.isEmpty() && now - m_statusCacheAtMs <= kStatusCacheTtlMs) {
+        return m_statusCache;
+    }
+
     QDBusInterface iface(QString::fromLatin1(kService),
                          QString::fromLatin1(kPath),
                          QString::fromLatin1(kInterface),
                          QDBusConnection::sessionBus());
     const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
     if (!reply.isValid()) {
+        m_statusCache = {};
+        m_statusCacheAtMs = now;
         return {};
     }
 
     const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
     if (!document.isObject()) {
+        m_statusCache = {};
+        m_statusCacheAtMs = now;
         return {};
     }
 
-    return QDir::cleanPath(document.object().value(QStringLiteral("root_path")).toString());
+    m_statusCache = document.object();
+    m_statusCacheAtMs = now;
+    return m_statusCache;
+}
+
+QString OpenOneDriveOverlayIconPlugin::currentMountRoot() const
+{
+    return QDir::cleanPath(currentStatusObject().value(QStringLiteral("root_path")).toString());
 }
 
 QString OpenOneDriveOverlayIconPlugin::currentBackingDirName() const
 {
-    QDBusInterface iface(QString::fromLatin1(kService),
-                         QString::fromLatin1(kPath),
-                         QString::fromLatin1(kInterface),
-                         QDBusConnection::sessionBus());
-    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetStatusJson"));
-    if (!reply.isValid()) {
-        return {};
-    }
-
-    const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
-    if (!document.isObject()) {
-        return {};
-    }
-
-    return document.object().value(QStringLiteral("backing_dir_name")).toString();
+    return currentStatusObject().value(QStringLiteral("backing_dir_name")).toString();
 }
 
 QStringList OpenOneDriveOverlayIconPlugin::overlaysForState(const QString &state)

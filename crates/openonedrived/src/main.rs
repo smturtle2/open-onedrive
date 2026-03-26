@@ -37,6 +37,7 @@ async fn main() -> Result<()> {
     let app = OpenOneDriveApp::load().await?;
     let signal_app = app.clone();
     let mut events = app.subscribe_events();
+    let mut shutdown = app.subscribe_shutdown();
 
     let connection = Connection::session().await?;
     connection.request_name(DBUS_SERVICE).await?;
@@ -107,6 +108,9 @@ async fn main() -> Result<()> {
     });
 
     info!("openonedrived ready on {DBUS_SERVICE}");
-    tokio::signal::ctrl_c().await?;
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = shutdown.recv() => {}
+    }
     Ok(())
 }

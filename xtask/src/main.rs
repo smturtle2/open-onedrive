@@ -81,6 +81,7 @@ fn install() -> Result<()> {
     let bin_dir = prefix.join("bin");
     let libexec_dir = prefix.join("lib").join("open-onedrive");
     let app_dir = prefix.join("share").join("applications");
+    let autostart_dir = home.join(".config").join("autostart");
     let icon_dir = prefix
         .join("share")
         .join("icons")
@@ -111,6 +112,7 @@ fn install() -> Result<()> {
         &bin_dir,
         &libexec_dir,
         &app_dir,
+        &autostart_dir,
         &icon_dir,
         &emblem_dir,
         &nautilus_extension_dir,
@@ -213,6 +215,18 @@ fn install() -> Result<()> {
         &render_template(
             "packaging/open-onedrive.desktop.in",
             &[("@INSTALL_BIN_DIR@", bin_dir.to_string_lossy().as_ref())],
+        )?,
+        false,
+    )?;
+
+    write_text_file(
+        &autostart_dir.join("io.github.smturtle2.OpenOneDriveTray.desktop"),
+        &render_template(
+            "packaging/open-onedrive-tray-autostart.desktop.in",
+            &[(
+                "@INSTALL_LIBEXEC_DIR@",
+                libexec_dir.to_string_lossy().as_ref(),
+            )],
         )?,
         false,
     )?;

@@ -411,7 +411,19 @@ class OpenOneDriveNautilusExtension(GObject.GObject, Nautilus.MenuProvider, Naut
         submenu = Nautilus.Menu()
         added = False
 
-        if any(state.get("state") == "OnlineOnly" for state in states.values()):
+        state_values = list(states.values())
+        all_online_only = bool(state_values) and all(
+            state.get("state") == "OnlineOnly" for state in state_values
+        )
+        all_local = bool(state_values) and all(
+            state.get("state") in ("PinnedLocal", "AvailableLocal")
+            for state in state_values
+        )
+        all_retryable = bool(state_values) and all(
+            state.get("state") in ("Conflict", "Error") for state in state_values
+        )
+
+        if all_online_only:
             submenu.append_item(
                 self._menu_item(
                     "OpenOneDriveKeepLocal",
@@ -422,7 +434,7 @@ class OpenOneDriveNautilusExtension(GObject.GObject, Nautilus.MenuProvider, Naut
             )
             added = True
 
-        if any(state.get("state") in ("PinnedLocal", "AvailableLocal") for state in states.values()):
+        if all_local:
             submenu.append_item(
                 self._menu_item(
                     "OpenOneDriveMakeOnlineOnly",
@@ -433,7 +445,7 @@ class OpenOneDriveNautilusExtension(GObject.GObject, Nautilus.MenuProvider, Naut
             )
             added = True
 
-        if any(state.get("state") in ("Conflict", "Error") for state in states.values()):
+        if all_retryable:
             submenu.append_item(
                 self._menu_item(
                     "OpenOneDriveRetryTransfer",

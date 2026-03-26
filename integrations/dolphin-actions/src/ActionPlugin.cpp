@@ -136,21 +136,28 @@ QList<QAction *> OpenOneDriveActionPlugin::actions(const KFileItemListProperties
         }
     }
 
-    bool showKeepLocal = true;
-    bool showOnlineOnly = true;
+    bool showKeepLocal = false;
+    bool showOnlineOnly = false;
     bool showRetryTransfer = false;
     const QJsonArray states = pathStates(selectedPaths);
-    if (!states.isEmpty()) {
-        bool anyOnlineOnly = false;
-        bool anyLocal = false;
+    if (states.size() == selectedPaths.size() && !states.isEmpty()) {
+        bool allOnlineOnly = true;
+        bool allLocal = true;
+        bool allRetryable = true;
         for (const QJsonValue &value : states) {
             const QString state = value.toObject().value(QStringLiteral("state")).toString();
-            anyOnlineOnly |= state == QStringLiteral("OnlineOnly");
-            anyLocal |= state == QStringLiteral("PinnedLocal") || state == QStringLiteral("AvailableLocal");
-            showRetryTransfer |= state == QStringLiteral("Conflict") || state == QStringLiteral("Error");
+            const bool onlineOnly = state == QStringLiteral("OnlineOnly");
+            const bool local = state == QStringLiteral("PinnedLocal")
+                || state == QStringLiteral("AvailableLocal");
+            const bool retryable = state == QStringLiteral("Conflict")
+                || state == QStringLiteral("Error");
+            allOnlineOnly &= onlineOnly;
+            allLocal &= local;
+            allRetryable &= retryable;
         }
-        showKeepLocal = anyOnlineOnly;
-        showOnlineOnly = anyLocal;
+        showKeepLocal = allOnlineOnly;
+        showOnlineOnly = allLocal;
+        showRetryTransfer = allRetryable;
     }
 
     QObject *actionParent = parentWidget != nullptr ? static_cast<QObject *>(parentWidget) : this;

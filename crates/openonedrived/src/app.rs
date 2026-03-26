@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 
 pub struct OpenOneDriveApp {
     backend: Arc<RcloneBackend>,
+    shutdown_tx: broadcast::Sender<()>,
 }
 
 impl OpenOneDriveApp {
@@ -17,7 +18,11 @@ impl OpenOneDriveApp {
         purge_legacy_state(&paths)?;
         let config = AppConfig::load_or_create(&paths)?;
         let backend = RcloneBackend::load(paths, config).await?;
-        Ok(Arc::new(Self { backend }))
+        let (shutdown_tx, _) = broadcast::channel(4);
+        Ok(Arc::new(Self {
+            backend,
+            shutdown_tx,
+        }))
     }
 
     pub async fn begin_connect(self: &Arc<Self>) -> Result<()> {
@@ -92,6 +97,12 @@ impl OpenOneDriveApp {
         self.backend.resume_sync().await
     }
 
+    pub async fn shutdown(&self) -> Result<()> {
+        self.backend.shutdown().await?;
+        let _ = self.shutdown_tx.send(());
+        Ok(())
+    }
+
     pub async fn get_status(&self) -> Result<StatusSnapshot> {
         self.backend.status().await
     }
@@ -142,6 +153,10 @@ impl OpenOneDriveApp {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<BackendEvent> {
         self.backend.subscribe_events()
+    }
+
+    pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
+        self.shutdown_tx.subscribe()
     }
 }
 

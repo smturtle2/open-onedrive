@@ -37,7 +37,7 @@
 - online-only files and folders stay visible before hydration
 - `Keep on this device` and `Free up space` work from the CLI, Dolphin, and Nautilus while the app and tray stay focused on setup plus background control
 - the main window stays settings-first: folder path, daemon state, and essential sync controls only
-- tray runs independently so background control survives after the window closes
+- tray autostarts with your session, runs independently, and `Quit` shuts down the window, tray, and daemon together
 - app-owned `rclone.conf` is isolated from your regular `~/.config/rclone/rclone.conf`
 - the installer supports one-line install, upgrade checks, checksum verification, and `rclone` bootstrap when missing
 
@@ -67,7 +67,7 @@ Skip interactive upgrade prompts in automation:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, and installs `rclone` automatically when it is missing. Upgrades stop the running daemon, tray, and UI, refresh the installed files, and re-enable the user service, so let active transfers finish first and reopen the window afterward if needed.
+The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, installs `rclone` automatically when it is missing, and writes a tray autostart entry for future logins. Upgrades stop the running daemon, tray, and UI, refresh the installed files, and re-enable the user service, so let active transfers finish first and reopen the window afterward if needed.
 
 Launch and verify:
 
@@ -75,6 +75,7 @@ Launch and verify:
 open-onedrive
 systemctl --user status openonedrived.service
 openonedrivectl status
+openonedrivectl shutdown
 ```
 
 ## Everyday Use
@@ -91,6 +92,7 @@ Main surfaces:
 - `Window`: folder path, connect or repair, filesystem start or stop, pause or resume sync
 - `Dolphin` / `Nautilus`: the main workspace for residency actions and overlay states
 - `Tray`: separate helper for background control after the window closes
+- `Quit` from the tray closes any open window and stops the daemon cleanly
 - `CLI`: status checks and residency actions from scripts or terminals
 
 File manager integration:
