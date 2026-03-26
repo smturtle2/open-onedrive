@@ -53,3 +53,149 @@ jobs:
 
       - name: Build integrations
         run: cargo run -p xtask -- build-integrations
+
+      - name: Build workspace binaries
+        run: cargo build --workspace
+
+      - name: Validate installer help
+        run: |
+          bash ./install.sh --help > installer-help.txt
+          grep -q 'OPEN_ONEDRIVE_INSTALL_MODE' installer-help.txt
+          grep -q 'OPEN_ONEDRIVE_RELEASE_BASE_URL' installer-help.txt
+          grep -q '~/.local/share/open-onedrive/install-metadata.env' installer-help.txt
+
+      - name: Stage installer smoke payload
+        run: |
+          rm -rf dist/open-onedrive-linux-x86_64 dist/open-onedrive-linux-x86_64.tar.gz dist/open-onedrive-linux-x86_64.tar.gz.sha256
+          mkdir -p dist/open-onedrive-linux-x86_64
+          cp target/debug/openonedrived dist/open-onedrive-linux-x86_64/
+          cp target/debug/openonedrivectl dist/open-onedrive-linux-x86_64/
+          cp target/debug/openonedrive-rclone-worker dist/open-onedrive-linux-x86_64/
+          cp build/ui/open-onedrive-ui dist/open-onedrive-linux-x86_64/
+          cp build/ui/open-onedrive-tray dist/open-onedrive-linux-x86_64/
+          cp build/integrations/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so dist/open-onedrive-linux-x86_64/
+          cp build/integrations/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so dist/open-onedrive-linux-x86_64/
+          cp integrations/nautilus/src/openonedrive.py dist/open-onedrive-linux-x86_64/
+          cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
+          cp assets/emblems/open-onedrive-online-only.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-local.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-pinned.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-syncing.svg dist/open-onedrive-linux-x86_64/
+          cp assets/emblems/open-onedrive-attention.svg dist/open-onedrive-linux-x86_64/
+          tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
+          (cd dist && sha256sum open-onedrive-linux-x86_64.tar.gz > open-onedrive-linux-x86_64.tar.gz.sha256)
+
+      - name: Smoke test installer
+        run: |
+          smoke_home="$(mktemp -d)"
+          fake_bin="$(mktemp -d)"
+          bootstrap_bin="$(mktemp -d)"
+          cat > "${fake_bin}/sudo" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "-v" ]]; then
+            exit 0
+          fi
+          exec "$@"
+          EOF
+          cat > "${fake_bin}/pacman" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          for arg in "$@"; do
+            if [[ "$arg" == "rclone" ]]; then
+              cat > "${OPEN_ONEDRIVE_SMOKE_RCLONE}" <<'EOS'
+          #!/usr/bin/env bash
+          exit 0
+          EOS
+              chmod +x "${OPEN_ONEDRIVE_SMOKE_RCLONE}"
+              break
+            fi
+          done
+          exit 0
+          EOF
+          chmod +x "${fake_bin}/sudo" "${fake_bin}/pacman"
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          OPEN_ONEDRIVE_SMOKE_RCLONE="${bootstrap_bin}/rclone" \
+          OPEN_ONEDRIVE_RELEASE_BASE_URL="file://${PWD}/dist" \
+          OPEN_ONEDRIVE_SKIP_FUSE_CHECK=1 \
+          bash ./install.sh
+
+          test -x "${bootstrap_bin}/rclone"
+          test -x "${smoke_home}/.local/bin/open-onedrive"
+          test -x "${smoke_home}/.local/bin/openonedrived"
+          test -x "${smoke_home}/.local/bin/openonedrivectl"
+          test -x "${smoke_home}/.local/bin/openonedrive-rclone-worker"
+          test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+          test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
+          test -f "${smoke_home}/.local/share/nautilus-python/extensions/openonedrive.py"
+          test -f "${smoke_home}/.config/systemd/user/openonedrived.service"
+          test -f "${smoke_home}/.config/autostart/io.github.smturtle2.OpenOneDriveTray.desktop"
+          test -f "${smoke_home}/.local/share/applications/io.github.smturtle2.OpenOneDrive.desktop"
+          test -f "${smoke_home}/.local/share/open-onedrive/install-metadata.env"
+          grep -q '^INSTALL_MODE=release$' "${smoke_home}/.local/share/open-onedrive/install-metadata.env"
+          grep -q '^INSTALL_REF=' "${smoke_home}/.local/share/open-onedrive/install-metadata.env"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-online-only.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-local.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-pinned.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-syncing.svg"
+          test -f "${smoke_home}/.local/share/icons/hicolor/scalable/emblems/open-onedrive-attention.svg"
+          test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so"
+          test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so"
+
+          cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'daemon %s\n' "$*" >> "${HOME}/launcher-daemon.log"
+          sleep 2
+          EOF
+          chmod +x "${smoke_home}/.local/bin/openonedrived"
+          cat > "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'ui %s\n' "$*" >> "${HOME}/launcher-ui.log"
+          exit 0
+          EOF
+          chmod +x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+          cat > "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'tray %s\n' "$*" >> "${HOME}/launcher-tray.log"
+          sleep 2
+          EOF
+          chmod +x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
+
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          "${smoke_home}/.local/bin/open-onedrive" --from-smoke
+
+          for log_name in launcher-daemon.log launcher-tray.log launcher-ui.log; do
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if test -f "${smoke_home}/${log_name}"; then
+                break
+              fi
+              sleep 0.2
+            done
+          done
+          test -f "${smoke_home}/launcher-daemon.log"
+          test -f "${smoke_home}/launcher-tray.log"
+          grep -- '--from-smoke' "${smoke_home}/launcher-ui.log"
+
+          cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'
+          #!/usr/bin/env bash
+          trap 'exit 0' TERM INT
+          while true; do
+            sleep 1
+          done
+          EOF
+          chmod +x "${smoke_home}/.local/bin/openonedrived"
+          "${smoke_home}/.local/bin/openonedrived" &
+          busy_daemon_pid="$!"
+          sleep 1
+
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          OPEN_ONEDRIVE_SMOKE_RCLONE="${bootstrap_bin}/rclone" \
+          OPEN_ONEDRIVE_RELEASE_BASE_URL="file://${PWD}/dist" \
+          OPEN_ONEDRIVE_ASSUME_YES=1 \
+          OPEN_ONEDRIVE_SKIP_FUSE_CHECK=1 \
+          bash ./install.sh
+
+          wait "${busy_daemon_pid}" || true
+          test -x "${smoke_home}/.local/bin/openonedrived"

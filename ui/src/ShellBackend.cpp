@@ -534,23 +534,25 @@ void ShellBackend::setMainWindow(QWindow *window)
     updateTray();
 }
 
-void ShellBackend::activateMainWindow()
+bool ShellBackend::Ping() const
+{
+    return true;
+}
+
+bool ShellBackend::ActivateMainWindow()
 {
     if (m_mainWindow == nullptr) {
-        QDBusInterface iface = uiControlInterface();
-        if (iface.isValid()) {
-            const QDBusReply<void> reply = iface.call(QStringLiteral("ActivateMainWindow"));
-            if (reply.isValid()) {
-                return;
-            }
+        if (callUiControlMethod(QStringLiteral("ActivateMainWindow"))) {
+            return true;
         }
         launchUiProcess();
-        return;
+        return false;
     }
     m_mainWindow->show();
     m_mainWindow->raise();
     m_mainWindow->requestActivate();
     updateTray();
+    return true;
 }
 
 void ShellBackend::launchUiProcess() const
@@ -569,27 +571,54 @@ void ShellBackend::launchUiProcess() const
     QProcess::startDetached(program, {});
 }
 
-void ShellBackend::quitWindowProcess()
+bool ShellBackend::QuitWindowProcess()
 {
-    m_allowQuit = true;
-    QCoreApplication::quit();
+    requestApplicationQuit();
+    return true;
 }
 
 void ShellBackend::quitOpenOneDrive()
 {
     if (m_mainWindow == nullptr) {
-        QDBusInterface uiIface = uiControlInterface();
-        if (uiIface.isValid()) {
-            uiIface.call(QStringLiteral("QuitWindowProcess"));
-        }
+        callUiControlMethod(QStringLiteral("QuitWindowProcess"));
     }
 
     QDBusInterface iface = daemonInterface();
     if (iface.isValid()) {
         iface.call(QStringLiteral("Shutdown"));
     }
+    requestApplicationQuit();
+}
+
+void ShellBackend::requestApplicationQuit()
+{
+    if (m_allowQuit) {
+        return;
+    }
+
     m_allowQuit = true;
-    QCoreApplication::quit();
+    if (m_mainWindow != nullptr) {
+        m_mainWindow->close();
+    }
+    QMetaObject::invokeMethod(QCoreApplication::instance(),
+                              &QCoreApplication::quit,
+                              Qt::QueuedConnection);
+}
+
+bool ShellBackend::callUiControlMethod(const QString &method) const
+{
+    QDBusInterface iface = uiControlInterface();
+    if (!iface.isValid()) {
+        return false;
+    }
+
+    const QDBusReply<bool> pingReply = iface.call(QStringLiteral("Ping"));
+    if (!pingReply.isValid() || !pingReply.value()) {
+        return false;
+    }
+
+    const QDBusReply<bool> reply = iface.call(method);
+    return reply.isValid() && reply.value();
 }
 
 void ShellBackend::beginConnect()
@@ -1417,7 +1446,7 @@ void ShellBackend::initializeTray()
     m_quitAction = m_trayMenu->addAction(tr("Quit"));
 
     connect(m_showWindowAction, &QAction::triggered, this, [this]() {
-        activateMainWindow();
+        ActivateMainWindow();
     });
     connect(m_mountAction, &QAction::triggered, this, &ShellBackend::mountRemote);
     connect(m_unmountAction, &QAction::triggered, this, &ShellBackend::unmountRemote);
@@ -1427,13 +1456,13 @@ void ShellBackend::initializeTray()
     connect(m_quitAction, &QAction::triggered, this, &ShellBackend::quitOpenOneDrive);
     connect(m_tray, &KStatusNotifierItem::activateRequested, this, [this](bool, const QPoint &) {
         if (m_mainWindow == nullptr) {
-            activateMainWindow();
+            ActivateMainWindow();
             return;
         }
         if (m_mainWindow->isVisible()) {
             m_mainWindow->hide();
         } else {
-            activateMainWindow();
+            ActivateMainWindow();
         }
         updateTray();
     });
@@ -1461,6 +1490,25 @@ bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &e
 
     if (!mountPathPending()) {
         return true;
+    }
+
+    const QDBusReply<QString> previewReply = iface.call(QStringLiteral("PreviewRootPathJson"), m_mountPath);
+    if (!previewReply.isValid()) {
+        updateStatusMessage(tr("Root folder preview failed: %1").arg(previewReply.error().message()));
+        return false;
+    }
+
+    const QJsonDocument previewDocument = QJsonDocument::fromJson(previewReply.value().toUtf8());
+    if (!previewDocument.isObject()) {
+        updateStatusMessage(tr("Root folder preview returned invalid data."));
+        return false;
+    }
+
+    const QJsonObject previewObject = previewDocument.object();
+    if (!previewObject.value(QStringLiteral("can_apply")).toBool()) {
+        const QString message = previewObject.value(QStringLiteral("message")).toString();
+        updateStatusMessage(message.isEmpty() ? tr("The chosen root folder cannot be used.") : message);
+        return false;
     }
 
     const bool pendingBefore = mountPathPending();
@@ -1623,6 +1671,7 @@ QString ShellBackend::normalizeMountPath(const QString &mountPath)
 
 QString ShellBackend::mountPathIssueFor(const QString &mountPath, const QString &backingDirName)
 {
+    Q_UNUSED(backingDirName);
     const QString normalizedPath = normalizeMountPath(mountPath);
     if (normalizedPath.isEmpty()) {
         return QString();
@@ -1650,18 +1699,6 @@ QString ShellBackend::mountPathIssueFor(const QString &mountPath, const QString 
         }
         if (!targetInfo.isWritable()) {
             return tr("Cannot use %1 because it is not writable.").arg(normalizedPath);
-        }
-
-        const QStringList entries = QDir(normalizedPath)
-                                        .entryList(QDir::AllEntries
-                                                       | QDir::NoDotAndDotDot
-                                                       | QDir::Hidden
-                                                       | QDir::System);
-        for (const QString &entry : entries) {
-            if (entry != backingDirName) {
-                return tr("Root folder must be empty except for the hidden %1 folder.")
-                    .arg(backingDirName);
-            }
         }
         return QString();
     }

@@ -102,7 +102,6 @@ public:
 
     void setMountPath(const QString &mountPath);
     void setMainWindow(QWindow *window);
-    void activateMainWindow();
 
     Q_INVOKABLE void beginConnect();
     Q_INVOKABLE void disconnectRemote();
@@ -128,7 +127,9 @@ public:
     Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshLogs();
-    Q_INVOKABLE void quitWindowProcess();
+    Q_INVOKABLE bool Ping() const;
+    Q_INVOKABLE bool ActivateMainWindow();
+    Q_INVOKABLE bool QuitWindowProcess();
 
 Q_SIGNALS:
     void remoteConfiguredChanged();
@@ -164,6 +165,8 @@ private:
     void updateStatusMessage(const QString &message);
     void updateTray();
     void launchUiProcess() const;
+    void requestApplicationQuit();
+    bool callUiControlMethod(const QString &method) const;
     void quitOpenOneDrive();
     bool invokePathAction(const QString &method, const QString &path, const QString &emptyPathMessage);
     bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);

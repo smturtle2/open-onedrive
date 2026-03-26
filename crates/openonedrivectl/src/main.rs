@@ -22,6 +22,9 @@ enum Command {
     Disconnect,
     Shutdown,
     RepairRemote,
+    PreviewRootPath {
+        path: String,
+    },
     SetRootPath {
         path: String,
     },
@@ -86,6 +89,15 @@ async fn main() -> Result<()> {
         }
         Command::RepairRemote => {
             proxy.call::<_, _, ()>("RepairRemote", &()).await?;
+        }
+        Command::PreviewRootPath { path } => {
+            let preview: String = proxy.call("PreviewRootPathJson", &(path)).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(
+                    &preview
+                )?)?
+            );
         }
         Command::SetRootPath { path } => {
             proxy.call::<_, _, ()>("SetRootPath", &(path)).await?;

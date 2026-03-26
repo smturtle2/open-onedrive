@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
     QObject::connect(&service,
                      &KDBusService::activateRequested,
                      &backend,
-                     [&backend](const QStringList &, const QString &) { backend.activateMainWindow(); });
+                     [&backend](const QStringList &, const QString &) { backend.ActivateMainWindow(); });
 
     return app.exec();
 }

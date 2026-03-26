@@ -2,7 +2,36 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.4}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.5.5}"
+
+print_installer_help() {
+  cat <<EOF
+open-onedrive bootstrap installer
+
+Usage:
+  bash ./install.sh
+  env OPEN_ONEDRIVE_REF=YOUR_TAG bash ./install.sh
+  env OPEN_ONEDRIVE_INSTALL_MODE=source bash ./install.sh
+
+Behavior:
+  - release installs fetch a release tarball (the baked-in stable tag by default), verify SHA256,
+    then install into \$HOME/.local
+  - source installs download a source archive and run scripts/install.sh from a temporary checkout
+  - release installs refresh the launcher, user service, tray autostart entry, Dolphin plugins,
+    Nautilus extension, icons, and install metadata under ~/.local/share/open-onedrive
+  - rclone is installed automatically when missing
+
+Key environment variables:
+  OPEN_ONEDRIVE_REF               release tag or source archive ref to install
+  OPEN_ONEDRIVE_INSTALL_MODE      release (default) or source
+  OPEN_ONEDRIVE_BUILD_FROM_SOURCE legacy alias for OPEN_ONEDRIVE_INSTALL_MODE=source when set to 1
+  OPEN_ONEDRIVE_ASSUME_YES        set to 1 to replace an existing install without prompting
+  OPEN_ONEDRIVE_DRY_RUN           set to 1 to print commands without changing the system
+  OPEN_ONEDRIVE_REPO              override the GitHub repo, defaults to smturtle2/open-onedrive
+  OPEN_ONEDRIVE_RELEASE_BASE_URL  override the release asset base URL for mirrors or CI smoke tests
+  OPEN_ONEDRIVE_SKIP_FUSE_CHECK   set to 1 to skip /dev/fuse and fuse3 helper warnings
+EOF
+}
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -398,6 +427,15 @@ INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 }
 
+print_post_install_summary() {
+  local prefix="${HOME:?HOME is not set}/.local"
+  echo "Installed open-onedrive into ${prefix}"
+  echo "Launch from your app menu or run: ${prefix}/bin/open-onedrive"
+  echo "Daemon service: systemctl --user status openonedrived.service"
+  echo "Installer metadata: $(install_metadata_file)"
+}
+
+# Keep aligned with packaging/open-onedrive-launcher.in.
 write_launcher() {
   local path="$1"
   local bin_dir="$2"
@@ -430,6 +468,7 @@ EOF
   mv -f "$temp_path" "$path"
 }
 
+# Keep aligned with packaging/open-onedrive.desktop.in.
 write_desktop_entry() {
   local path="$1"
   local bin_dir="$2"
@@ -451,6 +490,7 @@ EOF
   mv -f "$temp_path" "$path"
 }
 
+# Keep aligned with packaging/open-onedrive-tray-autostart.desktop.in.
 write_tray_autostart_entry() {
   local path="$1"
   local libexec_dir="$2"
@@ -473,6 +513,7 @@ EOF
   mv -f "$temp_path" "$path"
 }
 
+# Keep aligned with packaging/openonedrived.service.in.
 write_systemd_service() {
   local path="$1"
   local bin_dir="$2"
@@ -593,7 +634,7 @@ install_from_release() {
   ensure_rclone_installed
   check_fuse_runtime
   install_release_tree "$extracted_root"
-  echo "Installed open-onedrive into \$HOME/.local"
+  print_post_install_summary
 }
 
 install_from_source() {
@@ -617,9 +658,17 @@ install_from_source() {
   echo "Installing from temporary checkout at ${source_dir}..."
   bash "$source_dir/scripts/install.sh" "$@"
   write_install_metadata "${OPEN_ONEDRIVE_INSTALL_REF_ACTUAL}" "${OPEN_ONEDRIVE_INSTALL_MODE_ACTUAL}"
+  echo "Installer metadata: $(install_metadata_file)"
 }
 
 main() {
+  case "${1:-}" in
+    -h|--help)
+      print_installer_help
+      exit 0
+      ;;
+  esac
+
   local repo="${OPEN_ONEDRIVE_REPO:-smturtle2/open-onedrive}"
   local ref="${OPEN_ONEDRIVE_REF:-}"
   local mode="${OPEN_ONEDRIVE_INSTALL_MODE:-release}"

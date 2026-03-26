@@ -12,13 +12,14 @@ use openonedrive_rclone_worker::WorkerRequest;
 use openonedrive_rclone_worker::build_cli_args;
 use openonedrive_state::{QueuedActionKind, QueuedActionState, RuntimeState, StateStore};
 use path_state::{DirectoryMetadata, PathStateStore};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Weak, mpsc};
@@ -31,7 +32,6 @@ use tracing::warn;
 use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 
 const MAX_RECENT_LOGS: usize = 200;
-const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(2);
 const RCLONE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -145,6 +145,48 @@ impl RemoteConfigSection {
             .get(key)
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RootPathPreview {
+    requested_path: String,
+    mode: String,
+    can_apply: bool,
+    message: String,
+    warnings: Vec<String>,
+    existing_entry_count: u32,
+    cache_candidate_count: u32,
+    discard_candidate_count: u32,
+}
+
+#[derive(Debug, Clone)]
+struct LocalVisibleEntry {
+    relative_path: String,
+    absolute_path: PathBuf,
+    is_dir: bool,
+    size_bytes: u64,
+    modified_unix: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RootTakeoverPlan {
+    existing_entries: Vec<LocalVisibleEntry>,
+    cache_candidates: BTreeSet<String>,
+    discard_candidates: BTreeSet<String>,
+}
+
+impl RootTakeoverPlan {
+    fn existing_entry_count(&self) -> u32 {
+        self.existing_entries.len() as u32
+    }
+
+    fn cache_candidate_count(&self) -> u32 {
+        self.cache_candidates.len() as u32
+    }
+
+    fn discard_candidate_count(&self) -> u32 {
+        self.discard_candidates.len() as u32
     }
 }
 
@@ -784,6 +826,144 @@ impl RcloneBackend {
             .context("unable to serialize search results")
     }
 
+    pub async fn preview_root_path_json(&self, raw_path: &str) -> Result<String> {
+        serde_json::to_string(&self.preview_root_path(raw_path).await?)
+            .context("unable to serialize root path preview")
+    }
+
+    async fn preview_root_path(&self, raw_path: &str) -> Result<RootPathPreview> {
+        let requested_raw = raw_path.trim();
+        let requested_path = PathBuf::from(requested_raw);
+        let requested_display = if requested_raw.is_empty() {
+            String::new()
+        } else {
+            requested_path.display().to_string()
+        };
+        let config = self.current_config().await;
+
+        if let Err(error) = self.validate_root_path_request(&requested_path) {
+            return Ok(RootPathPreview {
+                requested_path: requested_display,
+                mode: "invalid".to_string(),
+                can_apply: false,
+                message: error.to_string(),
+                warnings: Vec::new(),
+                existing_entry_count: 0,
+                cache_candidate_count: 0,
+                discard_candidate_count: 0,
+            });
+        }
+
+        let existing_entries =
+            collect_local_visible_entries(&requested_path, &config.backing_dir_name)?;
+        if existing_entries.is_empty() {
+            let mode = if requested_path.exists() {
+                "reuse-empty"
+            } else {
+                "create-new"
+            };
+            return Ok(RootPathPreview {
+                requested_path: requested_display,
+                mode: mode.to_string(),
+                can_apply: true,
+                message: format!(
+                    "{} is ready to use as the OneDrive root.",
+                    requested_path.display()
+                ),
+                warnings: Vec::new(),
+                existing_entry_count: 0,
+                cache_candidate_count: 0,
+                discard_candidate_count: 0,
+            });
+        }
+
+        let remote_configured = self.runtime.read().await.remote_configured;
+        if !remote_configured {
+            return Ok(RootPathPreview {
+                requested_path: requested_display,
+                mode: "needs-remote".to_string(),
+                can_apply: false,
+                message: "connect OneDrive before taking over a populated root folder".to_string(),
+                warnings: vec![format!(
+                    "{} existing item(s) were found and would otherwise be discarded.",
+                    existing_entries.len()
+                )],
+                existing_entry_count: existing_entries.len() as u32,
+                cache_candidate_count: 0,
+                discard_candidate_count: existing_entries.len() as u32,
+            });
+        }
+
+        let (plan, _) = self
+            .build_root_takeover_plan(&requested_path, &config.backing_dir_name)
+            .await?;
+        let mut warnings = Vec::new();
+        if plan.cache_candidate_count() > 0 {
+            warnings.push(format!(
+                "{} matching file(s) will be moved into the hidden local cache.",
+                plan.cache_candidate_count()
+            ));
+        }
+        if plan.discard_candidate_count() > 0 {
+            warnings.push(format!(
+                "{} existing item(s) will be discarded because remote metadata is authoritative.",
+                plan.discard_candidate_count()
+            ));
+        }
+        Ok(RootPathPreview {
+            requested_path: requested_display,
+            mode: "takeover".to_string(),
+            can_apply: true,
+            message: format!(
+                "{} will be adopted from remote metadata.",
+                requested_path.display()
+            ),
+            warnings,
+            existing_entry_count: plan.existing_entry_count(),
+            cache_candidate_count: plan.cache_candidate_count(),
+            discard_candidate_count: plan.discard_candidate_count(),
+        })
+    }
+
+    fn validate_root_path_request(&self, path: &Path) -> Result<()> {
+        if !path.is_absolute() {
+            bail!("root path must be absolute");
+        }
+        if path == Path::new("/") {
+            bail!("root path cannot be the filesystem root");
+        }
+
+        if let Some(info) = mount_point_info(path)? {
+            let current_root = self.config_read_guard().root_path.clone();
+            let allow_current_openonedrive_mount =
+                current_root == path && is_openonedrive_mount(&info);
+            if !allow_current_openonedrive_mount {
+                if is_openonedrive_mount(&info) {
+                    bail!(
+                        "root path already exists as an open-onedrive mount; stop that mount first"
+                    );
+                }
+                bail!("root path already exists as a mount point; stop that mount first");
+            }
+        }
+
+        if let Ok(metadata) = fs::metadata(path) {
+            if !metadata.is_dir() {
+                bail!("root path must be a directory");
+            }
+        } else {
+            let nearest_existing_ancestor =
+                path.ancestors()
+                    .find(|candidate| candidate.exists())
+                    .context("root path must have a writable parent directory")?;
+            if !nearest_existing_ancestor.is_dir() {
+                bail!("root path parent is not a directory");
+            }
+        }
+
+        Ok(())
+    }
+
     async fn ensure_directory_listing(&self, relative_path: Option<&str>) -> Result<()> {
         let Some(refresh_path) = self.directory_listing_refresh_path(relative_path)? else {
             return Ok(());
@@ -1106,10 +1286,16 @@ impl RcloneBackend {
     }
 
     pub async fn set_root_path(self: &Arc<Self>, raw_path: &str) -> Result<()> {
-        let requested_path = PathBuf::from(raw_path);
+        let requested_path = PathBuf::from(raw_path.trim());
         let mut updated_config = self.current_config().await;
         let previous_root_path = updated_config.root_path.clone();
-        validate_root_path(&requested_path, &updated_config.backing_dir_name)?;
+        self.validate_root_path_request(&requested_path)?;
+        let visible_entries =
+            collect_local_visible_entries(&requested_path, &updated_config.backing_dir_name)?;
+        let remote_configured = self.runtime.read().await.remote_configured;
+        if !visible_entries.is_empty() && !remote_configured {
+            bail!("connect OneDrive before taking over a populated root folder");
+        }
         self.pause_uploads_for_lifecycle(true).await?;
 
         let should_restart = self.runtime.read().await.filesystem_state == FilesystemState::Running;
@@ -1121,17 +1307,20 @@ impl RcloneBackend {
             &requested_path,
             &updated_config.backing_dir_name,
         )?;
+        self.prepare_requested_root_path(&requested_path, &updated_config.backing_dir_name)
+            .await?;
+        validate_root_path(&requested_path, &updated_config.backing_dir_name)?;
         updated_config.root_path = requested_path;
         updated_config.save(&self.paths)?;
         *self.config.write().await = updated_config;
 
-        if should_restart && self.runtime.read().await.remote_configured {
+        if should_restart && remote_configured {
             self.start_filesystem().await?;
         } else {
             self.refresh_backing_usage_bytes().await?;
             self.persist_runtime().await?;
         }
-        if !self.runtime.read().await.sync_paused && self.runtime.read().await.remote_configured {
+        if !self.runtime.read().await.sync_paused && remote_configured {
             self.resume_upload_queue();
             self.enqueue_dirty_uploads()?;
         }
@@ -1401,6 +1590,8 @@ impl RcloneBackend {
                 config.root_path.display()
             ));
         }
+        self.prepare_requested_root_path(&config.root_path, &config.backing_dir_name)
+            .await?;
         validate_root_path(&config.root_path, &config.backing_dir_name)?;
         create_dir_all_with_reason(&config.root_path)?;
         create_dir_all_with_reason(&config.backing_dir_path())?;
@@ -1751,7 +1942,7 @@ impl RcloneBackend {
                 self.complete_sync_activity(Some(error.to_string())).await?;
                 return Err(error);
             };
-            if !state.is_dir && (state.dirty || state.state == PathSyncState::Conflict) {
+            if state.dirty || state.state == PathSyncState::Conflict {
                 let error = anyhow!("cannot evict {} while it has local changes", relative_path);
                 self.complete_sync_activity(Some(error.to_string())).await?;
                 return Err(error);
@@ -2092,6 +2283,131 @@ impl RcloneBackend {
         }
     }
 
+    async fn build_root_takeover_plan(
+        &self,
+        root_path: &Path,
+        backing_dir_name: &str,
+    ) -> Result<(RootTakeoverPlan, RemoteScanResult)> {
+        let existing_entries = collect_local_visible_entries(root_path, backing_dir_name)?;
+        if existing_entries.is_empty() {
+            return Ok((RootTakeoverPlan::default(), RemoteScanResult::default()));
+        }
+
+        let remote_scan = self.scan_remote_entries(false).await?;
+        let remote_entries = remote_scan
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry))
+            .collect::<HashMap<_, _>>();
+        let mut plan = RootTakeoverPlan {
+            existing_entries,
+            cache_candidates: BTreeSet::new(),
+            discard_candidates: BTreeSet::new(),
+        };
+
+        for entry in &plan.existing_entries {
+            let reusable = remote_entries
+                .get(entry.relative_path.as_str())
+                .is_some_and(|remote_entry| {
+                    !entry.is_dir
+                        && !remote_entry.is_dir
+                        && !backing_file_path_for(root_path, backing_dir_name, &entry.relative_path)
+                            .exists()
+                        && local_visible_entry_matches_remote(entry, remote_entry).unwrap_or(false)
+                });
+            if reusable {
+                plan.cache_candidates.insert(entry.relative_path.clone());
+            } else {
+                plan.discard_candidates.insert(entry.relative_path.clone());
+            }
+        }
+
+        Ok((plan, remote_scan))
+    }
+
+    async fn prepare_requested_root_path(
+        &self,
+        root_path: &Path,
+        backing_dir_name: &str,
+    ) -> Result<Option<RootTakeoverPlan>> {
+        create_dir_all_with_reason(root_path)?;
+        let visible_entries = collect_local_visible_entries(root_path, backing_dir_name)?;
+        if visible_entries.is_empty() {
+            return Ok(None);
+        }
+        if !self.runtime.read().await.remote_configured {
+            bail!("connect OneDrive before taking over a populated root folder");
+        }
+
+        let (plan, remote_scan) = self
+            .build_root_takeover_plan(root_path, backing_dir_name)
+            .await?;
+        self.append_log(format!(
+            "adopting {} existing visible item(s) at {} (cache candidates: {}, discard candidates: {})",
+            plan.existing_entry_count(),
+            root_path.display(),
+            plan.cache_candidate_count(),
+            plan.discard_candidate_count()
+        ));
+        self.apply_root_takeover_plan(root_path, backing_dir_name, &plan)?;
+        self.apply_remote_scan_snapshot_for_root(&remote_scan, root_path, backing_dir_name)?;
+        Ok(Some(plan))
+    }
+
+    fn apply_root_takeover_plan(
+        &self,
+        root_path: &Path,
+        backing_dir_name: &str,
+        plan: &RootTakeoverPlan,
+    ) -> Result<()> {
+        let backing_root = root_path.join(backing_dir_name);
+        create_dir_all_with_reason(&backing_root)?;
+
+        for relative_path in &plan.cache_candidates {
+            let source = root_path.join(relative_path);
+            if !source.exists() {
+                continue;
+            }
+            let target = backing_root.join(relative_path);
+            if let Some(parent) = target.parent() {
+                create_dir_all_with_reason(parent)?;
+            }
+            move_local_path(&source, &target)?;
+        }
+
+        clear_visible_root_entries(root_path, backing_dir_name)?;
+        Ok(())
+    }
+
+    fn apply_remote_scan_snapshot_for_root(
+        &self,
+        remote_scan: &RemoteScanResult,
+        root_path: &Path,
+        backing_dir_name: &str,
+    ) -> Result<()> {
+        let existing_states = self.path_state_store.all()?;
+        let mut snapshot = self.build_snapshot_from_remote_entries_for_root(
+            &remote_scan.entries,
+            root_path,
+            backing_dir_name,
+        )?;
+        preserve_failed_remote_scan_descendants(
+            &mut snapshot,
+            &existing_states,
+            &remote_scan.failed_directories,
+        );
+        apply_failed_remote_scan_directories(&mut snapshot, &remote_scan.failed_directories);
+        self.path_state_store.clear_directory_metadata()?;
+        self.path_state_store.replace_all(&snapshot)?;
+        self.path_state_store.set_directory_metadata_many(
+            &directory_metadata_for_listed_directories(&remote_scan.listed_directories),
+        )?;
+        self.refresh_virtual_snapshot_with_states(&snapshot);
+        self.sync_runtime_sets_from_states(&snapshot)?;
+        self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
+        Ok(())
+    }
+
     fn refresh_virtual_snapshot(&self) -> Result<()> {
         let states = self.path_state_store.all()?;
         self.refresh_virtual_snapshot_with_states(&states);
@@ -2398,6 +2714,20 @@ impl RcloneBackend {
         &self,
         entries: &[RcloneListEntry],
     ) -> Result<Vec<PathState>> {
+        let config = self.config_read_guard().clone();
+        self.build_snapshot_from_remote_entries_for_root(
+            entries,
+            &config.root_path,
+            &config.backing_dir_name,
+        )
+    }
+
+    fn build_snapshot_from_remote_entries_for_root(
+        &self,
+        entries: &[RcloneListEntry],
+        root_path: &Path,
+        backing_dir_name: &str,
+    ) -> Result<Vec<PathState>> {
         let existing = self
             .path_state_store
             .all()?
@@ -2415,9 +2745,7 @@ impl RcloneBackend {
             let hydrated = if entry.is_dir {
                 existing_state.is_some_and(|state| state.hydrated)
             } else {
-                self.backing_file_path(&entry.path)
-                    .ok()
-                    .is_some_and(|path| path.exists())
+                backing_file_path_for(root_path, backing_dir_name, &entry.path).exists()
             };
             let pinned = existing_state.is_some_and(|state| state.pinned);
             let dirty = existing_state.is_some_and(|state| state.dirty);
@@ -2804,35 +3132,8 @@ impl RcloneBackend {
     }
 
     async fn restart_rescan_loop(self: &Arc<Self>) {
-        let generation = {
-            let mut generation = self.rescan_generation.lock().await;
-            *generation += 1;
-            *generation
-        };
-        let runtime = self.runtime.read().await;
-        if !runtime.remote_configured || runtime.sync_paused {
-            return;
-        }
-        drop(runtime);
-
-        let backend = self.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(RESCAN_INTERVAL).await;
-                let current_generation = *backend.rescan_generation.lock().await;
-                if current_generation != generation {
-                    return;
-                }
-                let runtime = backend.runtime.read().await;
-                if !runtime.remote_configured || runtime.sync_paused {
-                    return;
-                }
-                drop(runtime);
-                if let Err(error) = backend.rescan().await {
-                    backend.append_log(format!("periodic remote rescan failed: {error}"));
-                }
-            }
-        });
+        let mut generation = self.rescan_generation.lock().await;
+        *generation += 1;
     }
 
     fn spawn_rescan(self: &Arc<Self>, context: &'static str) {
@@ -4252,6 +4553,190 @@ fn sort_paths_for_eviction(
     ordered
 }
 
+fn collect_local_visible_entries(
+    root_path: &Path,
+    backing_dir_name: &str,
+) -> Result<Vec<LocalVisibleEntry>> {
+    let Ok(metadata) = fs::metadata(root_path) else {
+        return Ok(Vec::new());
+    };
+    if !metadata.is_dir() {
+        bail!("root path must be a directory");
+    }
+
+    let mut entries = Vec::new();
+    let mut queue = VecDeque::from([root_path.to_path_buf()]);
+
+    while let Some(directory) = queue.pop_front() {
+        let mut children = fs::read_dir(&directory)
+            .with_context(|| format!("unable to inspect {}", directory.display()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .with_context(|| format!("unable to inspect {}", directory.display()))?;
+        children.sort_by_key(|entry| entry.path());
+
+        for child in children {
+            if directory == root_path && child.file_name().to_string_lossy() == backing_dir_name {
+                continue;
+            }
+
+            let absolute_path = child.path();
+            let metadata = fs::symlink_metadata(&absolute_path)
+                .with_context(|| format!("unable to stat {}", absolute_path.display()))?;
+            let is_dir = metadata.is_dir();
+            if is_dir {
+                queue.push_back(absolute_path.clone());
+            }
+
+            let relative = absolute_path
+                .strip_prefix(root_path)
+                .with_context(|| format!("{} is outside the root path", absolute_path.display()))?;
+            let modified_unix = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                .map(|value| value.as_secs())
+                .unwrap_or_default();
+            entries.push(LocalVisibleEntry {
+                relative_path: relative_string(relative),
+                absolute_path,
+                is_dir,
+                size_bytes: if metadata.is_file() {
+                    metadata.len()
+                } else {
+                    0
+                },
+                modified_unix,
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(entries)
+}
+
+fn local_visible_entry_matches_remote(
+    local_entry: &LocalVisibleEntry,
+    remote_entry: &RcloneListEntry,
+) -> Result<bool> {
+    if local_entry.is_dir || remote_entry.is_dir {
+        return Ok(false);
+    }
+    if local_entry.size_bytes != remote_entry.size_bytes() {
+        return Ok(false);
+    }
+    if let Some(remote_modified_unix) = parse_rclone_mod_time_unix(&remote_entry.mod_time) {
+        if local_entry.modified_unix != 0 && local_entry.modified_unix != remote_modified_unix {
+            return Ok(false);
+        }
+    }
+
+    let remote_sha1 = remote_entry
+        .hashes
+        .iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case("sha1") && !value.is_empty())
+        .map(|(_, value)| value.as_str());
+    let Some(remote_sha1) = remote_sha1 else {
+        return Ok(false);
+    };
+
+    let local_sha1 = compute_local_sha1(&local_entry.absolute_path)?;
+    Ok(local_sha1.eq_ignore_ascii_case(remote_sha1))
+}
+
+fn compute_local_sha1(path: &Path) -> Result<String> {
+    let mut file =
+        File::open(path).with_context(|| format!("unable to open {}", path.display()))?;
+    let mut hasher = Sha1::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .with_context(|| format!("unable to read {}", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn backing_file_path_for(root_path: &Path, backing_dir_name: &str, relative_path: &str) -> PathBuf {
+    root_path.join(backing_dir_name).join(relative_path)
+}
+
+fn move_local_path(source: &Path, target: &Path) -> Result<()> {
+    if !source.exists() || target.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("unable to create {}", parent.display()))?;
+    }
+
+    match fs::rename(source, target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+            let metadata = fs::symlink_metadata(source)
+                .with_context(|| format!("unable to stat {}", source.display()))?;
+            if metadata.is_dir() {
+                copy_dir_all(source, target)?;
+                fs::remove_dir_all(source)
+                    .with_context(|| format!("unable to remove {}", source.display()))?;
+            } else {
+                fs::copy(source, target).with_context(|| {
+                    format!(
+                        "unable to copy {} to {}",
+                        source.display(),
+                        target.display()
+                    )
+                })?;
+                fs::remove_file(source)
+                    .with_context(|| format!("unable to remove {}", source.display()))?;
+            }
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "unable to move {} to {}",
+                source.display(),
+                target.display()
+            )
+        }),
+    }
+}
+
+fn clear_visible_root_entries(root_path: &Path, backing_dir_name: &str) -> Result<()> {
+    let mut entries = collect_local_visible_entries(root_path, backing_dir_name)?;
+    entries.sort_by(|left, right| {
+        let left_depth = left.relative_path.matches('/').count();
+        let right_depth = right.relative_path.matches('/').count();
+        right_depth
+            .cmp(&left_depth)
+            .then_with(|| left.is_dir.cmp(&right.is_dir))
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
+
+    for entry in entries {
+        if !entry.absolute_path.exists() {
+            continue;
+        }
+        let result = if entry.is_dir {
+            fs::remove_dir_all(&entry.absolute_path)
+        } else {
+            fs::remove_file(&entry.absolute_path)
+        };
+        if let Err(error) = result {
+            if error.kind() == io::ErrorKind::NotFound {
+                continue;
+            }
+            return Err(error)
+                .with_context(|| format!("unable to remove {}", entry.absolute_path.display()));
+        }
+    }
+
+    Ok(())
+}
+
 fn immediate_child_of(path: &str, parent: Option<&str>) -> bool {
     match parent {
         Some(parent) if !parent.is_empty() => path
@@ -5144,9 +5629,9 @@ mod tests {
         apply_failed_remote_scan_directories, apply_filesystem_start_failure, build_connect_args,
         build_deletefile_args, build_download_args, build_lsjson_args, build_lsjson_directory_args,
         build_lsjson_single_args, build_moveto_args, build_rmdir_args, build_upload_args,
-        clear_remote_scan_error, create_root_path_if_missing, derive_path_state,
-        directory_metadata_for_listed_directories, expand_retry_paths, expand_selected_paths,
-        fully_listed_directories_for_entries, immediate_child_of,
+        clear_remote_scan_error, compute_local_sha1, create_root_path_if_missing,
+        derive_path_state, directory_metadata_for_listed_directories, expand_retry_paths,
+        expand_selected_paths, fully_listed_directories_for_entries, immediate_child_of,
         is_known_inaccessible_remote_subtree, is_legacy_onedrive_remote_error,
         is_openonedrive_mount, is_rclone_command_timeout,
         known_inaccessible_remote_subtree_message, mark_remote_scan_error,
@@ -6672,6 +7157,92 @@ mod tests {
         assert!(moved.exists());
         assert!(!hydrated.exists());
         assert_eq!(backend.current_config().await.root_path, next_root);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preview_root_path_requires_remote_before_populated_takeover() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        let root = backend.current_config().await.root_path;
+        fs::write(root.join("existing.txt"), "local").expect("existing file");
+
+        let preview_json = backend
+            .preview_root_path_json(root.to_str().expect("utf-8 path"))
+            .await
+            .expect("preview");
+        let preview =
+            serde_json::from_str::<serde_json::Value>(&preview_json).expect("preview json");
+
+        assert_eq!(preview["mode"], "needs-remote");
+        assert_eq!(preview["can_apply"], false);
+        assert_eq!(preview["existing_entry_count"], 1);
+        assert_eq!(preview["discard_candidate_count"], 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_root_path_adopts_matching_visible_files_and_discards_the_rest() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("OneDrive");
+        fs::create_dir_all(root.join("Docs")).expect("docs dir");
+        let keep_path = root.join("Docs").join("keep.txt");
+        fs::write(&keep_path, "cached").expect("keep file");
+        fs::write(root.join("discard.txt"), "discard").expect("discard file");
+
+        let keep_hash = compute_local_sha1(&keep_path).expect("keep sha1");
+        let lsjson_payload = format!(
+            r#"
+[
+  {{"Path":"Docs","IsDir":true,"Size":-1,"ModTime":"","Hashes":{{}}}},
+  {{"Path":"Docs/keep.txt","IsDir":false,"Size":6,"ModTime":"","Hashes":{{"sha1":"{keep_hash}"}}}},
+  {{"Path":"remote-only.txt","IsDir":false,"Size":4,"ModTime":"","Hashes":{{}}}}
+]
+"#
+        );
+        let backend = build_backend_with_mock_lsjson(dir.path(), &lsjson_payload).await;
+
+        let preview_json = backend
+            .preview_root_path_json(root.to_str().expect("utf-8 path"))
+            .await
+            .expect("preview");
+        let preview =
+            serde_json::from_str::<serde_json::Value>(&preview_json).expect("preview json");
+        assert_eq!(preview["mode"], "takeover");
+        assert_eq!(preview["can_apply"], true);
+        assert_eq!(preview["existing_entry_count"], 3);
+        assert_eq!(preview["cache_candidate_count"], 1);
+        assert_eq!(preview["discard_candidate_count"], 2);
+
+        backend
+            .set_root_path(root.to_str().expect("utf-8 path"))
+            .await
+            .expect("set root path");
+
+        assert!(
+            root.join(".openonedrive-cache")
+                .join("Docs")
+                .join("keep.txt")
+                .exists()
+        );
+        assert!(!root.join("Docs").exists());
+        assert!(!root.join("discard.txt").exists());
+
+        let states = backend
+            .path_state_store
+            .get_many(&["Docs/keep.txt".into(), "remote-only.txt".into()])
+            .expect("path states");
+        let keep_state = states
+            .iter()
+            .find(|state| state.path == "Docs/keep.txt")
+            .expect("keep state");
+        let remote_only_state = states
+            .iter()
+            .find(|state| state.path == "remote-only.txt")
+            .expect("remote-only state");
+
+        assert!(keep_state.hydrated);
+        assert_eq!(keep_state.state, PathSyncState::AvailableLocal);
+        assert!(!remote_only_state.hydrated);
+        assert_eq!(remote_only_state.state, PathSyncState::OnlineOnly);
     }
 
     #[test]

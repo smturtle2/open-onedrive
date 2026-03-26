@@ -35,7 +35,7 @@
 ## Highlights
 
 - online-only files and folders stay visible before hydration
-- `Keep on this device` and `Free up space` work from the CLI, Dolphin, and Nautilus while the app and tray stay focused on setup plus background control
+- `Keep on this device` and `Free up space` work from the CLI, Dolphin first, and Nautilus while the app and tray stay focused on setup plus background control
 - the main window stays settings-first: folder path, daemon state, and essential sync controls only
 - tray autostarts with your session, runs independently, and `Quit` shuts down the window, tray, and daemon together
 - app-owned `rclone.conf` is isolated from your regular `~/.config/rclone/rclone.conf`
@@ -43,22 +43,22 @@
 
 ## Quick Start
 
-Install the latest stable release:
+Install the stable release pinned by the current bootstrap script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-Install a pinned tag:
+Install a specific release tag through the same bootstrap path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/YOUR_TAG/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=YOUR_TAG bash
 ```
 
 Build from source through the same bootstrap path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_INSTALL_MODE=source bash
 ```
 
 Skip interactive upgrade prompts in automation:
@@ -67,7 +67,34 @@ Skip interactive upgrade prompts in automation:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-The installer downloads the release payload, verifies SHA256, checks for an existing install before upgrading, installs `rclone` automatically when it is missing, and writes a tray autostart entry for future logins. Upgrades stop the running daemon, tray, and UI, refresh the installed files, and re-enable the user service, so let active transfers finish first and reopen the window afterward if needed.
+Preview the installer without changing the system:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_DRY_RUN=1 bash
+```
+
+The bootstrap script installs into `~/.local`, writes install metadata to `~/.local/share/open-onedrive/install-metadata.env`, refreshes the launcher, user service, tray autostart entry, Dolphin plugins, Nautilus extension, and icons, and enables `openonedrived.service` when `systemctl --user` is available. Release mode downloads `open-onedrive-linux-x86_64.tar.gz`, verifies SHA256, checks for an existing install before replacing it, and installs `rclone` automatically when it is missing. Source mode downloads a temporary source archive and runs `scripts/install.sh`. Upgrades stop the running daemon, tray, and UI before replacing files, so let active transfers finish first.
+
+Installer layout:
+
+- `~/.local/bin`: `open-onedrive`, `openonedrived`, `openonedrivectl`, `openonedrive-rclone-worker`
+- `~/.local/lib/open-onedrive`: settings window and tray helper
+- `~/.local/lib/qt6/plugins/kf6`: Dolphin action and overlay plugins
+- `~/.local/share/nautilus-python/extensions/openonedrive.py`: Nautilus actions and emblems
+- `~/.config/systemd/user/openonedrived.service` and `~/.config/autostart/io.github.smturtle2.OpenOneDriveTray.desktop`
+
+Key installer environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `OPEN_ONEDRIVE_REF` | Release tag or source archive ref to install. |
+| `OPEN_ONEDRIVE_INSTALL_MODE` | `release` (default) or `source`. |
+| `OPEN_ONEDRIVE_BUILD_FROM_SOURCE` | Compatibility alias for `OPEN_ONEDRIVE_INSTALL_MODE=source` when set to `1`. |
+| `OPEN_ONEDRIVE_ASSUME_YES` | Reinstall or replace an existing install without prompting. |
+| `OPEN_ONEDRIVE_DRY_RUN` | Print commands and prompts without mutating the system. |
+| `OPEN_ONEDRIVE_REPO` | Override the GitHub repo, useful for testing a fork. |
+| `OPEN_ONEDRIVE_RELEASE_BASE_URL` | Override release asset downloads for mirrors or local CI smoke tests. |
+| `OPEN_ONEDRIVE_SKIP_FUSE_CHECK` | Skip `/dev/fuse` and `fuse3` helper warnings in containers or CI. |
 
 Launch and verify:
 
@@ -82,23 +109,24 @@ openonedrivectl shutdown
 
 First run:
 
-1. Open the app window and choose an empty visible folder such as `~/OneDrive`.
+1. Open the app window and choose a visible folder such as `~/OneDrive`. Existing populated folders can also be adopted with remote metadata taking priority, matching files kept as cache, and the rest discarded.
 2. Finish the browser sign-in started by `rclone`.
-3. Open the visible folder in Dolphin or Nautilus and browse online-only and local items in the same tree.
+3. Open the visible folder in Dolphin first, or Nautilus when needed, and browse online-only and local items in the same tree.
 4. Use `Keep on this device` or `Free up space` from the file manager or CLI.
 
 Main surfaces:
 
 - `Window`: folder path, connect or repair, filesystem start or stop, pause or resume sync
-- `Dolphin` / `Nautilus`: the main workspace for residency actions and overlay states
+- `Dolphin`: the primary workspace for residency actions and overlay states
+- `Nautilus`: a shipped secondary workspace for actions and emblems
 - `Tray`: separate helper for background control after the window closes
 - `Quit` from the tray closes any open window and stops the daemon cleanly
 - `CLI`: status checks and residency actions from scripts or terminals
 
 File manager integration:
 
-- `Dolphin` is the primary stable target for overlays and context actions
-- `Nautilus` remains available for actions and emblems
+- `Dolphin` is the primary supported target for overlays and context actions
+- `Nautilus` remains shipped for actions and emblems, with a narrower integration surface
 - right click actions expose `Keep on this device`, `Free up space`, and retry flows
 - overlay states distinguish online-only, local, syncing, and attention states
 

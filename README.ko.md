@@ -35,7 +35,7 @@
 ## 주요 특징
 
 - hydrate 전에도 online-only 파일과 폴더를 계속 표시합니다
-- `Keep on this device`와 `Free up space`는 CLI, Dolphin, Nautilus에서 제공하고, 앱과 트레이는 설정 및 백그라운드 제어에 집중합니다
+- `Keep on this device`와 `Free up space`는 CLI, 우선 지원하는 Dolphin, 그리고 Nautilus에서 제공하고, 앱과 트레이는 설정 및 백그라운드 제어에 집중합니다
 - 메인 창은 폴더 경로, daemon 상태, 핵심 sync 제어만 남긴 settings-first 표면입니다
 - 세션 로그인 시 자동 시작되는 독립 tray helper가 있고, `Quit`는 창·tray·daemon을 함께 정상 종료합니다
 - 일반 `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`를 사용합니다
@@ -43,22 +43,22 @@
 
 ## 빠른 시작
 
-최신 안정판 설치:
+현재 bootstrap 스크립트에 고정된 안정판 설치:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | bash
 ```
 
-특정 tag 설치:
+같은 bootstrap 경로로 특정 release tag 설치:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/YOUR_TAG/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_REF=YOUR_TAG bash
 ```
 
 같은 bootstrap 경로로 source 빌드:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_INSTALL_MODE=source bash
 ```
 
 자동화 환경에서 upgrade 확인 생략:
@@ -67,7 +67,34 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
 ```
 
-installer는 release payload 다운로드, SHA256 검증, 기존 설치 확인, `rclone` 자동 설치, 이후 로그인에 사용할 tray autostart entry 생성을 처리합니다. 업그레이드 시 실행 중인 daemon, tray, UI를 중지한 뒤 파일을 교체하고 user service를 다시 활성화하므로, active transfer가 끝난 뒤 진행하고 필요하면 앱 창을 다시 열어 주세요.
+시스템을 바꾸지 않고 installer 동작만 미리 보기:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_DRY_RUN=1 bash
+```
+
+bootstrap 스크립트는 `~/.local` 아래에 설치하고, `~/.local/share/open-onedrive/install-metadata.env`에 설치 메타데이터를 기록하며, launcher, user service, tray autostart entry, Dolphin 플러그인, Nautilus extension, 아이콘을 갱신합니다. `systemctl --user`를 사용할 수 있으면 `openonedrived.service`도 활성화합니다. release 모드에서는 `open-onedrive-linux-x86_64.tar.gz`를 내려받아 SHA256을 검증하고, 기존 설치를 확인한 뒤 필요 시 `rclone`을 자동 설치합니다. source 모드에서는 임시 source archive를 내려받아 `scripts/install.sh`를 실행합니다. 업그레이드 시에는 실행 중인 daemon, tray, UI를 중지한 뒤 파일을 교체하므로 active transfer가 끝난 뒤 진행해 주세요.
+
+설치 레이아웃:
+
+- `~/.local/bin`: `open-onedrive`, `openonedrived`, `openonedrivectl`, `openonedrive-rclone-worker`
+- `~/.local/lib/open-onedrive`: 설정 창과 tray helper
+- `~/.local/lib/qt6/plugins/kf6`: Dolphin action 및 overlay 플러그인
+- `~/.local/share/nautilus-python/extensions/openonedrive.py`: Nautilus action 및 emblem
+- `~/.config/systemd/user/openonedrived.service`와 `~/.config/autostart/io.github.smturtle2.OpenOneDriveTray.desktop`
+
+주요 installer 환경 변수:
+
+| 변수 | 용도 |
+| --- | --- |
+| `OPEN_ONEDRIVE_REF` | 설치할 release tag 또는 source archive ref입니다. |
+| `OPEN_ONEDRIVE_INSTALL_MODE` | `release`(기본값) 또는 `source`입니다. |
+| `OPEN_ONEDRIVE_BUILD_FROM_SOURCE` | `1`로 설정하면 `OPEN_ONEDRIVE_INSTALL_MODE=source`와 같은 호환용 별칭입니다. |
+| `OPEN_ONEDRIVE_ASSUME_YES` | 기존 설치를 prompt 없이 다시 설치하거나 교체합니다. |
+| `OPEN_ONEDRIVE_DRY_RUN` | 실제 변경 없이 실행될 명령과 prompt를 출력합니다. |
+| `OPEN_ONEDRIVE_REPO` | 테스트용 fork 등 다른 GitHub repo를 지정합니다. |
+| `OPEN_ONEDRIVE_RELEASE_BASE_URL` | mirror 또는 로컬 CI smoke test용 release asset base URL을 덮어씁니다. |
+| `OPEN_ONEDRIVE_SKIP_FUSE_CHECK` | container나 CI에서 `/dev/fuse`, `fuse3` helper 경고를 건너뜁니다. |
 
 실행과 확인:
 
@@ -82,23 +109,24 @@ openonedrivectl shutdown
 
 첫 실행:
 
-1. 앱 창에서 `~/OneDrive` 같은 빈 보이는 폴더를 고릅니다.
+1. 앱 창에서 `~/OneDrive` 같은 보이는 폴더를 고릅니다. 기존 파일이 들어 있는 폴더도 원격 우선으로 인수할 수 있고, 일치하는 파일은 cache로 옮기고 나머지는 폐기합니다.
 2. `rclone`이 여는 브라우저 로그인 절차를 마칩니다.
-3. Dolphin 또는 Nautilus에서 보이는 폴더를 열고 online-only와 local 항목을 같은 트리에서 확인합니다.
+3. 우선 Dolphin에서, 필요하면 Nautilus에서 보이는 폴더를 열고 online-only와 local 항목을 같은 트리에서 확인합니다.
 4. 파일 탐색기 또는 CLI에서 `Keep on this device` 또는 `Free up space`를 사용합니다.
 
 주요 화면:
 
 - `Window`: 폴더 경로, 연결 또는 복구, 파일시스템 시작 또는 중지, sync 일시정지 또는 재개
-- `Dolphin` / `Nautilus`: residency 액션과 overlay 상태를 다루는 메인 작업 표면
+- `Dolphin`: residency 액션과 overlay 상태를 다루는 우선 작업 표면
+- `Nautilus`: action과 emblem을 제공하는 보조 작업 표면
 - `Tray`: 창을 닫은 뒤에도 남고, 로그인 시 자동 시작되는 background 제어 표면
 - tray의 `Quit`는 열려 있는 창을 닫고 daemon까지 정상 종료합니다
 - `CLI`: 스크립트와 터미널에서 상태 확인과 residency 제어
 
 파일 탐색기 통합:
 
-- `Dolphin`을 overlay와 컨텍스트 액션의 우선 안정화 대상으로 둡니다
-- `Nautilus`도 action과 emblem을 계속 제공합니다
+- `Dolphin`을 overlay와 컨텍스트 액션의 우선 지원 대상으로 둡니다
+- `Nautilus`도 action과 emblem을 계속 제공하지만 통합 표면은 더 좁습니다
 - 우클릭 메뉴에서 `Keep on this device`, `Free up space`, retry 동작을 노출합니다
 - overlay 상태로 online-only, local, syncing, attention을 구분합니다
 

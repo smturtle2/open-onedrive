@@ -959,7 +959,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openonedrive-config"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "directories",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrive-ipc-types"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "serde",
  "zvariant",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrive-rclone-backend"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "fuser",
@@ -990,6 +990,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "tempfile",
  "time",
  "tokio",
@@ -999,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrive-rclone-worker"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -1008,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrive-state"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "openonedrive-ipc-types",
@@ -1019,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrivectl"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -1031,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "openonedrived"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -2144,7 +2145,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "1.5.4"
+version = "1.5.5"
 dependencies = [
  "anyhow",
  "clap",

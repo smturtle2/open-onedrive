@@ -45,6 +45,10 @@ impl OpenOneDriveApp {
         self.backend.set_root_path(path).await
     }
 
+    pub async fn preview_root_path_json(&self, path: &str) -> Result<String> {
+        self.backend.preview_root_path_json(path).await
+    }
+
     pub async fn set_mount_path(self: &Arc<Self>, path: &str) -> Result<()> {
         self.set_root_path(path).await
     }

@@ -88,6 +88,13 @@ impl OpenOneDriveBus {
         self.app.set_root_path(path).await.map_err(map_error)
     }
 
+    async fn preview_root_path_json(&self, path: &str) -> zbus::fdo::Result<String> {
+        self.app
+            .preview_root_path_json(path)
+            .await
+            .map_err(map_error)
+    }
+
     async fn set_mount_path(&self, path: &str) -> zbus::fdo::Result<()> {
         self.app.set_mount_path(path).await.map_err(map_error)
     }
