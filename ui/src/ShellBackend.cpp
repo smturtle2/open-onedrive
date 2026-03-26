@@ -16,6 +16,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -83,6 +84,43 @@ QVariantMap explorerResult(const QString &state,
     result.insert(QStringLiteral("message"), message);
     result.insert(QStringLiteral("entries"), entries);
     return result;
+}
+
+QString mountSourceFor(const QString &path)
+{
+    QFile mountInfo(QStringLiteral("/proc/self/mountinfo"));
+    if (!mountInfo.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+
+    const QByteArray encodedPath = QFile::encodeName(path);
+    while (!mountInfo.atEnd()) {
+        const QList<QByteArray> fields = mountInfo.readLine().trimmed().split(' ');
+        const qsizetype separatorIndex = fields.indexOf("-");
+        if (fields.size() > 4 && separatorIndex >= 0 && fields.at(4) == encodedPath
+            && separatorIndex + 2 < fields.size()) {
+            return QString::fromLocal8Bit(fields.at(separatorIndex + 2));
+        }
+    }
+    return QString();
+}
+
+QString nearestExistingAncestorPath(const QString &path)
+{
+    QString currentPath = path;
+    while (!currentPath.isEmpty()) {
+        const QFileInfo info(currentPath);
+        if (info.exists()) {
+            return QDir::cleanPath(currentPath);
+        }
+
+        const QString parentPath = info.dir().absolutePath();
+        if (parentPath == currentPath) {
+            break;
+        }
+        currentPath = parentPath;
+    }
+    return QString();
 }
 }
 
@@ -186,6 +224,19 @@ QString ShellBackend::effectiveMountPath() const
 bool ShellBackend::mountPathPending() const
 {
     return m_mountPath != m_effectiveMountPath;
+}
+
+bool ShellBackend::mountPathValid() const
+{
+    return !m_mountPath.isEmpty() && mountPathIssue().isEmpty();
+}
+
+QString ShellBackend::mountPathIssue() const
+{
+    if (m_mountPath.isEmpty()) {
+        return QString();
+    }
+    return mountPathIssueFor(m_mountPath, m_backingDirName);
 }
 
 QString ShellBackend::mountState() const
@@ -1273,6 +1324,12 @@ bool ShellBackend::syncMountPathIfNeeded(QDBusInterface &iface, const QString &e
         return false;
     }
 
+    const QString pathIssue = mountPathIssue();
+    if (!pathIssue.isEmpty()) {
+        updateStatusMessage(pathIssue);
+        return false;
+    }
+
     if (m_mountPath == m_effectiveMountPath) {
         return true;
     }
@@ -1312,7 +1369,7 @@ void ShellBackend::updateTray()
     m_showWindowAction->setText(m_mainWindow != nullptr && m_mainWindow->isVisible()
                                     ? tr("Hide Window")
                                     : tr("Open Window"));
-    m_mountAction->setEnabled(canMount());
+    m_mountAction->setEnabled(canMount() && mountPathValid());
     m_unmountAction->setEnabled(canUnmount());
     m_rescanAction->setEnabled(m_daemonReachable && m_remoteConfigured);
     m_pauseSyncAction->setEnabled(canPauseSync());
@@ -1433,6 +1490,68 @@ QString ShellBackend::normalizeMountPath(const QString &mountPath)
         return QString();
     }
     return QDir::cleanPath(trimmedPath);
+}
+
+QString ShellBackend::mountPathIssueFor(const QString &mountPath, const QString &backingDirName)
+{
+    const QString normalizedPath = normalizeMountPath(mountPath);
+    if (normalizedPath.isEmpty()) {
+        return QString();
+    }
+
+    const QFileInfo targetInfo(normalizedPath);
+    if (!targetInfo.isAbsolute()) {
+        return tr("Use a full absolute path such as /home/you/OneDrive.");
+    }
+    if (normalizedPath == QStringLiteral("/")) {
+        return tr("The filesystem root cannot be used.");
+    }
+    const QString mountSource = mountSourceFor(normalizedPath);
+    if (!mountSource.isEmpty() && mountSource != QStringLiteral("openonedrive")) {
+        return tr("The chosen path is already mounted at %1. Stop that mount first.")
+            .arg(normalizedPath);
+    }
+    if (mountSource == QStringLiteral("openonedrive")) {
+        return QString();
+    }
+
+    if (targetInfo.exists()) {
+        if (!targetInfo.isDir()) {
+            return tr("The chosen path already exists as a file.");
+        }
+        if (!targetInfo.isWritable()) {
+            return tr("Cannot use %1 because it is not writable.").arg(normalizedPath);
+        }
+
+        const QStringList entries = QDir(normalizedPath)
+                                        .entryList(QDir::AllEntries
+                                                       | QDir::NoDotAndDotDot
+                                                       | QDir::Hidden
+                                                       | QDir::System);
+        for (const QString &entry : entries) {
+            if (entry != backingDirName) {
+                return tr("Root folder must be empty except for the hidden %1 folder.")
+                    .arg(backingDirName);
+            }
+        }
+        return QString();
+    }
+
+    const QString ancestorPath = nearestExistingAncestorPath(normalizedPath);
+    if (ancestorPath.isEmpty()) {
+        return tr("Choose a valid root folder.");
+    }
+
+    const QFileInfo ancestorInfo(ancestorPath);
+    if (!ancestorInfo.isDir()) {
+        return tr("A parent path already exists as a file.");
+    }
+    if (!ancestorInfo.isWritable()) {
+        return tr("Cannot create %1 because %2 is not writable.")
+            .arg(normalizedPath, ancestorPath);
+    }
+
+    return QString();
 }
 
 QString ShellBackend::formatBytes(qint64 bytes)

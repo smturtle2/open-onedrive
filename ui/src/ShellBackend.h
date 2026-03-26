@@ -27,6 +27,8 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
     Q_PROPERTY(QString effectiveMountPath READ effectiveMountPath NOTIFY effectiveMountPathChanged)
     Q_PROPERTY(bool mountPathPending READ mountPathPending NOTIFY mountPathPendingChanged)
+    Q_PROPERTY(bool mountPathValid READ mountPathValid NOTIFY mountPathChanged)
+    Q_PROPERTY(QString mountPathIssue READ mountPathIssue NOTIFY mountPathChanged)
     Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
     Q_PROPERTY(QString mountStateLabel READ mountStateLabel NOTIFY mountStateChanged)
     Q_PROPERTY(QString syncState READ syncState NOTIFY syncStateChanged)
@@ -68,6 +70,8 @@ public:
     QString mountPath() const;
     QString effectiveMountPath() const;
     bool mountPathPending() const;
+    bool mountPathValid() const;
+    QString mountPathIssue() const;
     QString mountState() const;
     QString mountStateLabel() const;
     QString syncState() const;
@@ -161,6 +165,7 @@ private:
     bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);
     QVariantMap parseExplorerEntries(const QString &jsonPayload, const QString &invalidMessage) const;
     static QString normalizeMountPath(const QString &mountPath);
+    static QString mountPathIssueFor(const QString &mountPath, const QString &backingDirName);
     static QString formatBytes(qint64 bytes);
     static QString formatTimestamp(qint64 secondsSinceEpoch);
 

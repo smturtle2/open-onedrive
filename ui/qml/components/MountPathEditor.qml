@@ -10,17 +10,17 @@ Item {
     property string helperText: ""
     readonly property string trimmedMountPath: shellBackend.mountPath.trim()
     readonly property bool hasDraftPath: trimmedMountPath.length > 0
-    readonly property bool hasAbsoluteDraftPath: hasDraftPath && trimmedMountPath.startsWith("/")
+    readonly property bool hasPathIssue: shellBackend.mountPathIssue.length > 0
     readonly property string stateLabel: !hasDraftPath
                                          ? qsTr("Choose a folder")
-                                         : !hasAbsoluteDraftPath
-                                           ? qsTr("Absolute path required")
+                                         : hasPathIssue
+                                           ? qsTr("Check path")
                                            : shellBackend.mountPathPending
                                              ? qsTr("Pending apply")
                                              : qsTr("Ready")
     readonly property color stateColor: !hasDraftPath
                                          ? "#8b6f00"
-                                         : !hasAbsoluteDraftPath
+                                         : hasPathIssue
                                            ? "#b53b2d"
                                            : shellBackend.mountPathPending
                                              ? "#245f92"
@@ -98,15 +98,15 @@ Item {
 
         Label {
             Layout.fillWidth: true
-            visible: root.hasDraftPath && !root.hasAbsoluteDraftPath
+            visible: root.hasPathIssue
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.negativeTextColor
-            text: qsTr("Use a full absolute path such as /home/you/OneDrive.")
+            text: shellBackend.mountPathIssue
         }
 
         Label {
             Layout.fillWidth: true
-            visible: root.hasAbsoluteDraftPath || helperText.length > 0
+            visible: !root.hasPathIssue && (root.hasDraftPath || helperText.length > 0)
             wrapMode: Text.WordWrap
             color: "#617182"
             text: shellBackend.mountPathPending

@@ -167,8 +167,11 @@ Kirigami.Page {
     }
 
     function primaryActionEnabled() {
-        if (shellBackend.appState === "welcome" || shellBackend.needsRemoteRepair) {
-            return shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+        if (shellBackend.appState === "welcome"
+            || shellBackend.needsRemoteRepair
+            || shellBackend.canRetry
+            || shellBackend.canMount) {
+            return shellBackend.daemonReachable && shellBackend.mountPathValid
         }
         if (shellBackend.appState === "daemon-unavailable") {
             return true
@@ -247,6 +250,7 @@ Kirigami.Page {
             text: qsTr("Start filesystem")
             icon.name: "folder-cloud"
             visible: shellBackend.canMount
+            enabled: shellBackend.mountPathValid
             onTriggered: shellBackend.mountRemote()
         }
 
@@ -261,6 +265,7 @@ Kirigami.Page {
             text: qsTr("Retry filesystem")
             icon.name: "view-refresh"
             visible: shellBackend.canRetry
+            enabled: shellBackend.mountPathValid
             onTriggered: shellBackend.retryMount()
         }
 

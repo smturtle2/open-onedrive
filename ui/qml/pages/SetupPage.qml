@@ -252,7 +252,7 @@ Kirigami.ScrollablePage {
                             text: page.primaryActionText()
                             icon.name: page.primaryActionIcon()
                             highlighted: true
-                            enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                            enabled: shellBackend.daemonReachable && shellBackend.mountPathValid
                             onClicked: page.runPrimaryAction()
                         }
                     }
@@ -449,7 +449,7 @@ Kirigami.ScrollablePage {
                         text: page.primaryActionText()
                         icon.name: page.primaryActionIcon()
                         highlighted: true
-                        enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                        enabled: shellBackend.daemonReachable && shellBackend.mountPathValid
                         onClicked: page.runPrimaryAction()
                     }
 
@@ -457,6 +457,7 @@ Kirigami.ScrollablePage {
                         text: qsTr("Start filesystem")
                         icon.name: "folder-cloud"
                         visible: shellBackend.canMount
+                        enabled: shellBackend.mountPathValid
                         onClicked: shellBackend.mountRemote()
                     }
 

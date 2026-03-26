@@ -160,7 +160,7 @@ pub fn validate_root_path(path: &Path, backing_dir_name: &str) -> Result<()> {
         bail!("root path cannot be the filesystem root");
     }
     if is_known_mount_point(path)? {
-        bail!("root path already exists as a mount point");
+        bail!("root path already exists as a mount point; stop that mount first");
     }
 
     if let Ok(metadata) = fs::metadata(path) {
@@ -179,13 +179,11 @@ pub fn validate_root_path(path: &Path, backing_dir_name: &str) -> Result<()> {
             }
         }
     } else {
-        let parent = path
-            .parent()
+        let nearest_existing_ancestor = path
+            .ancestors()
+            .find(|candidate| candidate.exists())
             .context("root path must have a writable parent directory")?;
-        if !parent.exists() {
-            bail!("root path parent directory does not exist");
-        }
-        if !parent.is_dir() {
+        if !nearest_existing_ancestor.is_dir() {
             bail!("root path parent is not a directory");
         }
     }
@@ -259,6 +257,14 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         std::fs::write(dir.path().join("occupied"), "busy").expect("write marker");
         assert!(validate_root_path(dir.path(), ".openonedrive-cache").is_err());
+    }
+
+    #[test]
+    fn allows_missing_nested_directory() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("nested").join("OneDrive");
+        validate_root_path(&target, ".openonedrive-cache")
+            .expect("missing nested directory should validate");
     }
 
     #[test]

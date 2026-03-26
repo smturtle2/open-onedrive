@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,7 @@ const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(2);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
+const OPENONEDRIVE_MOUNT_SOURCE: &str = "openonedrive";
 const LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR: &str = "unable to get drive_id and drive_type";
 const REMOTE_SCAN_ERROR_PREFIX: &str = "remote scan failed: ";
 const RCLONE_ONEDRIVE_DEFAULT_CLIENT_ID: &str = "b15665d9-eda6-4092-8539-0eec376afd59";
@@ -68,6 +69,12 @@ struct Runtime {
     active_action_kind: String,
     last_sync_at: u64,
     sync_paused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MountPointInfo {
+    fs_type: String,
+    source: String,
 }
 
 impl Runtime {
@@ -862,10 +869,7 @@ impl RcloneBackend {
         let should_restart = self.runtime.read().await.filesystem_state == FilesystemState::Running;
         self.stop_filesystem().await?;
 
-        if !requested_path.exists() {
-            fs::create_dir_all(&requested_path)
-                .with_context(|| format!("unable to create {}", requested_path.display()))?;
-        }
+        create_dir_all_with_reason(&requested_path)?;
         migrate_backing_root(
             &previous_root_path,
             &requested_path,
@@ -1061,13 +1065,15 @@ impl RcloneBackend {
         }
 
         let config = self.current_config().await;
-        if !config.root_path.exists() {
-            fs::create_dir_all(&config.root_path)
-                .with_context(|| format!("unable to create {}", config.root_path.display()))?;
+        if self.cleanup_stale_mountpoint(&config.root_path).await? {
+            self.append_log(format!(
+                "cleared stale filesystem mountpoint at {}",
+                config.root_path.display()
+            ));
         }
-        fs::create_dir_all(config.backing_dir_path())
-            .with_context(|| format!("unable to create {}", config.backing_dir_path().display()))?;
         validate_root_path(&config.root_path, &config.backing_dir_name)?;
+        create_dir_all_with_reason(&config.root_path)?;
+        create_dir_all_with_reason(&config.backing_dir_path())?;
 
         {
             let mut runtime = self.runtime.write().await;
@@ -1174,6 +1180,25 @@ impl RcloneBackend {
 
     pub async fn retry_mount(self: &Arc<Self>) -> Result<()> {
         self.retry_filesystem().await
+    }
+
+    async fn cleanup_stale_mountpoint(&self, root_path: &Path) -> Result<bool> {
+        let Some(info) = mount_point_info(root_path)? else {
+            return Ok(false);
+        };
+        if !is_openonedrive_mount(&info) || !mountpoint_is_stale(root_path) {
+            return Ok(false);
+        }
+
+        self.append_warning_log(
+            "filesystem",
+            format!(
+                "stale filesystem mountpoint detected at {}; attempting cleanup",
+                root_path.display()
+            ),
+        );
+        unmount_mountpoint(root_path).await?;
+        Ok(true)
     }
 
     pub async fn rescan(self: &Arc<Self>) -> Result<u32> {
@@ -3562,6 +3587,85 @@ fn relative_string(path: &Path) -> String {
         .join("/")
 }
 
+fn parse_mount_point_info(line: &str, path: &Path) -> Option<MountPointInfo> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    let separator_index = fields.iter().position(|field| *field == "-")?;
+    if fields.get(4).copied()? != path.to_string_lossy() {
+        return None;
+    }
+    Some(MountPointInfo {
+        fs_type: fields.get(separator_index + 1)?.to_string(),
+        source: fields.get(separator_index + 2)?.to_string(),
+    })
+}
+
+fn mount_point_info(path: &Path) -> Result<Option<MountPointInfo>> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .context("unable to inspect existing mount points")?;
+    Ok(mountinfo
+        .lines()
+        .find_map(|line| parse_mount_point_info(line, path)))
+}
+
+fn is_openonedrive_mount(info: &MountPointInfo) -> bool {
+    info.fs_type.starts_with("fuse") && info.source == OPENONEDRIVE_MOUNT_SOURCE
+}
+
+fn mountpoint_is_stale(path: &Path) -> bool {
+    fs::read_dir(path).is_err_and(|error| {
+        matches!(
+            error.raw_os_error(),
+            Some(libc::ENOTCONN) | Some(libc::EIO)
+        )
+    })
+}
+
+async fn unmount_mountpoint(path: &Path) -> Result<()> {
+    let attempts = [
+        ("fusermount", vec![OsStr::new("-u"), path.as_os_str()]),
+        ("fusermount", vec![OsStr::new("-uz"), path.as_os_str()]),
+        ("umount", vec![path.as_os_str()]),
+        ("umount", vec![OsStr::new("-l"), path.as_os_str()]),
+    ];
+    let mut failures = Vec::new();
+
+    for (program, args) in attempts {
+        let output = match Command::new(program).args(&args).output().await {
+            Ok(output) => output,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                failures.push(format!("{program}: {error}"));
+                continue;
+            }
+        };
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            output.status.to_string()
+        };
+        failures.push(format!("{program}: {detail}"));
+    }
+
+    bail!(
+        "unable to clear stale filesystem mountpoint {} ({})",
+        path.display(),
+        failures.join("; ")
+    )
+}
+
+fn create_dir_all_with_reason(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .map_err(|error| anyhow!("unable to create {}: {error}", path.display()))
+}
+
 fn create_root_path_if_missing(path: &Path) -> Result<bool> {
     if path.exists() {
         if !path.is_dir() {
@@ -3570,17 +3674,7 @@ fn create_root_path_if_missing(path: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    let parent = path
-        .parent()
-        .context("root path must have a writable parent directory")?;
-    if !parent.exists() {
-        bail!("root path parent directory does not exist");
-    }
-    if !parent.is_dir() {
-        bail!("root path parent is not a directory");
-    }
-
-    fs::create_dir_all(path).with_context(|| format!("unable to create {}", path.display()))?;
+    create_dir_all_with_reason(path)?;
     Ok(true)
 }
 
@@ -4357,10 +4451,11 @@ mod tests {
         clear_remote_scan_error, create_root_path_if_missing, derive_path_state,
         directory_metadata_for_listed_directories, expand_retry_paths, expand_selected_paths,
         fully_listed_directories_for_entries, immediate_child_of, is_legacy_onedrive_remote_error,
-        mark_remote_scan_error, normalize_path_state_snapshot, parse_rclone_mod_time_unix,
-        path_matches_query, prefix_lsjson_entries, read_remote_config_section, relative_path_for,
+        is_openonedrive_mount, mark_remote_scan_error, normalize_path_state_snapshot,
+        parse_mount_point_info, parse_rclone_mod_time_unix, path_matches_query,
+        prefix_lsjson_entries, read_remote_config_section, relative_path_for,
         remote_config_needs_repair, resolve_rclone_binary_with_path, revision_for_entry,
-        sort_path_states,
+        sort_path_states, MountPointInfo,
     };
     use openonedrive_config::{AppConfig, ProjectPaths};
     use openonedrive_ipc_types::{
@@ -5599,13 +5694,30 @@ mod tests {
     #[test]
     fn missing_root_path_is_created_when_requested() {
         let dir = tempdir().expect("tempdir");
-        let root = dir.path().join("OneDrive");
+        let root = dir.path().join("nested").join("OneDrive");
 
         assert!(!root.exists());
         let created = create_root_path_if_missing(&root).expect("create root path");
 
         assert!(created);
         assert!(root.is_dir());
+        assert!(root.parent().expect("parent").is_dir());
+    }
+
+    #[test]
+    fn parses_openonedrive_mountinfo_records() {
+        let line = "284 24 0:143 / /dhdd/onedrive rw,nosuid,nodev,relatime - fuse openonedrive rw,user_id=1000,group_id=1000";
+        let info = parse_mount_point_info(line, Path::new("/dhdd/onedrive"))
+            .expect("mount info");
+
+        assert_eq!(
+            info,
+            MountPointInfo {
+                fs_type: "fuse".to_string(),
+                source: "openonedrive".to_string(),
+            }
+        );
+        assert!(is_openonedrive_mount(&info));
     }
 
     #[tokio::test(flavor = "multi_thread")]
