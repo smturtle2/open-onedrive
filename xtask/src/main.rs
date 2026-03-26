@@ -87,6 +87,10 @@ fn install() -> Result<()> {
         .join("hicolor")
         .join("scalable")
         .join("apps");
+    let nautilus_extension_dir = prefix
+        .join("share")
+        .join("nautilus-python")
+        .join("extensions");
     let service_dir = home.join(".config").join("systemd").join("user");
     let plugin_root = prefix.join("lib").join("qt6").join("plugins").join("kf6");
     let action_plugin_dir = plugin_root.join("kfileitemaction");
@@ -102,6 +106,7 @@ fn install() -> Result<()> {
         &libexec_dir,
         &app_dir,
         &icon_dir,
+        &nautilus_extension_dir,
         &service_dir,
         &action_plugin_dir,
         &overlay_plugin_dir,
@@ -125,6 +130,11 @@ fn install() -> Result<()> {
         true,
     )?;
     install_file(
+        "build/ui/open-onedrive-tray",
+        &libexec_dir.join("open-onedrive-tray"),
+        true,
+    )?;
+    install_file(
         "build/integrations/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so",
         &action_plugin_dir.join("libopen_onedrive_fileitemaction.so"),
         false,
@@ -138,6 +148,11 @@ fn install() -> Result<()> {
         "assets/open-onedrive.svg",
         &icon_dir.join("io.github.smturtle2.OpenOneDrive.svg"),
         false,
+    )?;
+    install_file(
+        "integrations/nautilus/src/openonedrive.py",
+        &nautilus_extension_dir.join("openonedrive.py"),
+        true,
     )?;
 
     write_text_file(

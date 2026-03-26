@@ -32,6 +32,7 @@ pub struct OpenRequest {
 
 pub trait Provider: Send + Sync {
     fn snapshot_entries(&self) -> io::Result<Vec<VirtualEntry>>;
+    fn ensure_directory(&self, path: &str) -> io::Result<()>;
     fn open_file(&self, path: &str, request: OpenRequest) -> io::Result<File>;
     fn create_dir(&self, path: &str) -> io::Result<()>;
     fn remove_file(&self, path: &str) -> io::Result<()>;
@@ -148,6 +149,27 @@ impl OpenOneDriveFs {
 
 impl Filesystem for OpenOneDriveFs {
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        let parent_path = {
+            let state = self.snapshot.read();
+            let Some(node) = state.by_ino.get(&parent) else {
+                reply.error(ENOENT);
+                return;
+            };
+            if !node.is_dir {
+                reply.error(ENOTDIR);
+                return;
+            }
+            provider_path(&node.path)
+        };
+        if self.provider.ensure_directory(&parent_path).is_err() {
+            reply.error(EIO);
+            return;
+        }
+        if self.refresh_snapshot().is_err() {
+            reply.error(EIO);
+            return;
+        }
+
         let state = self.snapshot.read();
         let Some(name) = name.to_str() else {
             reply.error(ENOENT);
@@ -227,6 +249,27 @@ impl Filesystem for OpenOneDriveFs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        let provider_dir = {
+            let state = self.snapshot.read();
+            let Some(node) = state.by_ino.get(&ino) else {
+                reply.error(ENOENT);
+                return;
+            };
+            if !node.is_dir {
+                reply.error(ENOTDIR);
+                return;
+            }
+            provider_path(&node.path)
+        };
+        if self.provider.ensure_directory(&provider_dir).is_err() {
+            reply.error(EIO);
+            return;
+        }
+        if self.refresh_snapshot().is_err() {
+            reply.error(EIO);
+            return;
+        }
+
         let state = self.snapshot.read();
         let Some(node) = state.by_ino.get(&ino) else {
             reply.error(ENOENT);

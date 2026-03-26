@@ -86,6 +86,8 @@ pub struct StatusSnapshot {
     pub pinned_file_count: u32,
     pub pending_downloads: u32,
     pub pending_uploads: u32,
+    pub queued_action_count: u32,
+    pub active_action_kind: String,
     pub conflict_count: u32,
     pub last_sync_at: u64,
     pub last_sync_error: String,

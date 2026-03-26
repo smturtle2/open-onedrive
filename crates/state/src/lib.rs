@@ -6,6 +6,27 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum QueuedActionKind {
+    #[default]
+    RefreshDirectory,
+    Hydrate,
+    Upload,
+    CreateDir,
+    RemoveFile,
+    RemoveDir,
+    RenamePath,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct QueuedActionState {
+    pub kind: QueuedActionKind,
+    pub path: String,
+    pub secondary_path: String,
+    pub recursive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct RuntimeState {
     pub remote_configured: bool,
@@ -21,6 +42,8 @@ pub struct RuntimeState {
     pub conflict_relative_paths: Vec<String>,
     pub last_sync_at: u64,
     pub sync_paused: bool,
+    pub active_action_kind: String,
+    pub queued_actions: Vec<QueuedActionState>,
 }
 
 pub struct StateStore {
@@ -110,7 +133,7 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeState, StateStore};
+    use super::{QueuedActionKind, QueuedActionState, RuntimeState, StateStore};
     use openonedrive_ipc_types::{ConnectionState, FilesystemState, SyncState};
     use tempfile::tempdir;
 
@@ -139,6 +162,13 @@ mod tests {
             conflict_relative_paths: vec!["dir/conflict.txt".into()],
             last_sync_at: 123,
             sync_paused: true,
+            active_action_kind: "upload".into(),
+            queued_actions: vec![QueuedActionState {
+                kind: QueuedActionKind::Upload,
+                path: "dir/hello.txt".into(),
+                secondary_path: String::new(),
+                recursive: false,
+            }],
         };
 
         store.save(&snapshot).expect("save");

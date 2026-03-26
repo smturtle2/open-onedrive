@@ -11,6 +11,10 @@ if command -v pgrep >/dev/null 2>&1; then
     "@INSTALL_BIN_DIR@/openonedrived" >/dev/null 2>&1 &
     disown || true
   fi
+  if ! pgrep -u "$launcher_user" -f "@INSTALL_LIBEXEC_DIR@/open-onedrive-tray" >/dev/null 2>&1; then
+    "@INSTALL_LIBEXEC_DIR@/open-onedrive-tray" >/dev/null 2>&1 &
+    disown || true
+  fi
 fi
 
 exec "@INSTALL_LIBEXEC_DIR@/open-onedrive-ui" "$@"

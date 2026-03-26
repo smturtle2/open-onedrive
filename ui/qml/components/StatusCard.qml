@@ -11,9 +11,9 @@ Frame {
 
     background: Rectangle {
         radius: Kirigami.Units.largeSpacing
-        color: Kirigami.Theme.backgroundColor
+        color: "#ffffff"
         border.width: 1
-        border.color: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.22)
+        border.color: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.18)
     }
     padding: Kirigami.Units.largeSpacing
 
@@ -22,16 +22,16 @@ Frame {
         spacing: Kirigami.Units.smallSpacing
 
         Rectangle {
-            Layout.fillWidth: true
+            Layout.preferredWidth: 44
             Layout.preferredHeight: 4
             radius: 999
             color: accentColor
-            opacity: 0.9
         }
 
         Label {
             text: title
             color: Kirigami.Theme.neutralTextColor
+            font.bold: true
         }
 
         Kirigami.Heading {

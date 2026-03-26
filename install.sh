@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.2.1}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.3.0}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -123,11 +123,13 @@ stop_running_open_onedrive() {
   if have_cmd pkill; then
     pkill -u "$user_name" -f "${bin_dir}/openonedrived" >/dev/null 2>&1 || true
     pkill -u "$user_name" -f "${libexec_dir}/open-onedrive-ui" >/dev/null 2>&1 || true
+    pkill -u "$user_name" -f "${libexec_dir}/open-onedrive-tray" >/dev/null 2>&1 || true
     pkill -u "$user_name" -f "${bin_dir}/open-onedrive\$" >/dev/null 2>&1 || true
   fi
 
   wait_for_pattern_exit "$user_name" "${bin_dir}/openonedrived"
   wait_for_pattern_exit "$user_name" "${libexec_dir}/open-onedrive-ui"
+  wait_for_pattern_exit "$user_name" "${libexec_dir}/open-onedrive-tray"
   wait_for_pattern_exit "$user_name" "${bin_dir}/open-onedrive\$"
 }
 
@@ -360,8 +362,8 @@ check_existing_installation() {
   fi
 
   if ! can_prompt_user && ! assume_yes; then
-    echo "${prompt} Continuing without an interactive prompt." >&2
-    return 0
+    echo "${prompt} Re-run with OPEN_ONEDRIVE_ASSUME_YES=1 to replace the existing installation non-interactively." >&2
+    exit 1
   fi
 
   if confirm_with_tty "$prompt"; then
@@ -414,6 +416,10 @@ if command -v pgrep >/dev/null 2>&1; then
   launcher_user="\${USER:-\$(id -un)}"
   if ! pgrep -u "\$launcher_user" -f "${bin_dir}/openonedrived" >/dev/null 2>&1; then
     "${bin_dir}/openonedrived" >/dev/null 2>&1 &
+    disown || true
+  fi
+  if ! pgrep -u "\$launcher_user" -f "${libexec_dir}/open-onedrive-tray" >/dev/null 2>&1; then
+    "${libexec_dir}/open-onedrive-tray" >/dev/null 2>&1 &
     disown || true
   fi
 fi
@@ -477,6 +483,7 @@ install_release_tree() {
   local libexec_dir="$prefix/lib/open-onedrive"
   local app_dir="$prefix/share/applications"
   local icon_dir="$prefix/share/icons/hicolor/scalable/apps"
+  local nautilus_extension_dir="$prefix/share/nautilus-python/extensions"
   local plugin_root="$prefix/lib/qt6/plugins/kf6"
   local action_plugin_dir="$plugin_root/kfileitemaction"
   local overlay_plugin_dir="$plugin_root/overlayicon"
@@ -487,6 +494,7 @@ install_release_tree() {
     "$libexec_dir" \
     "$app_dir" \
     "$icon_dir" \
+    "$nautilus_extension_dir" \
     "$action_plugin_dir" \
     "$overlay_plugin_dir" \
     "$service_dir"
@@ -496,6 +504,8 @@ install_release_tree() {
   replace_installed_file "$extracted_root/openonedrived" "$bin_dir/openonedrived" 755
   replace_installed_file "$extracted_root/openonedrivectl" "$bin_dir/openonedrivectl" 755
   replace_installed_file "$extracted_root/open-onedrive-ui" "$libexec_dir/open-onedrive-ui" 755
+  replace_installed_file "$extracted_root/open-onedrive-tray" "$libexec_dir/open-onedrive-tray" 755
+  replace_installed_file "$extracted_root/openonedrive.py" "$nautilus_extension_dir/openonedrive.py" 755
   replace_installed_file "$extracted_root/libopen_onedrive_fileitemaction.so" "$action_plugin_dir/libopen_onedrive_fileitemaction.so"
   replace_installed_file "$extracted_root/libopen_onedrive_overlayicon.so" "$overlay_plugin_dir/libopen_onedrive_overlayicon.so"
   replace_installed_file "$extracted_root/io.github.smturtle2.OpenOneDrive.svg" "$icon_dir/io.github.smturtle2.OpenOneDrive.svg"

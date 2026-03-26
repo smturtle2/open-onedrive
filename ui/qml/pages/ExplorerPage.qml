@@ -5,7 +5,7 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.Page {
     id: page
-    title: qsTr("Explorer")
+    title: qsTr("Files")
 
     property string currentPath: ""
     property var entries: []
@@ -15,17 +15,20 @@ Kirigami.Page {
     property string loadState: "loading"
     property string loadMessage: ""
     property int residencyFilter: 0
+    property string contextPath: ""
 
     readonly property string trimmedSearchText: searchField.text.trim()
     readonly property bool searchActive: trimmedSearchText.length > 0
     readonly property bool queryReady: shellBackend.remoteConfigured && shellBackend.daemonReachable
     readonly property bool canManageResidencyActions: queryReady && loadState !== "error" && loadState !== "unavailable"
     readonly property bool canOpenMountedPaths: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
-    readonly property color canvasColor: "#f3f6fb"
+    readonly property color canvasColor: "#f4f7fa"
     readonly property color surfaceColor: "#ffffff"
-    readonly property color mutedSurfaceColor: "#eef3f9"
-    readonly property color lineColor: Qt.rgba(10 / 255, 28 / 255, 49 / 255, 0.08)
-    readonly property color textMutedColor: "#5f6f82"
+    readonly property color panelColor: "#f5f8fb"
+    readonly property color selectedRowColor: "#edf4ff"
+    readonly property color lineColor: Qt.rgba(11 / 255, 28 / 255, 45 / 255, 0.09)
+    readonly property color textMutedColor: "#627284"
+    readonly property var inspectorEntry: page.selectedCount() === 1 ? page.entryForPath(page.selectedPaths[0]) : null
 
     function normalizePath(path) {
         let normalized = String(path || "")
@@ -36,6 +39,21 @@ Kirigami.Page {
             normalized = normalized.slice(0, normalized.length - 1)
         }
         return normalized
+    }
+
+    function entryName(entry) {
+        const path = String((entry && entry.path) || "")
+        const parts = path.split("/")
+        return parts.length > 0 ? parts[parts.length - 1] : path
+    }
+
+    function entryForPath(path) {
+        for (let index = 0; index < page.entries.length; ++index) {
+            if (page.entries[index].path === path) {
+                return page.entries[index]
+            }
+        }
+        return null
     }
 
     function applyResult(result, clearSelection) {
@@ -84,7 +102,7 @@ Kirigami.Page {
     }
 
     function stateLabel(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "PinnedLocal") {
             return qsTr("Kept on device")
         }
@@ -104,27 +122,27 @@ Kirigami.Page {
     }
 
     function stateHint(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "PinnedLocal") {
             return qsTr("Always keep a local copy")
         }
         if (state === "AvailableLocal") {
-            return qsTr("Local copy already available")
+            return qsTr("Local bytes are already available")
         }
         if (state === "Syncing") {
             return qsTr("Transfer work in progress")
         }
         if (state === "Conflict") {
-            return qsTr("Needs a manual retry")
+            return qsTr("Needs a retry")
         }
         if (state === "Error") {
             return qsTr("Last operation failed")
         }
-        return qsTr("Download when first opened")
+        return qsTr("Download only when opened or pinned")
     }
 
     function stateColor(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "PinnedLocal") {
             return "#147a51"
         }
@@ -132,16 +150,16 @@ Kirigami.Page {
             return "#215f9b"
         }
         if (state === "Syncing") {
-            return "#2e75c8"
+            return "#d38a1b"
         }
         if (state === "Conflict" || state === "Error") {
             return "#b53b2d"
         }
-        return "#7a8796"
+        return "#3d77d9"
     }
 
     function stateGroup(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "OnlineOnly") {
             return 1
         }
@@ -200,6 +218,10 @@ Kirigami.Page {
             next.push(path)
         }
         page.selectedPaths = next
+    }
+
+    function selectOnly(path) {
+        page.selectedPaths = path.length > 0 ? [path] : []
     }
 
     function clearSelection() {
@@ -324,18 +346,18 @@ Kirigami.Page {
     }
 
     function quickActionText(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "Conflict" || state === "Error") {
             return qsTr("Retry")
         }
         if (state === "OnlineOnly") {
-            return qsTr("Keep")
+            return qsTr("Keep on device")
         }
-        return qsTr("Online-only")
+        return qsTr("Make online-only")
     }
 
     function quickActionIcon(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "Conflict" || state === "Error") {
             return "view-refresh"
         }
@@ -346,7 +368,7 @@ Kirigami.Page {
     }
 
     function runQuickAction(entry) {
-        const state = String(entry.state || "")
+        const state = String((entry && entry.state) || "")
         if (state === "Conflict" || state === "Error") {
             shellBackend.retryTransferPath(entry.path)
         } else if (state === "OnlineOnly") {
@@ -364,11 +386,110 @@ Kirigami.Page {
         return qsTr("%1 item(s) in %2").arg(page.filteredEntries.length).arg(page.currentPath.length > 0 ? page.currentPath : qsTr("root"))
     }
 
+    function selectionSummaryLabel() {
+        if (page.selectedCount() === 0) {
+            return qsTr("No selection")
+        }
+        if (page.selectedCount() === 1 && page.inspectorEntry) {
+            return page.entryName(page.inspectorEntry)
+        }
+        return qsTr("%1 items selected").arg(page.selectedCount())
+    }
+
+    function selectionSummaryBody() {
+        if (page.selectedCount() === 0) {
+            return qsTr("Select a file or folder to inspect residency, sync state, and quick actions.")
+        }
+        if (page.selectedCount() === 1 && page.inspectorEntry) {
+            return page.detailText(page.inspectorEntry)
+        }
+        return qsTr("Bulk actions apply to every selected path and are queued through the same daemon workflow.")
+    }
+
+    function currentContextPaths() {
+        if (page.contextPath.length === 0) {
+            return []
+        }
+        if (page.selectedPaths.indexOf(page.contextPath) >= 0 && page.selectedPaths.length > 1) {
+            return page.selectedPaths
+        }
+        return [page.contextPath]
+    }
+
+    function openContextMenu(entry, item, localX, localY) {
+        page.contextPath = entry.path
+        if (!page.isSelected(entry.path)) {
+            page.selectOnly(entry.path)
+        }
+        const point = item.mapToItem(page, localX, localY)
+        entryContextMenu.x = point.x
+        entryContextMenu.y = point.y
+        entryContextMenu.open()
+    }
+
     Timer {
         id: searchDebounce
         interval: 280
         repeat: false
         onTriggered: page.refresh(page.pendingSearchReset)
+    }
+
+    Menu {
+        id: entryContextMenu
+
+        readonly property var contextEntry: page.entryForPath(page.contextPath)
+        readonly property string contextState: contextEntry ? String(contextEntry.state || "") : ""
+        readonly property bool canRetryContext: contextState === "Conflict" || contextState === "Error"
+        readonly property bool canKeepContext: contextState === "OnlineOnly"
+        readonly property bool canMakeOnlineOnlyContext: contextEntry && !canRetryContext && contextState !== "OnlineOnly"
+
+        MenuItem {
+            text: entryContextMenu.contextEntry && entryContextMenu.contextEntry.is_dir ? qsTr("Browse folder") : qsTr("Open")
+            icon.name: entryContextMenu.contextEntry && entryContextMenu.contextEntry.is_dir ? "go-next" : "document-open"
+            enabled: entryContextMenu.contextEntry && page.canOpenEntry(entryContextMenu.contextEntry)
+            onTriggered: page.showEntry(entryContextMenu.contextEntry)
+        }
+
+        MenuSeparator { }
+
+        MenuItem {
+            text: qsTr("Keep on device")
+            icon.name: "emblem-favorite"
+            enabled: page.canManageResidencyActions && entryContextMenu.canKeepContext
+            onTriggered: {
+                const paths = page.currentContextPaths()
+                if (paths.length > 0) {
+                    shellBackend.keepLocalPaths(paths)
+                    page.refresh(false)
+                }
+            }
+        }
+
+        MenuItem {
+            text: qsTr("Free up space")
+            icon.name: "folder-download"
+            enabled: page.canManageResidencyActions && entryContextMenu.canMakeOnlineOnlyContext
+            onTriggered: {
+                const paths = page.currentContextPaths()
+                if (paths.length > 0) {
+                    shellBackend.makeOnlineOnlyPaths(paths)
+                    page.refresh(false)
+                }
+            }
+        }
+
+        MenuItem {
+            text: qsTr("Retry transfer")
+            icon.name: "view-refresh"
+            enabled: page.canManageResidencyActions && entryContextMenu.canRetryContext
+            onTriggered: {
+                const paths = page.currentContextPaths()
+                if (paths.length > 0) {
+                    shellBackend.retryTransferPaths(paths)
+                    page.refresh(false)
+                }
+            }
+        }
     }
 
     Component.onCompleted: page.refresh(true)
@@ -396,8 +517,67 @@ Kirigami.Page {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.largeSpacing
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.Heading {
+                    text: qsTr("Files")
+                    level: 1
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: page.textMutedColor
+                    text: qsTr("Online-only and local items live in the same list. Browse folders, inspect residency, then keep or release files from here.")
+                }
+            }
+
+            Button {
+                text: qsTr("Refresh")
+                icon.name: "view-refresh"
+                enabled: shellBackend.remoteConfigured
+                onClicked: page.requestRefresh(false)
+            }
+
+            Button {
+                text: qsTr("Start Filesystem")
+                icon.name: "folder-cloud"
+                visible: shellBackend.canMount
+                onClicked: shellBackend.mountRemote()
+            }
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: page.loadState === "unconfigured"
+            type: Kirigami.MessageType.Information
+            showCloseButton: false
+            text: page.loadMessage
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: page.loadState === "unavailable" || page.loadState === "error"
+            type: page.loadState === "unavailable" ? Kirigami.MessageType.Warning : Kirigami.MessageType.Error
+            showCloseButton: false
+            text: page.loadMessage
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: page.queryReady && !page.canOpenMountedPaths
+            type: Kirigami.MessageType.Information
+            showCloseButton: false
+            text: qsTr("The file list can still inspect daemon state and queue residency actions, but the visible folder is not mounted yet.")
+        }
 
         Rectangle {
             Layout.fillWidth: true
@@ -408,68 +588,8 @@ Kirigami.Page {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
+                anchors.margins: Kirigami.Units.mediumSpacing
                 spacing: Kirigami.Units.mediumSpacing
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.largeSpacing
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Kirigami.Heading {
-                            text: qsTr("Explorer")
-                            level: 1
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: page.textMutedColor
-                            text: qsTr("Browse daemon-backed path state, separate online-only items from local ones, and run residency actions without dropping into the CLI.")
-                        }
-                    }
-
-                    Button {
-                        text: qsTr("Refresh")
-                        icon.name: "view-refresh"
-                        enabled: shellBackend.remoteConfigured
-                        onClicked: page.requestRefresh(false)
-                    }
-
-                    Button {
-                        text: qsTr("Start Filesystem")
-                        icon.name: "folder-cloud"
-                        visible: shellBackend.canMount
-                        onClicked: shellBackend.mountRemote()
-                    }
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: page.loadState === "unconfigured"
-                    type: Kirigami.MessageType.Information
-                    showCloseButton: false
-                    text: page.loadMessage
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: page.loadState === "unavailable" || page.loadState === "error"
-                    type: page.loadState === "unavailable" ? Kirigami.MessageType.Warning : Kirigami.MessageType.Error
-                    showCloseButton: false
-                    text: page.loadMessage
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: page.queryReady && !page.canOpenMountedPaths
-                    type: Kirigami.MessageType.Information
-                    showCloseButton: false
-                    text: qsTr("Explorer can still inspect daemon state and queue residency changes, but the visible folder is not mounted yet. Start the filesystem to open items from the file manager.")
-                }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -521,6 +641,7 @@ Kirigami.Page {
                             required property var modelData
                             text: modelData.label
                             enabled: !page.searchActive
+                            flat: modelData.path !== page.currentPath
                             highlighted: modelData.path === page.currentPath
 
                             onClicked: {
@@ -533,7 +654,7 @@ Kirigami.Page {
                     Rectangle {
                         visible: page.searchActive
                         radius: 999
-                        color: "#dce9ff"
+                        color: "#e1ecff"
                         implicitWidth: searchBadge.implicitWidth + Kirigami.Units.largeSpacing
                         implicitHeight: searchBadge.implicitHeight + Kirigami.Units.smallSpacing * 2
 
@@ -542,7 +663,7 @@ Kirigami.Page {
                             anchors.centerIn: parent
                             color: "#244a86"
                             font.bold: true
-                            text: qsTr("Searching: %1").arg(page.trimmedSearchText)
+                            text: qsTr("Searching %1").arg(page.trimmedSearchText)
                         }
                     }
                 }
@@ -551,120 +672,24 @@ Kirigami.Page {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
 
-                    Rectangle {
-                        radius: Kirigami.Units.largeSpacing
-                        color: page.mutedSurfaceColor
-                        border.width: 1
-                        border.color: page.lineColor
-                        Layout.fillWidth: true
+                    Repeater {
+                        model: [
+                            { "index": 0, "label": qsTr("All"), "count": page.countForFilter(0) },
+                            { "index": 1, "label": qsTr("Online-only"), "count": page.countForFilter(1) },
+                            { "index": 2, "label": qsTr("Local"), "count": page.countForFilter(2) },
+                            { "index": 3, "label": qsTr("Attention"), "count": page.countForFilter(3) }
+                        ]
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: Kirigami.Units.smallSpacing
-                            spacing: Kirigami.Units.smallSpacing
-
-                            Button {
-                                text: qsTr("All · %1").arg(page.countForFilter(0))
-                                checkable: true
-                                checked: page.residencyFilter === 0
-                                onClicked: {
-                                    page.residencyFilter = 0
-                                    page.rebuildFilteredEntries()
-                                }
-                            }
-
-                            Button {
-                                text: qsTr("Online-only · %1").arg(page.countForFilter(1))
-                                checkable: true
-                                checked: page.residencyFilter === 1
-                                onClicked: {
-                                    page.residencyFilter = 1
-                                    page.rebuildFilteredEntries()
-                                }
-                            }
-
-                            Button {
-                                text: qsTr("Local · %1").arg(page.countForFilter(2))
-                                checkable: true
-                                checked: page.residencyFilter === 2
-                                onClicked: {
-                                    page.residencyFilter = 2
-                                    page.rebuildFilteredEntries()
-                                }
-                            }
-
-                            Button {
-                                text: qsTr("Attention · %1").arg(page.countForFilter(3))
-                                checkable: true
-                                checked: page.residencyFilter === 3
-                                onClicked: {
-                                    page.residencyFilter = 3
-                                    page.rebuildFilteredEntries()
-                                }
+                        delegate: Button {
+                            required property var modelData
+                            text: qsTr("%1 · %2").arg(modelData.label).arg(modelData.count)
+                            checkable: true
+                            checked: page.residencyFilter === modelData.index
+                            onClicked: {
+                                page.residencyFilter = modelData.index
+                                page.rebuildFilteredEntries()
                             }
                         }
-                    }
-
-                    Flow {
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Repeater {
-                            model: [
-                                { "label": qsTr("Online-only"), "color": "#7a8796" },
-                                { "label": qsTr("Available offline"), "color": "#215f9b" },
-                                { "label": qsTr("Kept on device"), "color": "#147a51" },
-                                { "label": qsTr("Attention"), "color": "#b53b2d" }
-                            ]
-
-                            delegate: Rectangle {
-                                required property var modelData
-                                radius: 999
-                                color: Qt.lighter(modelData.color, 1.8)
-                                implicitWidth: legendLabel.implicitWidth + Kirigami.Units.mediumSpacing * 2
-                                implicitHeight: legendLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
-
-                                Label {
-                                    id: legendLabel
-                                    anchors.centerIn: parent
-                                    color: modelData.color
-                                    text: modelData.label
-                                    font.bold: true
-                                }
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    Button {
-                        text: qsTr("Keep on device")
-                        icon.name: "emblem-favorite"
-                        highlighted: true
-                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
-                        onClicked: page.runSelectionAction(shellBackend.keepLocalPaths)
-                    }
-
-                    Button {
-                        text: qsTr("Make online-only")
-                        icon.name: "folder-download"
-                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
-                        onClicked: page.runSelectionAction(shellBackend.makeOnlineOnlyPaths)
-                    }
-
-                    Button {
-                        text: qsTr("Retry transfer")
-                        icon.name: "view-refresh"
-                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
-                        onClicked: page.runSelectionAction(shellBackend.retryTransferPaths)
-                    }
-
-                    Button {
-                        text: qsTr("Clear selection")
-                        enabled: page.selectedCount() > 0
-                        onClicked: page.clearSelection()
                     }
 
                     Item {
@@ -672,9 +697,7 @@ Kirigami.Page {
                     }
 
                     Label {
-                        text: page.selectedCount() > 0
-                              ? qsTr("%1 selected").arg(page.selectedCount())
-                              : page.listCountLabel()
+                        text: page.listCountLabel()
                         color: page.textMutedColor
                     }
                 }
@@ -683,27 +706,272 @@ Kirigami.Page {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            visible: page.selectedCount() > 0
             radius: Kirigami.Units.largeSpacing
-            color: page.surfaceColor
+            color: "#eef5ff"
             border.width: 1
-            border.color: page.lineColor
+            border.color: "#c8d9ea"
 
-            Loader {
+            RowLayout {
                 anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
-                active: true
-                sourceComponent: {
-                    if (page.loadState === "loading") {
-                        return loadingState
+                anchors.margins: Kirigami.Units.mediumSpacing
+                spacing: Kirigami.Units.smallSpacing
+
+                Label {
+                    text: qsTr("%1 selected").arg(page.selectedCount())
+                    font.bold: true
+                    color: "#15314f"
+                }
+
+                Button {
+                    text: qsTr("Keep on device")
+                    icon.name: "emblem-favorite"
+                    highlighted: true
+                    enabled: page.canManageResidencyActions
+                    onClicked: page.runSelectionAction(shellBackend.keepLocalPaths)
+                }
+
+                Button {
+                    text: qsTr("Free up space")
+                    icon.name: "folder-download"
+                    enabled: page.canManageResidencyActions
+                    onClicked: page.runSelectionAction(shellBackend.makeOnlineOnlyPaths)
+                }
+
+                Button {
+                    text: qsTr("Retry transfer")
+                    icon.name: "view-refresh"
+                    enabled: page.canManageResidencyActions
+                    onClicked: page.runSelectionAction(shellBackend.retryTransferPaths)
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Button {
+                    text: qsTr("Clear selection")
+                    onClicked: page.clearSelection()
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: Kirigami.Units.largeSpacing
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: Kirigami.Units.largeSpacing
+                color: page.surfaceColor
+                border.width: 1
+                border.color: page.lineColor
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        color: page.panelColor
+                        border.width: 0
+                        implicitHeight: headerRow.implicitHeight + Kirigami.Units.mediumSpacing * 2
+
+                        RowLayout {
+                            id: headerRow
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.mediumSpacing
+                            spacing: Kirigami.Units.mediumSpacing
+
+                            Label {
+                                Layout.preferredWidth: 320
+                                text: qsTr("Name")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 210
+                                text: qsTr("State")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Details")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 140
+                                horizontalAlignment: Text.AlignRight
+                                text: qsTr("Actions")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+                        }
                     }
-                    if (page.loadState === "unconfigured" || page.loadState === "unavailable" || page.loadState === "error") {
-                        return messageState
+
+                    Loader {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        active: true
+                        sourceComponent: {
+                            if (page.loadState === "loading") {
+                                return loadingState
+                            }
+                            if (page.loadState === "unconfigured" || page.loadState === "unavailable" || page.loadState === "error") {
+                                return messageState
+                            }
+                            if (page.loadState === "empty") {
+                                return emptyState
+                            }
+                            return listState
+                        }
                     }
-                    if (page.loadState === "empty") {
-                        return emptyState
+                }
+            }
+
+            Rectangle {
+                Layout.preferredWidth: 300
+                Layout.fillHeight: true
+                radius: Kirigami.Units.largeSpacing
+                color: page.surfaceColor
+                border.width: 1
+                border.color: page.lineColor
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: Kirigami.Units.largeSpacing
+                    spacing: Kirigami.Units.mediumSpacing
+
+                    Label {
+                        text: qsTr("Inspector")
+                        color: page.textMutedColor
+                        font.bold: true
                     }
-                    return listState
+
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 2
+                        wrapMode: Text.WordWrap
+                        text: page.selectionSummaryLabel()
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: page.textMutedColor
+                        text: page.selectionSummaryBody()
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Kirigami.Units.largeSpacing
+                        color: page.panelColor
+                        border.width: 1
+                        border.color: page.lineColor
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.mediumSpacing
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Label {
+                                text: qsTr("Current folder")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: page.currentPath.length > 0 ? page.currentPath : qsTr("Root")
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: page.textMutedColor
+                                text: qsTr("%1 visible item(s) after filtering.").arg(page.filteredEntries.length)
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        radius: Kirigami.Units.largeSpacing
+                        color: page.panelColor
+                        border.width: 1
+                        border.color: page.lineColor
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.mediumSpacing
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Label {
+                                text: qsTr("Residency legend")
+                                color: page.textMutedColor
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: [
+                                    { "label": qsTr("Online-only"), "description": qsTr("Visible in the folder but hydrated only when opened or pinned."), "color": "#3d77d9" },
+                                    { "label": qsTr("Available offline"), "description": qsTr("Local bytes are already present on this device."), "color": "#215f9b" },
+                                    { "label": qsTr("Kept on device"), "description": qsTr("Pinned to stay local even after space cleanup."), "color": "#147a51" },
+                                    { "label": qsTr("Attention"), "description": qsTr("The daemon needs retry or recovery work."), "color": "#b53b2d" }
+                                ]
+
+                                delegate: RowLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    Rectangle {
+                                        radius: 999
+                                        implicitWidth: 10
+                                        implicitHeight: 10
+                                        color: modelData.color
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 0
+
+                                        Label {
+                                            text: modelData.label
+                                            font.bold: true
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            color: page.textMutedColor
+                                            text: modelData.description
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        Layout.fillHeight: true
+                    }
+
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Open mounted folder")
+                        icon.name: "document-open-folder"
+                        enabled: page.canOpenMountedPaths
+                        onClicked: shellBackend.openMountLocation()
+                    }
                 }
             }
         }
@@ -722,7 +990,7 @@ Kirigami.Page {
             }
 
             Label {
-                text: qsTr("Refreshing Explorer…")
+                text: qsTr("Refreshing files…")
                 font.bold: true
             }
         }
@@ -733,7 +1001,7 @@ Kirigami.Page {
 
         ColumnLayout {
             anchors.centerIn: parent
-            width: Math.min(parent.width, 560)
+            width: Math.min(parent.width, 520)
             spacing: Kirigami.Units.mediumSpacing
 
             Kirigami.Icon {
@@ -750,8 +1018,8 @@ Kirigami.Page {
                 text: page.loadState === "unconfigured"
                       ? qsTr("Connect OneDrive first")
                       : page.loadState === "unavailable"
-                        ? qsTr("Explorer is waiting for the daemon")
-                        : qsTr("Explorer data could not be loaded")
+                        ? qsTr("Files is waiting for the daemon")
+                        : qsTr("The file list could not be loaded")
             }
 
             Label {
@@ -794,8 +1062,8 @@ Kirigami.Page {
                 wrapMode: Text.WordWrap
                 color: page.textMutedColor
                 text: page.searchActive
-                      ? qsTr("Try a broader search term or switch the residency filter back to All.")
-                      : qsTr("If you expected online-only files here, run a refresh or review the daemon status above instead of assuming the folder is really empty.")
+                      ? qsTr("Try a broader term or switch the residency filter back to All.")
+                      : qsTr("If you expected online-only files here, run a refresh before assuming the folder is empty.")
             }
         }
     }
@@ -805,28 +1073,53 @@ Kirigami.Page {
 
         ListView {
             clip: true
-            spacing: Kirigami.Units.smallSpacing
             model: page.filteredEntries
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { }
 
             delegate: Rectangle {
+                id: rowRoot
                 required property var modelData
                 readonly property var entry: modelData
-                readonly property string entryName: String(entry.path || "").split("/").slice(-1)[0]
+                readonly property string entryNameText: page.entryName(entry)
 
                 width: ListView.view.width
-                radius: Kirigami.Units.largeSpacing
-                color: page.isSelected(entry.path) ? "#ecf3ff" : "#ffffff"
-                border.width: 1
-                border.color: page.isSelected(entry.path) ? "#b6cae5" : page.lineColor
-                implicitHeight: rowLayout.implicitHeight + Kirigami.Units.largeSpacing
+                implicitHeight: Math.max(68, rowLayout.implicitHeight + Kirigami.Units.mediumSpacing * 2)
+                color: page.isSelected(entry.path) ? page.selectedRowColor : "#ffffff"
+                border.width: 0
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
-                    width: 6
-                    radius: Kirigami.Units.largeSpacing
+                    width: 4
                     color: page.stateColor(entry)
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: page.lineColor
+                }
+
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: function(eventPoint) {
+                        page.openContextMenu(entry, rowRoot, eventPoint.position.x, eventPoint.position.y)
+                    }
+                }
+
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onTapped: function(eventPoint) {
+                        if (eventPoint.modifiers & Qt.ControlModifier) {
+                            page.toggleSelection(entry.path)
+                        } else {
+                            page.selectOnly(entry.path)
+                        }
+                    }
                 }
 
                 RowLayout {
@@ -834,8 +1127,8 @@ Kirigami.Page {
                     anchors.fill: parent
                     anchors.leftMargin: Kirigami.Units.largeSpacing
                     anchors.rightMargin: Kirigami.Units.mediumSpacing
-                    anchors.topMargin: Kirigami.Units.mediumSpacing
-                    anchors.bottomMargin: Kirigami.Units.mediumSpacing
+                    anchors.topMargin: Kirigami.Units.smallSpacing
+                    anchors.bottomMargin: Kirigami.Units.smallSpacing
                     spacing: Kirigami.Units.mediumSpacing
 
                     CheckBox {
@@ -843,76 +1136,96 @@ Kirigami.Page {
                         onClicked: page.toggleSelection(entry.path)
                     }
 
-                    Kirigami.Icon {
-                        source: entry.is_dir ? "folder" : "text-x-generic"
-                        implicitWidth: Kirigami.Units.iconSizes.medium
-                        implicitHeight: Kirigami.Units.iconSizes.medium
+                    RowLayout {
+                        Layout.preferredWidth: 320
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Kirigami.Icon {
+                            source: entry.is_dir ? "folder" : "text-x-generic"
+                            implicitWidth: Kirigami.Units.iconSizes.medium
+                            implicitHeight: Kirigami.Units.iconSizes.medium
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Button {
+                                Layout.alignment: Qt.AlignLeft
+                                flat: true
+                                text: entryNameText
+                                font.bold: true
+                                enabled: page.canOpenEntry(entry)
+                                onClicked: page.showEntry(entry)
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                visible: page.searchActive
+                                wrapMode: Text.WordWrap
+                                color: page.textMutedColor
+                                text: entry.path
+                            }
+                        }
                     }
 
                     ColumnLayout {
-                        Layout.fillWidth: true
+                        Layout.preferredWidth: 210
+                        Layout.alignment: Qt.AlignVCenter
                         spacing: 2
 
-                        Button {
-                            Layout.alignment: Qt.AlignLeft
-                            flat: true
-                            text: entryName
-                            font.bold: true
-                            enabled: page.canOpenEntry(entry)
-                            onClicked: page.showEntry(entry)
+                        Rectangle {
+                            radius: 999
+                            color: Qt.rgba(page.stateColor(entry).r, page.stateColor(entry).g, page.stateColor(entry).b, 0.14)
+                            border.width: 1
+                            border.color: Qt.rgba(page.stateColor(entry).r, page.stateColor(entry).g, page.stateColor(entry).b, 0.24)
+                            implicitHeight: stateLabelText.implicitHeight + Kirigami.Units.smallSpacing * 2
+                            implicitWidth: stateLabelText.implicitWidth + Kirigami.Units.mediumSpacing * 2
+
+                            Label {
+                                id: stateLabelText
+                                anchors.centerIn: parent
+                                text: page.stateLabel(entry)
+                                color: page.stateColor(entry)
+                                font.bold: true
+                            }
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            text: page.stateHint(entry)
                             color: page.stateColor(entry)
-                            font.bold: true
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: page.textMutedColor
-                            text: page.detailText(entry)
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            visible: page.searchActive
-                            wrapMode: Text.WordWrap
-                            color: Kirigami.Theme.disabledTextColor
-                            text: entry.path
+                            text: page.stateHint(entry)
                         }
                     }
 
-                    Rectangle {
-                        radius: 999
-                        color: page.stateColor(entry)
-                        implicitHeight: stateLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
-                        implicitWidth: stateLabel.implicitWidth + Kirigami.Units.mediumSpacing * 2
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        color: page.textMutedColor
+                        text: page.detailText(entry)
+                    }
 
-                        Label {
-                            id: stateLabel
-                            anchors.centerIn: parent
-                            text: page.stateLabel(entry)
-                            color: "white"
-                            font.bold: true
+                    RowLayout {
+                        id: delegateRoot
+                        Layout.preferredWidth: 140
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Button {
+                            id: menuButton
+                            text: qsTr("...")
+                            onClicked: page.openContextMenu(entry, menuButton, width / 2, height)
                         }
-                    }
 
-                    Button {
-                        text: page.quickActionText(entry)
-                        icon.name: page.quickActionIcon(entry)
-                        enabled: page.canManageResidencyActions
-                        onClicked: page.runQuickAction(entry)
-                    }
-
-                    Button {
-                        text: entry.is_dir ? qsTr("Browse") : qsTr("Open")
-                        icon.name: entry.is_dir ? "go-next" : "document-open"
-                        enabled: page.canOpenEntry(entry)
-                        onClicked: page.showEntry(entry)
+                        Button {
+                            text: page.quickActionText(entry)
+                            icon.name: page.quickActionIcon(entry)
+                            enabled: page.canManageResidencyActions
+                            onClicked: page.runQuickAction(entry)
+                        }
                     }
                 }
             }

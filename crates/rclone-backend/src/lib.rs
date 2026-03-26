@@ -7,8 +7,8 @@ use openonedrive_ipc_types::{
     ConnectionState, FilesystemState, LogEntry, LogLevel, PathState, PathSyncState,
     StatusSnapshot, SyncState,
 };
-use openonedrive_state::{RuntimeState, StateStore};
-use path_state::PathStateStore;
+use openonedrive_state::{QueuedActionKind, QueuedActionState, RuntimeState, StateStore};
+use path_state::{DirectoryMetadata, PathStateStore};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -18,7 +18,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Weak, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -30,6 +30,7 @@ use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 const MAX_RECENT_LOGS: usize = 200;
 const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
 const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+const DIRECTORY_LIST_TTL: Duration = Duration::from_secs(20);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
 const LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR: &str = "unable to get drive_id and drive_type";
 const REMOTE_SCAN_ERROR_PREFIX: &str = "remote scan failed: ";
@@ -63,6 +64,8 @@ struct Runtime {
     rclone_version: String,
     pending_downloads: u32,
     pending_uploads: u32,
+    queued_action_count: u32,
+    active_action_kind: String,
     last_sync_at: u64,
     sync_paused: bool,
 }
@@ -99,6 +102,8 @@ impl Runtime {
             rclone_version: String::new(),
             pending_downloads: state.pending_downloads,
             pending_uploads: state.pending_uploads,
+            queued_action_count: state.queued_actions.len() as u32,
+            active_action_kind: state.active_action_kind,
             last_sync_at: state.last_sync_at,
             sync_paused: state.sync_paused,
         }
@@ -141,14 +146,149 @@ struct DriveMetadata {
     drive_type: String,
 }
 
+#[derive(Debug, Clone)]
+enum ActionKind {
+    RefreshDirectory {
+        path: Option<String>,
+        recursive: bool,
+    },
+    Hydrate {
+        path: String,
+    },
+    Upload {
+        path: String,
+    },
+    CreateDir {
+        path: String,
+    },
+    RemovePath {
+        path: String,
+        is_dir: bool,
+    },
+    RenamePath {
+        from: String,
+        to: String,
+    },
+}
+
+impl ActionKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::RefreshDirectory { recursive: true, .. } => "refresh-tree",
+            Self::RefreshDirectory { recursive: false, .. } => "refresh-directory",
+            Self::Hydrate { .. } => "hydrate",
+            Self::Upload { .. } => "upload",
+            Self::CreateDir { .. } => "mkdir",
+            Self::RemovePath { is_dir: true, .. } => "rmdir",
+            Self::RemovePath { is_dir: false, .. } => "delete",
+            Self::RenamePath { .. } => "rename",
+        }
+    }
+
+    fn counts_as_download(&self) -> bool {
+        matches!(self, Self::Hydrate { .. })
+    }
+
+    fn counts_as_upload(&self) -> bool {
+        matches!(self, Self::Upload { .. })
+    }
+
+    fn counts_as_scan(&self) -> bool {
+        matches!(self, Self::RefreshDirectory { .. })
+    }
+
+    fn to_state(&self) -> QueuedActionState {
+        match self {
+            Self::RefreshDirectory { path, recursive } => QueuedActionState {
+                kind: QueuedActionKind::RefreshDirectory,
+                path: path.clone().unwrap_or_default(),
+                secondary_path: String::new(),
+                recursive: *recursive,
+            },
+            Self::Hydrate { path } => QueuedActionState {
+                kind: QueuedActionKind::Hydrate,
+                path: path.clone(),
+                secondary_path: String::new(),
+                recursive: false,
+            },
+            Self::Upload { path } => QueuedActionState {
+                kind: QueuedActionKind::Upload,
+                path: path.clone(),
+                secondary_path: String::new(),
+                recursive: false,
+            },
+            Self::CreateDir { path } => QueuedActionState {
+                kind: QueuedActionKind::CreateDir,
+                path: path.clone(),
+                secondary_path: String::new(),
+                recursive: false,
+            },
+            Self::RemovePath { path, is_dir } => QueuedActionState {
+                kind: if *is_dir {
+                    QueuedActionKind::RemoveDir
+                } else {
+                    QueuedActionKind::RemoveFile
+                },
+                path: path.clone(),
+                secondary_path: String::new(),
+                recursive: false,
+            },
+            Self::RenamePath { from, to } => QueuedActionState {
+                kind: QueuedActionKind::RenamePath,
+                path: from.clone(),
+                secondary_path: to.clone(),
+                recursive: false,
+            },
+        }
+    }
+
+    fn from_state(state: QueuedActionState) -> Option<Self> {
+        match state.kind {
+            QueuedActionKind::RefreshDirectory => Some(Self::RefreshDirectory {
+                path: (!state.path.is_empty()).then_some(state.path),
+                recursive: state.recursive,
+            }),
+            QueuedActionKind::Hydrate if !state.path.is_empty() => {
+                Some(Self::Hydrate { path: state.path })
+            }
+            QueuedActionKind::Upload if !state.path.is_empty() => {
+                Some(Self::Upload { path: state.path })
+            }
+            QueuedActionKind::CreateDir if !state.path.is_empty() => {
+                Some(Self::CreateDir { path: state.path })
+            }
+            QueuedActionKind::RemoveFile if !state.path.is_empty() => Some(Self::RemovePath {
+                path: state.path,
+                is_dir: false,
+            }),
+            QueuedActionKind::RemoveDir if !state.path.is_empty() => Some(Self::RemovePath {
+                path: state.path,
+                is_dir: true,
+            }),
+            QueuedActionKind::RenamePath
+                if !state.path.is_empty() && !state.secondary_path.is_empty() =>
+            {
+                Some(Self::RenamePath {
+                    from: state.path,
+                    to: state.secondary_path,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct QueuedAction {
+    kind: ActionKind,
+    responder: Option<mpsc::Sender<Result<()>>>,
+}
+
 #[derive(Debug, Default)]
-struct UploadScheduler {
-    queue: VecDeque<String>,
-    scheduled: BTreeSet<String>,
-    retry_after_current: BTreeSet<String>,
-    worker_running: bool,
+struct ActionScheduler {
+    queue: VecDeque<QueuedAction>,
+    active_action_kind: String,
     stop_after_current: bool,
-    active_uploads: u32,
 }
 
 #[derive(Debug, Default)]
@@ -164,10 +304,11 @@ pub struct RcloneBackend {
     path_state_store: PathStateStore,
     runtime: RwLock<Runtime>,
     recent_logs: std::sync::Mutex<VecDeque<LogEntry>>,
+    rclone_process_lock: Mutex<()>,
     connect_child: Mutex<Option<Child>>,
     connect_generation: Mutex<u64>,
     rescan_generation: Mutex<u64>,
-    upload_scheduler: std::sync::Mutex<UploadScheduler>,
+    action_scheduler: Arc<(std::sync::Mutex<ActionScheduler>, Condvar)>,
     filesystem_session: std::sync::Mutex<Option<fuser::BackgroundSession>>,
     underlay_root: std::sync::Mutex<Option<File>>,
     snapshot: SnapshotHandle,
@@ -183,6 +324,16 @@ impl RcloneBackend {
         let persisted = state_store.load()?;
         let remote_configured = has_remote_config(&paths.rclone_config_file, &config.remote_name)?;
         let (event_tx, _) = broadcast::channel(64);
+        let restored_actions = persisted
+            .queued_actions
+            .clone()
+            .into_iter()
+            .filter_map(ActionKind::from_state)
+            .map(|kind| QueuedAction {
+                kind,
+                responder: None,
+            })
+            .collect::<VecDeque<_>>();
 
         let backend = Arc::new(Self {
             paths,
@@ -191,10 +342,18 @@ impl RcloneBackend {
             path_state_store,
             runtime: RwLock::new(Runtime::from_state(persisted, remote_configured)),
             recent_logs: std::sync::Mutex::new(VecDeque::with_capacity(MAX_RECENT_LOGS)),
+            rclone_process_lock: Mutex::new(()),
             connect_child: Mutex::new(None),
             connect_generation: Mutex::new(0),
             rescan_generation: Mutex::new(0),
-            upload_scheduler: std::sync::Mutex::new(UploadScheduler::default()),
+            action_scheduler: Arc::new((
+                std::sync::Mutex::new(ActionScheduler {
+                    queue: restored_actions,
+                    active_action_kind: String::new(),
+                    stop_after_current: false,
+                }),
+                Condvar::new(),
+            )),
             filesystem_session: std::sync::Mutex::new(None),
             underlay_root: std::sync::Mutex::new(None),
             snapshot: SnapshotHandle::default(),
@@ -202,6 +361,7 @@ impl RcloneBackend {
             event_tx,
         });
 
+        backend.spawn_action_worker();
         backend.refresh_rclone_version().await;
         backend.refresh_virtual_snapshot()?;
 
@@ -243,6 +403,144 @@ impl RcloneBackend {
 
     pub async fn current_config(&self) -> AppConfig {
         self.config.read().await.clone()
+    }
+
+    fn spawn_action_worker(self: &Arc<Self>) {
+        let weak_backend: Weak<Self> = Arc::downgrade(self);
+        let scheduler = self.action_scheduler.clone();
+        std::thread::spawn(move || {
+            loop {
+                let queued = {
+                    let (lock, wake) = &*scheduler;
+                    let mut state = lock.lock().expect("action scheduler poisoned");
+                    while state.queue.is_empty() {
+                        state.active_action_kind.clear();
+                        state = wake.wait(state).expect("action scheduler poisoned");
+                    }
+                    let queued = state.queue.pop_front().expect("queue entry");
+                    state.active_action_kind = queued.kind.label().to_string();
+                    queued
+                };
+
+                let Some(backend) = weak_backend.upgrade() else {
+                    return;
+                };
+                let _ = backend.sync_runtime_from_action_scheduler_blocking();
+                let result = backend.process_queued_action(&queued.kind);
+                {
+                    let mut state = backend
+                        .action_scheduler
+                        .0
+                        .lock()
+                        .expect("action scheduler poisoned");
+                    if state.active_action_kind == queued.kind.label() {
+                        state.active_action_kind.clear();
+                    }
+                }
+                let _ = backend.sync_runtime_from_action_scheduler_blocking();
+                if let Some(responder) = queued.responder {
+                    let _ = responder.send(result);
+                }
+            }
+        });
+    }
+
+    async fn run_queued_action(&self, action: ActionKind) -> Result<()> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| self.run_queued_action_sync(action))
+        } else {
+            self.run_queued_action_sync(action)
+        }
+    }
+
+    fn run_queued_action_sync(&self, action: ActionKind) -> Result<()> {
+        let (tx, rx) = mpsc::channel();
+        {
+            let mut state = self
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            state.queue.push_back(QueuedAction {
+                kind: action,
+                responder: Some(tx),
+            });
+            self.action_scheduler.1.notify_one();
+        }
+        self.sync_runtime_from_action_scheduler_blocking()?;
+        rx.recv()
+            .map_err(|_| anyhow!("queued action worker exited before completing the request"))?
+    }
+
+    fn enqueue_background_action(self: &Arc<Self>, action: ActionKind) -> Result<()> {
+        {
+            let mut state = self
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            state.queue.push_back(QueuedAction {
+                kind: action,
+                responder: None,
+            });
+            self.action_scheduler.1.notify_one();
+        }
+        self.sync_runtime_from_action_scheduler_blocking()?;
+        Ok(())
+    }
+
+    fn process_queued_action(&self, action: &ActionKind) -> Result<()> {
+        match action {
+            ActionKind::RefreshDirectory { path, recursive } => self
+                .runtime_handle
+                .block_on(self.refresh_directory_action(path.clone(), *recursive)),
+            ActionKind::Hydrate { path } => {
+                self.hydrate_relative_path_sync(path)?;
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(std::slice::from_ref(path));
+                Ok(())
+            }
+            ActionKind::Upload { path } => {
+                if let Err(error) = self.upload_relative_path_sync(path) {
+                    self.set_path_error_sync(path, error.to_string());
+                    return Ok(());
+                }
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(std::slice::from_ref(path));
+                self.append_log_entry("sync", LogLevel::Info, format!("uploaded {path}"));
+                Ok(())
+            }
+            ActionKind::CreateDir { path } => {
+                self.create_remote_dir_sync(path)?;
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(std::slice::from_ref(path));
+                Ok(())
+            }
+            ActionKind::RemovePath { path, is_dir } => {
+                self.remove_path_sync(path, *is_dir)?;
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(std::slice::from_ref(path));
+                Ok(())
+            }
+            ActionKind::RenamePath { from, to } => {
+                self.rename_path_sync(from, to)?;
+                self.rebuild_path_state_snapshot_sync()?;
+                self.emit_path_state_refresh(&[from.clone(), to.clone()]);
+                Ok(())
+            }
+        }
+    }
+
+    async fn refresh_directory_action(
+        &self,
+        path: Option<String>,
+        recursive: bool,
+    ) -> Result<()> {
+        if recursive {
+            return self.run_recursive_refresh_action().await;
+        }
+
+        self.refresh_directory_listing_direct(path.as_deref()).await
     }
 
     fn runtime_read_guard(&self) -> tokio::sync::RwLockReadGuard<'_, Runtime> {
@@ -307,6 +605,7 @@ impl RcloneBackend {
     pub async fn list_directory(&self, raw_path: &str) -> Result<Vec<PathState>> {
         let config = self.current_config().await;
         let target = normalize_directory_query_path(&config.root_path, raw_path)?;
+        self.ensure_directory_listing(target.as_deref()).await?;
         let mut entries = self
             .path_state_store
             .all()?
@@ -322,10 +621,25 @@ impl RcloneBackend {
             .context("unable to serialize directory listing")
     }
 
+    pub async fn refresh_directory(&self, raw_path: &str) -> Result<u32> {
+        let config = self.current_config().await;
+        let target = normalize_directory_query_path(&config.root_path, raw_path)?;
+        self.refresh_directory_listing(target.as_deref()).await?;
+        Ok(self
+            .path_state_store
+            .all()?
+            .into_iter()
+            .filter(|state| immediate_child_of(&state.path, target.as_deref()))
+            .count() as u32)
+    }
+
     pub async fn search_paths(&self, query: &str, limit: usize) -> Result<Vec<PathState>> {
         let normalized_query = query.trim().to_lowercase();
         if normalized_query.is_empty() || limit == 0 {
             return Ok(Vec::new());
+        }
+        if self.path_state_store.all()?.is_empty() {
+            self.ensure_directory_listing(None).await?;
         }
 
         let mut matches = self
@@ -342,6 +656,143 @@ impl RcloneBackend {
     pub async fn search_paths_json(&self, query: &str, limit: usize) -> Result<String> {
         serde_json::to_string(&self.search_paths(query, limit).await?)
             .context("unable to serialize search results")
+    }
+
+    async fn ensure_directory_listing(&self, relative_path: Option<&str>) -> Result<()> {
+        let Some(refresh_path) = self.directory_listing_refresh_path(relative_path)? else {
+            return Ok(());
+        };
+        self.refresh_directory_listing(Some(refresh_path.as_str())).await
+    }
+
+    fn directory_listing_refresh_path(&self, relative_path: Option<&str>) -> Result<Option<String>> {
+        let listing_key = relative_path.unwrap_or_default();
+        let metadata = self.path_state_store.directory_metadata(listing_key)?;
+        let needs_refresh = metadata.is_none_or(|metadata| {
+            !metadata.children_known
+                || metadata.last_listed_at.saturating_add(DIRECTORY_LIST_TTL.as_secs())
+                    < unix_timestamp()
+        });
+        if needs_refresh {
+            Ok(Some(listing_key.to_string()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn refresh_directory_listing(&self, relative_path: Option<&str>) -> Result<()> {
+        self.run_queued_action(ActionKind::RefreshDirectory {
+            path: relative_path.map(ToOwned::to_owned),
+            recursive: false,
+        })
+        .await
+    }
+
+    async fn refresh_directory_listing_direct(&self, relative_path: Option<&str>) -> Result<()> {
+        self.reconcile_remote_state_from_disk().await?;
+        if !self.runtime.read().await.remote_configured {
+            return Ok(());
+        }
+        if let Some(relative_path) = relative_path {
+            let state = self
+                .path_state_store
+                .get_many(&[relative_path.to_string()])?
+                .into_iter()
+                .next();
+            if state.as_ref().is_some_and(|state| !state.is_dir) {
+                return Ok(());
+            }
+        }
+
+        let config = self.current_config().await;
+        let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let scope = match relative_path {
+            Some(path) => format!("directory refresh {path}"),
+            None => "directory refresh root".to_string(),
+        };
+        let mut entries = self
+            .run_lsjson_command(
+                binary.as_path(),
+                build_lsjson_directory_args(&config, &self.paths, relative_path, false),
+                &scope,
+                None,
+            )
+            .await?;
+        if let Some(relative_path) = relative_path {
+            entries = prefix_lsjson_entries(relative_path, entries);
+        }
+
+        let updated_states = entries
+            .iter()
+            .map(|entry| self.path_state_from_remote_entry(entry))
+            .collect::<Result<Vec<_>>>()?;
+        self.path_state_store.upsert_many(&updated_states)?;
+        self.path_state_store.set_directory_metadata(
+            relative_path.unwrap_or_default(),
+            true,
+            unix_timestamp(),
+        )?;
+        self.rebuild_path_state_snapshot_sync()?;
+        let mut changed = updated_states
+            .into_iter()
+            .map(|state| state.path)
+            .collect::<Vec<_>>();
+        if let Some(relative_path) = relative_path {
+            changed.push(relative_path.to_string());
+        }
+        self.emit_path_state_refresh(&changed);
+        Ok(())
+    }
+
+    fn path_state_from_remote_entry(&self, entry: &RcloneListEntry) -> Result<PathState> {
+        let existing_state = self
+            .path_state_store
+            .get_many(&[entry.path.clone()])?
+            .into_iter()
+            .next();
+        let hydrated = if entry.is_dir {
+            existing_state.as_ref().is_some_and(|state| state.hydrated)
+        } else {
+            self.backing_file_path(&entry.path)
+                .ok()
+                .is_some_and(|path| path.exists())
+        };
+        let pinned = existing_state.as_ref().is_some_and(|state| state.pinned);
+        let dirty = existing_state.as_ref().is_some_and(|state| state.dirty);
+        let error = existing_state
+            .as_ref()
+            .map(|state| clear_remote_scan_error(&state.error))
+            .unwrap_or_default();
+        let conflict_reason = existing_state
+            .as_ref()
+            .map(|state| state.conflict_reason.clone())
+            .unwrap_or_default();
+        let modified_unix = if dirty {
+            existing_state
+                .as_ref()
+                .map(|state| state.last_sync_at)
+                .unwrap_or_else(unix_timestamp)
+        } else {
+            parse_rclone_mod_time_unix(&entry.mod_time)
+                .or_else(|| existing_state.as_ref().map(|state| state.last_sync_at))
+                .unwrap_or_else(unix_timestamp)
+        };
+
+        let mut state = PathState {
+            path: entry.path.clone(),
+            is_dir: entry.is_dir,
+            state: PathSyncState::OnlineOnly,
+            size_bytes: entry.size_bytes(),
+            pinned,
+            hydrated,
+            dirty,
+            error,
+            last_sync_at: modified_unix,
+            base_revision: revision_for_entry(entry),
+            conflict_reason,
+        };
+        state.state = derive_path_state(&state);
+        Ok(state)
     }
 
     pub async fn set_root_path(self: &Arc<Self>, raw_path: &str) -> Result<()> {
@@ -669,9 +1120,17 @@ impl RcloneBackend {
     }
 
     pub async fn rescan(self: &Arc<Self>) -> Result<u32> {
+        self.run_queued_action(ActionKind::RefreshDirectory {
+            path: None,
+            recursive: true,
+        })
+        .await?;
+        Ok(self.path_state_store.all()?.len() as u32)
+    }
+
+    async fn run_recursive_refresh_action(&self) -> Result<()> {
         if let Err(error) = self.ensure_remote_ready_for_use().await {
             let message = error.to_string();
-            self.record_connection_error(message.clone()).await;
             bail!(message);
         }
         {
@@ -703,6 +1162,8 @@ impl RcloneBackend {
             tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
                 .await
                 .context("path-state write task join failed")??;
+            self.path_state_store
+                .set_directory_metadata_many(&directory_metadata_for_snapshot(&snapshot))?;
             self.refresh_virtual_snapshot_with_states(&snapshot);
             self.sync_runtime_sets_from_states(&snapshot)?;
             self.complete_sync_activity(None).await?;
@@ -715,7 +1176,7 @@ impl RcloneBackend {
             self.complete_sync_activity(Some(error.to_string())).await?;
         }
 
-        result
+        result.map(|_| ())
     }
 
     pub async fn pause_sync(&self) -> Result<()> {
@@ -752,37 +1213,48 @@ impl RcloneBackend {
         let config = self.current_config().await;
         let states = self.path_state_store.all()?;
         self.begin_sync_activity(SyncState::Syncing)?;
-        let mut changed = Vec::new();
-        let result = (|| -> Result<u32> {
-            let selected_paths = expand_selected_paths(&config.root_path, raw_paths, &states)?;
-            if selected_paths.is_empty() {
-                bail!("select at least one file or directory inside the OneDrive folder");
-            }
-            for relative_path in &selected_paths {
-                self.hydrate_relative_path_sync(relative_path)?;
-                changed.push(relative_path.clone());
-            }
-            self.set_pinned_state(&changed, true)?;
-            self.rebuild_path_state_snapshot_sync()?;
-            Ok(changed.len() as u32)
-        })();
-
-        match result {
-            Ok(count) => {
-                self.complete_sync_activity(None).await?;
-                self.append_log(format!("kept {count} item(s) available on this device"));
-                self.emit_path_state_refresh(&changed);
-                Ok(count)
+        let selected_paths = match expand_selected_paths(&config.root_path, raw_paths, &states) {
+            Ok(selected_paths) if !selected_paths.is_empty() => selected_paths,
+            Ok(_) => {
+                let message = "select at least one file or directory inside the OneDrive folder"
+                    .to_string();
+                self.complete_sync_activity(Some(message.clone())).await?;
+                bail!(message);
             }
             Err(error) => {
+                let message = error.to_string();
+                self.complete_sync_activity(Some(message.clone())).await?;
+                return Err(error);
+            }
+        };
+
+        let mut changed = Vec::new();
+        for relative_path in &selected_paths {
+            if let Err(error) = self
+                .run_queued_action(ActionKind::Hydrate {
+                    path: relative_path.clone(),
+                })
+                .await
+            {
                 if !changed.is_empty() {
                     let _ = self.rebuild_path_state_snapshot_sync();
                     self.emit_path_state_refresh(&changed);
                 }
                 self.complete_sync_activity(Some(error.to_string())).await?;
-                Err(error)
+                return Err(error);
             }
+            changed.push(relative_path.clone());
         }
+
+        self.set_pinned_state(&changed, true)?;
+        self.rebuild_path_state_snapshot_sync()?;
+        self.complete_sync_activity(None).await?;
+        self.append_log(format!(
+            "kept {} item(s) available on this device",
+            changed.len()
+        ));
+        self.emit_path_state_refresh(&changed);
+        Ok(changed.len() as u32)
     }
 
     pub async fn make_online_only(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
@@ -873,6 +1345,8 @@ impl RcloneBackend {
             pinned_file_count: runtime.pinned_relative_paths.len() as u32,
             pending_downloads: runtime.pending_downloads,
             pending_uploads: runtime.pending_uploads,
+            queued_action_count: runtime.queued_action_count,
+            active_action_kind: runtime.active_action_kind.clone(),
             conflict_count: runtime.conflict_relative_paths.len() as u32,
             last_sync_at: runtime.last_sync_at,
             last_sync_error: runtime.last_sync_error,
@@ -1078,9 +1552,7 @@ impl RcloneBackend {
                     conflict_reason: String::new(),
                 });
             state.pinned = pinned;
-            if !state.is_dir {
-                state.state = derive_path_state(&state);
-            }
+            state.state = derive_path_state(&state);
             state.last_sync_at = unix_timestamp();
             states.push(state);
         }
@@ -1247,6 +1719,7 @@ impl RcloneBackend {
         scope: &str,
         timeout: Option<Duration>,
     ) -> Result<Vec<RcloneListEntry>> {
+        let _guard = self.rclone_process_lock.lock().await;
         let output_future = Command::new(binary)
             .args(args)
             .stdin(Stdio::null())
@@ -1305,6 +1778,13 @@ impl RcloneBackend {
         tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
             .await
             .context("path-state preview write task join failed")??;
+        self.path_state_store.set_directory_metadata_many(&[
+            DirectoryMetadata {
+                path: String::new(),
+                children_known: true,
+                last_listed_at: unix_timestamp(),
+            },
+        ])?;
         self.refresh_virtual_snapshot_with_states(&snapshot);
         self.sync_runtime_sets_from_states(&snapshot)?;
         self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
@@ -1323,6 +1803,8 @@ impl RcloneBackend {
         tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
             .await
             .context("path-state progress write task join failed")??;
+        self.path_state_store
+            .set_directory_metadata_many(&directory_metadata_for_snapshot(&snapshot))?;
         self.refresh_virtual_snapshot_with_states(&snapshot);
         self.sync_runtime_sets_from_states(&snapshot)?;
         self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
@@ -1332,6 +1814,7 @@ impl RcloneBackend {
     fn fetch_remote_file_entry_sync(&self, relative_path: &str) -> Result<Option<RcloneListEntry>> {
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let _guard = self.rclone_process_lock.blocking_lock();
         let output = std::process::Command::new(binary)
             .args(build_lsjson_single_args(&config, &self.paths, relative_path))
             .output()
@@ -1631,7 +2114,94 @@ impl RcloneBackend {
         self.append_log_entry(source, LogLevel::Error, line);
     }
 
+    fn action_scheduler_snapshot(&self) -> (Vec<QueuedActionState>, String, u32, u32, u32, bool) {
+        let (queued_actions, active_action_kind, pending_downloads, pending_uploads, pending_scans, blocked) = {
+            let scheduler = self
+                .action_scheduler
+                .0
+                .lock()
+                .expect("action scheduler poisoned");
+            let pending_downloads = scheduler
+                .queue
+                .iter()
+                .filter(|action| action.kind.counts_as_download())
+                .count() as u32;
+            let pending_uploads = scheduler
+                .queue
+                .iter()
+                .filter(|action| action.kind.counts_as_upload())
+                .count() as u32;
+            let pending_scans = scheduler
+                .queue
+                .iter()
+                .filter(|action| action.kind.counts_as_scan())
+                .count() as u32;
+            (
+                scheduler
+                    .queue
+                    .iter()
+                    .map(|action| action.kind.to_state())
+                    .collect::<Vec<_>>(),
+                scheduler.active_action_kind.clone(),
+                pending_downloads,
+                pending_uploads,
+                pending_scans,
+                scheduler.stop_after_current,
+            )
+        };
+        (
+            queued_actions,
+            active_action_kind,
+            pending_downloads,
+            pending_uploads,
+            pending_scans,
+            blocked,
+        )
+    }
+
+    fn sync_runtime_from_action_scheduler_blocking(&self) -> Result<()> {
+        let (
+            queued_actions,
+            active_action_kind,
+            pending_downloads,
+            pending_uploads,
+            pending_scans,
+            blocked,
+        ) = self.action_scheduler_snapshot();
+        {
+            let mut runtime = self.runtime_write_guard();
+            let active_download = u32::from(active_action_kind == "hydrate");
+            let active_upload = u32::from(active_action_kind == "upload");
+            runtime.pending_downloads = pending_downloads + active_download;
+            runtime.pending_uploads = pending_uploads + active_upload;
+            runtime.queued_action_count = queued_actions.len() as u32;
+            runtime.active_action_kind = active_action_kind.clone();
+            runtime.sync_state = if runtime.sync_paused {
+                SyncState::Paused
+            } else if !active_action_kind.is_empty() || !queued_actions.is_empty() {
+                if active_action_kind.starts_with("refresh")
+                    || (pending_scans > 0 && runtime.pending_downloads == 0 && runtime.pending_uploads == 0)
+                {
+                    SyncState::Scanning
+                } else {
+                    SyncState::Syncing
+                }
+            } else if runtime.sync_state != SyncState::Error {
+                SyncState::Idle
+            } else {
+                runtime.sync_state
+            };
+            if blocked && runtime.sync_paused {
+                runtime.sync_state = SyncState::Paused;
+            }
+        }
+        self.persist_runtime_blocking()?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        Ok(())
+    }
+
     async fn persist_runtime(&self) -> Result<()> {
+        let (queued_actions, active_action_kind, _, _, _, _) = self.action_scheduler_snapshot();
         let runtime = self.runtime.read().await;
         self.state_store.save(&RuntimeState {
             remote_configured: runtime.remote_configured,
@@ -1647,6 +2217,8 @@ impl RcloneBackend {
             conflict_relative_paths: runtime.conflict_relative_paths.iter().cloned().collect(),
             last_sync_at: runtime.last_sync_at,
             sync_paused: runtime.sync_paused,
+            active_action_kind,
+            queued_actions,
         })
     }
 
@@ -1715,103 +2287,52 @@ impl RcloneBackend {
 
     fn enqueue_upload(self: &Arc<Self>, relative_path: String, allow_while_paused: bool) {
         if self.runtime_read_guard().sync_paused && !allow_while_paused {
-            self.append_warning_log("sync", format!(
-                "deferred upload for {relative_path} while sync is paused"
-            ));
+            self.append_warning_log(
+                "sync",
+                format!("deferred upload for {relative_path} while sync is paused"),
+            );
             return;
         }
-
-        let should_spawn_worker = {
-            let mut scheduler = self
-                .upload_scheduler
-                .lock()
-                .expect("upload scheduler poisoned");
-            if scheduler.scheduled.contains(&relative_path) {
-                if !scheduler.retry_after_current.insert(relative_path.clone()) {
-                    return;
-                }
-            } else {
-                scheduler.scheduled.insert(relative_path.clone());
-                scheduler.queue.push_back(relative_path.clone());
-            }
-            if scheduler.stop_after_current || scheduler.worker_running {
-                false
-            } else {
-                scheduler.worker_running = true;
-                true
-            }
-        };
-        let _ = self.sync_upload_runtime_from_scheduler_blocking();
-
-        if should_spawn_worker {
-            self.spawn_upload_worker();
+        if let Err(error) = self.enqueue_background_action(ActionKind::Upload {
+            path: relative_path.clone(),
+        }) {
+            self.set_path_error_sync(&relative_path, error.to_string());
         }
-    }
-
-    fn sync_upload_runtime_from_scheduler_blocking(&self) -> Result<()> {
-        let pending_uploads = {
-            let scheduler = self
-                .upload_scheduler
-                .lock()
-                .expect("upload scheduler poisoned");
-            scheduler.queue.len() as u32 + scheduler.active_uploads
-        };
-
-        {
-            let mut runtime = self.runtime_write_guard();
-            runtime.pending_uploads = pending_uploads;
-            if runtime.pending_uploads > 0 || runtime.pending_downloads > 0 {
-                runtime.sync_state = SyncState::Syncing;
-            } else if runtime.sync_paused {
-                runtime.sync_state = SyncState::Paused;
-            } else if runtime.sync_state != SyncState::Error {
-                runtime.sync_state = SyncState::Idle;
-            }
-        }
-
-        self.persist_runtime_blocking()?;
-        self.emit_event(BackendEvent::SyncStateChanged);
-        Ok(())
     }
 
     fn resume_upload_queue(self: &Arc<Self>) {
-        let should_spawn = {
+        {
             let mut scheduler = self
-                .upload_scheduler
+                .action_scheduler
+                .0
                 .lock()
-                .expect("upload scheduler poisoned");
+                .expect("action scheduler poisoned");
             scheduler.stop_after_current = false;
-            if scheduler.worker_running || scheduler.queue.is_empty() {
-                false
-            } else {
-                scheduler.worker_running = true;
-                true
-            }
-        };
-        let _ = self.sync_upload_runtime_from_scheduler_blocking();
-        if should_spawn {
-            self.spawn_upload_worker();
+            self.action_scheduler.1.notify_all();
         }
+        let _ = self.sync_runtime_from_action_scheduler_blocking();
     }
 
     async fn pause_uploads_for_lifecycle(&self, clear_queue: bool) -> Result<()> {
         {
             let mut scheduler = self
-                .upload_scheduler
+                .action_scheduler
+                .0
                 .lock()
-                .expect("upload scheduler poisoned");
+                .expect("action scheduler poisoned");
             scheduler.stop_after_current = true;
         }
 
         loop {
-            let active_uploads = {
+            let active_action_kind = {
                 let scheduler = self
-                    .upload_scheduler
+                    .action_scheduler
+                    .0
                     .lock()
-                    .expect("upload scheduler poisoned");
-                scheduler.active_uploads
+                    .expect("action scheduler poisoned");
+                scheduler.active_action_kind.clone()
             };
-            if active_uploads == 0 {
+            if active_action_kind != "upload" && active_action_kind != "refresh-tree" {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1819,17 +2340,23 @@ impl RcloneBackend {
 
         if clear_queue {
             let mut scheduler = self
-                .upload_scheduler
+                .action_scheduler
+                .0
                 .lock()
-                .expect("upload scheduler poisoned");
-            scheduler.queue.clear();
-            scheduler.scheduled.clear();
-            scheduler.retry_after_current.clear();
-            scheduler.worker_running = false;
-            scheduler.active_uploads = 0;
+                .expect("action scheduler poisoned");
+            scheduler.queue.retain(|queued| {
+                !matches!(
+                    queued.kind,
+                    ActionKind::Upload { .. }
+                        | ActionKind::RefreshDirectory {
+                            recursive: true,
+                            ..
+                        }
+                )
+            });
         }
 
-        self.sync_upload_runtime_from_scheduler_blocking()?;
+        self.sync_runtime_from_action_scheduler_blocking()?;
         Ok(())
     }
 
@@ -1845,89 +2372,6 @@ impl RcloneBackend {
             self.enqueue_upload(path.clone(), true);
         }
         Ok(dirty_paths.len() as u32)
-    }
-
-    fn spawn_upload_worker(self: &Arc<Self>) {
-        let backend = self.clone();
-        self.runtime_handle.spawn(async move {
-            loop {
-                let next_path = {
-                    let mut scheduler = backend
-                        .upload_scheduler
-                        .lock()
-                        .expect("upload scheduler poisoned");
-                    if scheduler.stop_after_current {
-                        scheduler.worker_running = false;
-                        None
-                    } else {
-                        match scheduler.queue.pop_front() {
-                            Some(path) => {
-                                scheduler.active_uploads =
-                                    scheduler.active_uploads.saturating_add(1);
-                                Some(path)
-                            }
-                            None => {
-                                scheduler.worker_running = false;
-                                None
-                            }
-                        }
-                    }
-                };
-
-                let Some(relative_path) = next_path else {
-                    break;
-                };
-
-                let outcome = tokio::task::spawn_blocking({
-                    let backend = backend.clone();
-                    let relative_path = relative_path.clone();
-                    move || backend.upload_relative_path_sync(&relative_path)
-                })
-                .await;
-
-                match outcome {
-                    Ok(Ok(())) => {
-                        let _ = backend.rebuild_path_state_snapshot_sync();
-                        backend.emit_path_state_refresh(&[relative_path.clone()]);
-                        backend.append_log_entry(
-                            "sync",
-                            LogLevel::Info,
-                            format!("uploaded {relative_path}"),
-                        );
-                    }
-                    Ok(Err(error)) => {
-                        backend.set_path_error_sync(&relative_path, error.to_string());
-                    }
-                    Err(error) => {
-                        backend.set_path_error_sync(&relative_path, error.to_string());
-                    }
-                }
-
-                let should_requeue = {
-                    let mut scheduler = backend
-                        .upload_scheduler
-                        .lock()
-                        .expect("upload scheduler poisoned");
-                    scheduler.active_uploads = scheduler.active_uploads.saturating_sub(1);
-                    if scheduler.retry_after_current.remove(&relative_path) {
-                        scheduler.queue.push_back(relative_path.clone());
-                        true
-                    } else {
-                        scheduler.scheduled.remove(&relative_path);
-                        false
-                    }
-                };
-
-                let _ = backend.sync_upload_runtime_from_scheduler_blocking();
-
-                if should_requeue {
-                    backend.append_warning_log(
-                        "sync",
-                        format!("queued another upload for {relative_path} after local changes"),
-                    );
-                }
-            }
-        });
     }
 
     fn set_path_error_sync(&self, relative_path: &str, message: String) {
@@ -2028,6 +2472,7 @@ impl RcloneBackend {
         let result = (|| -> Result<PathBuf> {
             let config = self.config_read_guard().clone();
             let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+            let _guard = self.rclone_process_lock.blocking_lock();
             let status = std::process::Command::new(binary)
                 .args(build_download_args(
                     &config,
@@ -2132,6 +2577,7 @@ impl RcloneBackend {
 
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let _guard = self.rclone_process_lock.blocking_lock();
         let status = std::process::Command::new(binary)
             .args(build_upload_args(
                 &config,
@@ -2203,6 +2649,7 @@ impl RcloneBackend {
     fn create_remote_dir_sync(&self, relative_path: &str) -> Result<()> {
         let config = self.config_read_guard().clone();
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let _guard = self.rclone_process_lock.blocking_lock();
         let status = std::process::Command::new(binary)
             .args(build_mkdir_args(&config, &self.paths, relative_path))
             .status()
@@ -2246,6 +2693,7 @@ impl RcloneBackend {
             } else {
                 build_deletefile_args(&config, &self.paths, relative_path)
             };
+            let _guard = self.rclone_process_lock.blocking_lock();
             let status = std::process::Command::new(binary)
                 .args(args)
                 .status()
@@ -2296,6 +2744,7 @@ impl RcloneBackend {
         if remote_backed {
             let config = self.config_read_guard().clone();
             let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+            let _guard = self.rclone_process_lock.blocking_lock();
             let status = std::process::Command::new(binary)
                 .args(build_moveto_args(&config, &self.paths, from, to))
                 .status()
@@ -2373,6 +2822,30 @@ impl Provider for FuseBridge {
             .collect())
     }
 
+    fn ensure_directory(&self, path: &str) -> io::Result<()> {
+        let backend = self.backend()?;
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| {
+                backend
+                    .runtime_handle
+                    .block_on(backend.ensure_directory_listing(if path.is_empty() {
+                        None
+                    } else {
+                        Some(path)
+                    }))
+            })
+        } else {
+            backend
+                .runtime_handle
+                .block_on(backend.ensure_directory_listing(if path.is_empty() {
+                    None
+                } else {
+                    Some(path)
+                }))
+        }
+        .map_err(io_error)
+    }
+
     fn open_file(&self, path: &str, request: OpenRequest) -> io::Result<File> {
         let backend = self.backend()?;
         if request.create {
@@ -2380,7 +2853,11 @@ impl Provider for FuseBridge {
                 .create_local_entry_sync(path, false)
                 .map_err(io_error)?;
         } else {
-            backend.hydrate_relative_path_sync(path).map_err(io_error)?;
+            backend
+                .run_queued_action_sync(ActionKind::Hydrate {
+                    path: path.to_string(),
+                })
+                .map_err(io_error)?;
         }
         backend
             .rebuild_path_state_snapshot_sync()
@@ -2397,7 +2874,11 @@ impl Provider for FuseBridge {
 
     fn create_dir(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.create_remote_dir_sync(path).map_err(io_error)?;
+        backend
+            .run_queued_action_sync(ActionKind::CreateDir {
+                path: path.to_string(),
+            })
+            .map_err(io_error)?;
         backend
             .rebuild_path_state_snapshot_sync()
             .map_err(io_error)?;
@@ -2407,7 +2888,12 @@ impl Provider for FuseBridge {
 
     fn remove_file(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.remove_path_sync(path, false).map_err(io_error)?;
+        backend
+            .run_queued_action_sync(ActionKind::RemovePath {
+                path: path.to_string(),
+                is_dir: false,
+            })
+            .map_err(io_error)?;
         backend
             .rebuild_path_state_snapshot_sync()
             .map_err(io_error)?;
@@ -2417,7 +2903,12 @@ impl Provider for FuseBridge {
 
     fn remove_dir(&self, path: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.remove_path_sync(path, true).map_err(io_error)?;
+        backend
+            .run_queued_action_sync(ActionKind::RemovePath {
+                path: path.to_string(),
+                is_dir: true,
+            })
+            .map_err(io_error)?;
         backend
             .rebuild_path_state_snapshot_sync()
             .map_err(io_error)?;
@@ -2427,7 +2918,12 @@ impl Provider for FuseBridge {
 
     fn rename_path(&self, from: &str, to: &str) -> io::Result<()> {
         let backend = self.backend()?;
-        backend.rename_path_sync(from, to).map_err(io_error)?;
+        backend
+            .run_queued_action_sync(ActionKind::RenamePath {
+                from: from.to_string(),
+                to: to.to_string(),
+            })
+            .map_err(io_error)?;
         backend
             .rebuild_path_state_snapshot_sync()
             .map_err(io_error)?;
@@ -3195,12 +3691,16 @@ fn apply_directory_states(states: &mut BTreeMap<String, PathState>) {
             .entry(path)
             .and_modify(|state| {
                 state.is_dir = true;
-                state.state = summary.state.clone();
-                state.pinned = summary.pinned;
-                state.hydrated = summary.hydrated;
-                state.dirty = summary.dirty;
-                state.error = summary.error.clone();
-                state.conflict_reason = summary.conflict_reason.clone();
+                state.state = dominant_path_state(state.state.clone(), summary.state.clone());
+                state.pinned |= summary.pinned;
+                state.hydrated |= summary.hydrated;
+                state.dirty |= summary.dirty;
+                if state.error.is_empty() {
+                    state.error = summary.error.clone();
+                }
+                if state.conflict_reason.is_empty() {
+                    state.conflict_reason = summary.conflict_reason.clone();
+                }
             })
             .or_insert(summary);
     }
@@ -3267,6 +3767,33 @@ fn affected_relative_paths(paths: &[String]) -> Vec<String> {
         }
     }
     affected.into_iter().collect()
+}
+
+fn directory_metadata_for_snapshot(states: &[PathState]) -> Vec<DirectoryMetadata> {
+    let mut directories = BTreeSet::from([String::new()]);
+    for state in states {
+        if state.is_dir {
+            directories.insert(state.path.clone());
+        }
+        let mut current = Path::new(&state.path).parent();
+        while let Some(parent) = current {
+            if parent.as_os_str().is_empty() {
+                break;
+            }
+            directories.insert(relative_string(parent));
+            current = parent.parent();
+        }
+    }
+
+    let listed_at = unix_timestamp();
+    directories
+        .into_iter()
+        .map(|path| DirectoryMetadata {
+            path,
+            children_known: true,
+            last_listed_at: listed_at,
+        })
+        .collect()
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
@@ -3604,7 +4131,8 @@ fn apply_failed_remote_scan_directories(
 #[cfg(test)]
 mod tests {
     use super::{
-        BACKEND_NAME, RcloneBackend, RcloneListEntry, Runtime, affected_relative_paths,
+        ActionKind, BACKEND_NAME, QueuedAction, RcloneBackend, RcloneListEntry, Runtime,
+        affected_relative_paths,
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
         apply_failed_remote_scan_directories, build_download_args, build_lsjson_args,
         build_lsjson_directory_args, build_lsjson_single_args, build_moveto_args,
@@ -4075,6 +4603,36 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn list_directory_refreshes_remote_root_without_hydrating_content() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend_with_mock_lsjson(
+            dir.path(),
+            r#"[
+  {"Path":"Docs","IsDir":true,"Size":-1,"ModTime":"2026-03-26T00:00:00Z"},
+  {"Path":"report.txt","IsDir":false,"Size":12,"ModTime":"2026-03-26T00:00:00Z","Hashes":{"sha1":"abc"}}
+]"#,
+        )
+        .await;
+
+        let entries = backend.list_directory("").await.expect("root entries");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|state| state.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Docs", "report.txt"]
+        );
+        assert!(entries.iter().all(|state| !state.hydrated));
+        assert!(
+            !dir.path()
+                .join("OneDrive")
+                .join(".openonedrive-cache")
+                .join("report.txt")
+                .exists()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn search_paths_matches_by_basename_and_full_path() {
         let dir = tempdir().expect("tempdir");
         let backend = build_backend(dir.path()).await;
@@ -4376,8 +4934,8 @@ mod tests {
             .iter()
             .find(|state| state.path == "Docs")
             .expect("docs dir");
-        assert_eq!(docs.state, PathSyncState::AvailableLocal);
-        assert!(!docs.pinned);
+        assert_eq!(docs.state, PathSyncState::PinnedLocal);
+        assert!(docs.pinned);
 
         let vault = normalized
             .into_iter()
@@ -4477,25 +5035,29 @@ mod tests {
         let backend = build_backend(dir.path()).await;
         {
             let mut scheduler = backend
-                .upload_scheduler
+                .action_scheduler
+                .0
                 .lock()
-                .expect("upload scheduler poisoned");
-            scheduler.queue.push_back("Docs/report.txt".into());
-            scheduler.scheduled.insert("Docs/report.txt".into());
-            scheduler.worker_running = true;
+                .expect("action scheduler poisoned");
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::Upload {
+                    path: "Docs/report.txt".into(),
+                },
+                responder: None,
+            });
         }
         backend
-            .sync_upload_runtime_from_scheduler_blocking()
+            .sync_runtime_from_action_scheduler_blocking()
             .expect("sync runtime");
 
         backend.pause_sync().await.expect("pause sync");
 
         let scheduler = backend
-            .upload_scheduler
+            .action_scheduler
+            .0
             .lock()
-            .expect("upload scheduler poisoned");
+            .expect("action scheduler poisoned");
         assert!(scheduler.queue.is_empty());
-        assert!(scheduler.scheduled.is_empty());
         assert!(scheduler.stop_after_current);
         drop(scheduler);
 
@@ -4510,15 +5072,19 @@ mod tests {
         let backend = build_backend(dir.path()).await;
         {
             let mut scheduler = backend
-                .upload_scheduler
+                .action_scheduler
+                .0
                 .lock()
-                .expect("upload scheduler poisoned");
-            scheduler.queue.push_back("Docs/report.txt".into());
-            scheduler.scheduled.insert("Docs/report.txt".into());
-            scheduler.worker_running = true;
+                .expect("action scheduler poisoned");
+            scheduler.queue.push_back(QueuedAction {
+                kind: ActionKind::Upload {
+                    path: "Docs/report.txt".into(),
+                },
+                responder: None,
+            });
         }
         backend
-            .sync_upload_runtime_from_scheduler_blocking()
+            .sync_runtime_from_action_scheduler_blocking()
             .expect("sync runtime");
 
         backend
@@ -4527,11 +5093,11 @@ mod tests {
             .expect("prepare repair");
 
         let scheduler = backend
-            .upload_scheduler
+            .action_scheduler
+            .0
             .lock()
-            .expect("upload scheduler poisoned");
+            .expect("action scheduler poisoned");
         assert!(scheduler.queue.is_empty());
-        assert!(scheduler.scheduled.is_empty());
         assert!(scheduler.stop_after_current);
         drop(scheduler);
 
@@ -4653,6 +5219,38 @@ mod tests {
         let paths = build_paths(root);
         let mut config = AppConfig::default();
         config.root_path = root.join("OneDrive");
+        fs::create_dir_all(&config.root_path).expect("root dir");
+        RcloneBackend::load(paths, config).await.expect("backend")
+    }
+
+    async fn build_backend_with_mock_lsjson(root: &Path, lsjson_payload: &str) -> Arc<RcloneBackend> {
+        let paths = build_paths(root);
+        fs::create_dir_all(&paths.rclone_config_dir).expect("rclone config dir");
+        fs::write(
+            &paths.rclone_config_file,
+            "[openonedrive]\ntype = onedrive\ndrive_id = drive\ndrive_type = business\n",
+        )
+        .expect("write config");
+
+        let mock_rclone = root.join("mock-rclone.sh");
+        fs::write(
+            &mock_rclone,
+            format!(
+                "#!/usr/bin/env bash\nset -euo pipefail\nif [[ \"${{1:-}}\" == \"lsjson\" ]]; then\ncat <<'EOF'\n{lsjson_payload}\nEOF\n  exit 0\nfi\nif [[ \"${{1:-}}\" == \"version\" ]]; then\nprintf 'rclone v0-test\\n'\n  exit 0\nfi\nexit 0\n"
+            ),
+        )
+        .expect("write mock rclone");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&mock_rclone).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&mock_rclone, permissions).expect("chmod");
+        }
+
+        let mut config = AppConfig::default();
+        config.root_path = root.join("OneDrive");
+        config.rclone_bin = Some(mock_rclone);
         fs::create_dir_all(&config.root_path).expect("root dir");
         RcloneBackend::load(paths, config).await.expect("backend")
     }

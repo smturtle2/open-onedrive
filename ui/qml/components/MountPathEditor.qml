@@ -27,7 +27,9 @@ Frame {
                                                : "#1f7a4d"
 
     Layout.fillWidth: true
-    padding: Kirigami.Units.largeSpacing
+    padding: 0
+
+    background: Item { }
 
     FolderDialog {
         id: folderDialog
@@ -41,19 +43,15 @@ Frame {
         anchors.fill: parent
         spacing: Kirigami.Units.mediumSpacing
 
-        Label {
-            text: qsTr("Root folder")
-        }
-
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
 
             Rectangle {
                 radius: 999
-                color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.14)
+                color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.12)
                 border.width: 1
-                border.color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.34)
+                border.color: Qt.rgba(root.feedbackColor.r, root.feedbackColor.g, root.feedbackColor.b, 0.26)
                 implicitHeight: feedbackText.implicitHeight + Kirigami.Units.smallSpacing * 2
                 implicitWidth: feedbackText.implicitWidth + Kirigami.Units.largeSpacing
 
@@ -88,7 +86,7 @@ Frame {
             }
 
             Button {
-                text: qsTr("Browse...")
+                text: qsTr("Browse…")
                 icon.name: "document-open-folder"
                 onClicked: {
                     const folder = shellBackend.mountPathDialogFolder()

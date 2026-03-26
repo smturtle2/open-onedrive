@@ -64,8 +64,10 @@ jobs:
           cp target/release/openonedrived dist/open-onedrive-linux-x86_64/
           cp target/release/openonedrivectl dist/open-onedrive-linux-x86_64/
           cp build/ui-release/open-onedrive-ui dist/open-onedrive-linux-x86_64/
+          cp build/ui-release/open-onedrive-tray dist/open-onedrive-linux-x86_64/
           cp build/integrations-release/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so dist/open-onedrive-linux-x86_64/
           cp build/integrations-release/plugins/kf6/overlayicon/libopen_onedrive_overlayicon.so dist/open-onedrive-linux-x86_64/
+          cp integrations/nautilus/src/openonedrive.py dist/open-onedrive-linux-x86_64/
           cp assets/open-onedrive.svg dist/open-onedrive-linux-x86_64/io.github.smturtle2.OpenOneDrive.svg
           tar -C dist -czf dist/open-onedrive-linux-x86_64.tar.gz open-onedrive-linux-x86_64
           (cd dist && sha256sum open-onedrive-linux-x86_64.tar.gz > open-onedrive-linux-x86_64.tar.gz.sha256)
@@ -110,6 +112,8 @@ jobs:
           test -x "${smoke_home}/.local/bin/openonedrived"
           test -x "${smoke_home}/.local/bin/openonedrivectl"
           test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+          test -x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
+          test -f "${smoke_home}/.local/share/nautilus-python/extensions/openonedrive.py"
           test -f "${smoke_home}/.config/systemd/user/openonedrived.service"
           test -f "${smoke_home}/.local/share/applications/io.github.smturtle2.OpenOneDrive.desktop"
           test -f "${smoke_home}/.local/lib/qt6/plugins/kf6/kfileitemaction/libopen_onedrive_fileitemaction.so"
@@ -127,12 +131,19 @@ jobs:
           exit 0
           EOF
           chmod +x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+          cat > "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'tray %s\n' "$*" >> "${HOME}/launcher-tray.log"
+          sleep 2
+          EOF
+          chmod +x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-tray"
 
           HOME="${smoke_home}" \
           PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
           "${smoke_home}/.local/bin/open-onedrive" --from-smoke
 
           test -f "${smoke_home}/launcher-daemon.log"
+          test -f "${smoke_home}/launcher-tray.log"
           grep -- '--from-smoke' "${smoke_home}/launcher-ui.log"
 
           cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'

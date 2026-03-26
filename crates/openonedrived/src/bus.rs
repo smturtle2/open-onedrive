@@ -184,6 +184,10 @@ impl OpenOneDriveBus {
         self.app.list_directory_json(path).await.map_err(map_error)
     }
 
+    async fn refresh_directory(&self, path: &str) -> zbus::fdo::Result<u32> {
+        self.app.refresh_directory(path).await.map_err(map_error)
+    }
+
     async fn search_paths(&self, query: &str, limit: u32) -> zbus::fdo::Result<Vec<PathState>> {
         self.app
             .search_paths(query, limit as usize)

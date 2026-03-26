@@ -128,6 +128,10 @@ impl OpenOneDriveApp {
         self.backend.list_directory_json(path).await
     }
 
+    pub async fn refresh_directory(&self, path: &str) -> Result<u32> {
+        self.backend.refresh_directory(path).await
+    }
+
     pub async fn search_paths(&self, query: &str, limit: usize) -> Result<Vec<PathState>> {
         self.backend.search_paths(query, limit).await
     }

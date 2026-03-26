@@ -40,6 +40,8 @@ class ShellBackend : public QObject
     Q_PROPERTY(int conflictCount READ conflictCount NOTIFY syncStateChanged)
     Q_PROPERTY(int queueDepth READ queueDepth NOTIFY syncStateChanged)
     Q_PROPERTY(int activeTransferCount READ activeTransferCount NOTIFY syncStateChanged)
+    Q_PROPERTY(int queuedActionCount READ queuedActionCount NOTIFY syncStateChanged)
+    Q_PROPERTY(QString activeActionKind READ activeActionKind NOTIFY syncStateChanged)
     Q_PROPERTY(QString lastSyncLabel READ lastSyncLabel NOTIFY syncStateChanged)
     Q_PROPERTY(QString lastSyncError READ lastSyncError NOTIFY syncStateChanged)
     Q_PROPERTY(QString rcloneVersion READ rcloneVersion NOTIFY rcloneVersionChanged)
@@ -53,7 +55,7 @@ class ShellBackend : public QObject
     Q_PROPERTY(bool canResumeSync READ canResumeSync NOTIFY syncStateChanged)
 
 public:
-    explicit ShellBackend(QObject *parent = nullptr);
+    explicit ShellBackend(bool enableTray = true, QObject *parent = nullptr);
 
     bool remoteConfigured() const;
     bool needsRemoteRepair() const;
@@ -79,6 +81,8 @@ public:
     int conflictCount() const;
     int queueDepth() const;
     int activeTransferCount() const;
+    int queuedActionCount() const;
+    QString activeActionKind() const;
     QString lastSyncLabel() const;
     QString lastSyncError() const;
     QString rcloneVersion() const;
@@ -155,6 +159,7 @@ private:
     bool syncMountPathIfNeeded(QDBusInterface &iface, const QString &emptyPathMessage);
     void updateStatusMessage(const QString &message);
     void updateTray();
+    void launchUiProcess() const;
     bool invokePathAction(const QString &method, const QString &path, const QString &emptyPathMessage);
     bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);
     QVariantMap parseExplorerEntries(const QString &jsonPayload, const QString &invalidMessage) const;
@@ -187,6 +192,8 @@ private:
     int m_conflictCount = 0;
     int m_queueDepth = 0;
     int m_activeTransferCount = 0;
+    int m_queuedActionCount = 0;
+    QString m_activeActionKind;
     qint64 m_lastSyncAt = 0;
     QString m_lastSyncError;
     QString m_rcloneVersion;

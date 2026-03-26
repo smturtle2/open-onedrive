@@ -125,69 +125,69 @@ Kirigami.Page {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.largeSpacing
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Kirigami.Heading {
+                    text: qsTr("Logs")
+                    level: 1
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.neutralTextColor
+                    text: qsTr("Recent daemon and rclone output. Filter down to the exact slice you need when debugging recovery or transfers.")
+                }
+            }
+
+            Button {
+                text: qsTr("Copy visible")
+                icon.name: "edit-copy"
+                enabled: page.filteredEntries.length > 0
+                onClicked: page.copyEntries(page.filteredEntries)
+            }
+
+            Button {
+                text: qsTr("Refresh")
+                icon.name: "view-refresh"
+                onClicked: shellBackend.refreshLogs()
+            }
+        }
+
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: page.hasPinnedIssue
+            type: shellBackend.lastSyncError.length > 0
+                  || shellBackend.connectionState === "Error"
+                  || shellBackend.mountState === "Error"
+                  || shellBackend.syncState === "Error"
+                  || shellBackend.conflictCount > 0
+                  || !shellBackend.daemonReachable
+                  ? Kirigami.MessageType.Error
+                  : Kirigami.MessageType.Information
+            showCloseButton: false
+            text: page.pinnedIssueText
+        }
 
         Rectangle {
             Layout.fillWidth: true
             radius: Kirigami.Units.largeSpacing
-            color: "#f7fafc"
+            color: "#f5f8fb"
             border.width: 1
             border.color: Qt.rgba(7 / 255, 31 / 255, 52 / 255, 0.08)
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
+                anchors.margins: Kirigami.Units.mediumSpacing
                 spacing: Kirigami.Units.mediumSpacing
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Kirigami.Heading {
-                            text: qsTr("Recent daemon and rclone activity")
-                            level: 1
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: Kirigami.Theme.neutralTextColor
-                            text: qsTr("Filter for the slice you need, then copy only that context when you are debugging recovery work.")
-                        }
-                    }
-
-                    Button {
-                        text: qsTr("Copy visible")
-                        icon.name: "edit-copy"
-                        enabled: page.filteredEntries.length > 0
-                        onClicked: page.copyEntries(page.filteredEntries)
-                    }
-
-                    Button {
-                        text: qsTr("Refresh")
-                        icon.name: "view-refresh"
-                        onClicked: shellBackend.refreshLogs()
-                    }
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: page.hasPinnedIssue
-                    type: shellBackend.lastSyncError.length > 0
-                          || shellBackend.connectionState === "Error"
-                          || shellBackend.mountState === "Error"
-                          || shellBackend.syncState === "Error"
-                          || shellBackend.conflictCount > 0
-                          || !shellBackend.daemonReachable
-                          ? Kirigami.MessageType.Error
-                          : Kirigami.MessageType.Information
-                    showCloseButton: false
-                    text: page.pinnedIssueText
-                }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -260,6 +260,7 @@ Kirigami.Page {
             clip: true
             spacing: Kirigami.Units.smallSpacing
             model: page.filteredEntries
+            ScrollBar.vertical: ScrollBar { }
 
             delegate: Rectangle {
                 required property var modelData
@@ -285,11 +286,11 @@ Kirigami.Page {
                         Rectangle {
                             radius: 999
                             color: page.levelColor(entry.level)
-                            implicitHeight: levelLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
-                            implicitWidth: levelLabel.implicitWidth + Kirigami.Units.mediumSpacing * 2
+                            implicitHeight: levelLabelItem.implicitHeight + Kirigami.Units.smallSpacing * 2
+                            implicitWidth: levelLabelItem.implicitWidth + Kirigami.Units.mediumSpacing * 2
 
                             Label {
-                                id: levelLabel
+                                id: levelLabelItem
                                 anchors.centerIn: parent
                                 text: page.levelLabel(entry.level)
                                 color: "white"

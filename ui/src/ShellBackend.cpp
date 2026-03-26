@@ -22,6 +22,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <QMetaObject>
+#include <QProcess>
 #include <QUrl>
 #include <QWindow>
 
@@ -83,13 +84,15 @@ QVariantMap explorerResult(const QString &state,
 }
 }
 
-ShellBackend::ShellBackend(QObject *parent)
+ShellBackend::ShellBackend(bool enableTray, QObject *parent)
     : QObject(parent)
 {
     m_mountPath = defaultMountPath();
     m_effectiveMountPath = m_mountPath;
     connectDaemonSignals();
-    initializeTray();
+    if (enableTray) {
+        initializeTray();
+    }
     QMetaObject::invokeMethod(this, &ShellBackend::refreshStatus, Qt::QueuedConnection);
     QMetaObject::invokeMethod(this, &ShellBackend::refreshLogs, Qt::QueuedConnection);
 }
@@ -275,6 +278,16 @@ int ShellBackend::activeTransferCount() const
     return m_activeTransferCount;
 }
 
+int ShellBackend::queuedActionCount() const
+{
+    return m_queuedActionCount;
+}
+
+QString ShellBackend::activeActionKind() const
+{
+    return m_activeActionKind;
+}
+
 QString ShellBackend::lastSyncLabel() const
 {
     return formatTimestamp(m_lastSyncAt);
@@ -380,12 +393,23 @@ void ShellBackend::setMainWindow(QWindow *window)
 void ShellBackend::activateMainWindow()
 {
     if (m_mainWindow == nullptr) {
+        launchUiProcess();
         return;
     }
     m_mainWindow->show();
     m_mainWindow->raise();
     m_mainWindow->requestActivate();
     updateTray();
+}
+
+void ShellBackend::launchUiProcess() const
+{
+    QString program = QStringLiteral("open-onedrive");
+    QStringList arguments;
+    if (QCoreApplication::applicationName() == QStringLiteral("open-onedrive")) {
+        return;
+    }
+    QProcess::startDetached(program, arguments);
 }
 
 void ShellBackend::beginConnect()
@@ -926,9 +950,11 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     const int pinnedFileCount = object.value(QStringLiteral("pinned_file_count")).toInt();
     const int pendingDownloads = object.value(QStringLiteral("pending_downloads")).toInt();
     const int pendingUploads = object.value(QStringLiteral("pending_uploads")).toInt();
+    const int queuedActionCount = object.value(QStringLiteral("queued_action_count")).toInt();
+    const QString activeActionKind = object.value(QStringLiteral("active_action_kind")).toString();
     const int conflictCount = object.value(QStringLiteral("conflict_count")).toInt();
     const qint64 lastSyncAt = object.value(QStringLiteral("last_sync_at")).toInteger();
-    const int queueDepth = pendingDownloads + pendingUploads;
+    const int queueDepth = qMax(pendingDownloads + pendingUploads, queuedActionCount);
     const int activeTransferCount = pendingDownloads + pendingUploads;
     const bool pendingBefore = mountPathPending();
     const bool preserveDraftPath = pendingBefore;
@@ -986,6 +1012,14 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
     if (activeTransferCount != m_activeTransferCount) {
         m_activeTransferCount = activeTransferCount;
+        syncChanged = true;
+    }
+    if (queuedActionCount != m_queuedActionCount) {
+        m_queuedActionCount = queuedActionCount;
+        syncChanged = true;
+    }
+    if (activeActionKind != m_activeActionKind) {
+        m_activeActionKind = activeActionKind;
         syncChanged = true;
     }
     if (lastSyncAt != m_lastSyncAt) {

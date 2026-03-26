@@ -32,7 +32,17 @@ qt_add_executable(open-onedrive-ui
     src/ShellBackend.h
 )
 
+qt_add_executable(open-onedrive-tray
+    src/tray_main.cpp
+    src/ShellBackend.cpp
+    src/ShellBackend.h
+)
+
 set_target_properties(open-onedrive-ui PROPERTIES
+    QT_QML_MODULE_NO_IMPORT_SCAN TRUE
+)
+
+set_target_properties(open-onedrive-tray PROPERTIES
     QT_QML_MODULE_NO_IMPORT_SCAN TRUE
 )
 
@@ -51,4 +61,19 @@ target_link_libraries(open-onedrive-ui
         KF6::StatusNotifierItem
 )
 
-install(TARGETS open-onedrive-ui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+target_link_libraries(open-onedrive-tray
+    PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::DBus
+        Qt6::QuickDialogs2
+        Qt6::Widgets
+        KF6::DBusAddons
+        KF6::Kirigami
+        KF6::StatusNotifierItem
+)
+
+install(TARGETS open-onedrive-ui open-onedrive-tray RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

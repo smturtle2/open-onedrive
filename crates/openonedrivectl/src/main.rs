@@ -43,6 +43,10 @@ enum Command {
         #[arg(default_value = "")]
         path: String,
     },
+    RefreshDirectory {
+        #[arg(default_value = "")]
+        path: String,
+    },
     SearchPaths {
         query: String,
         #[arg(default_value_t = 100)]
@@ -116,6 +120,10 @@ async fn main() -> Result<()> {
         Command::ListDirectory { path } => {
             let states: Vec<PathState> = proxy.call("ListDirectory", &(path)).await?;
             println!("{}", serde_json::to_string_pretty(&states)?);
+        }
+        Command::RefreshDirectory { path } => {
+            let count: u32 = proxy.call("RefreshDirectory", &(path)).await?;
+            println!("refreshed {count} visible item(s)");
         }
         Command::SearchPaths { query, limit } => {
             let states: Vec<PathState> = proxy.call("SearchPaths", &(query, limit)).await?;

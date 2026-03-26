@@ -9,6 +9,13 @@ pub struct PathStateStore {
     db_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryMetadata {
+    pub path: String,
+    pub children_known: bool,
+    pub last_listed_at: u64,
+}
+
 impl PathStateStore {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -31,6 +38,9 @@ impl PathStateStore {
         transaction
             .execute("DELETE FROM path_states", [])
             .context("unable to clear path states")?;
+        transaction
+            .execute("DELETE FROM directory_metadata", [])
+            .context("unable to clear directory metadata")?;
         for state in states {
             upsert_state(&transaction, state)?;
         }
@@ -108,6 +118,72 @@ impl PathStateStore {
         connection
             .execute("DELETE FROM path_states", [])
             .context("unable to clear path states")?;
+        connection
+            .execute("DELETE FROM directory_metadata", [])
+            .context("unable to clear directory metadata")?;
+        Ok(())
+    }
+
+    pub fn directory_metadata(&self, path: &str) -> Result<Option<DirectoryMetadata>> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT path, children_known, last_listed_at
+                 FROM directory_metadata
+                 WHERE path = ?1",
+                [path],
+                |row| {
+                    Ok(DirectoryMetadata {
+                        path: row.get(0)?,
+                        children_known: row.get::<_, i64>(1)? != 0,
+                        last_listed_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .with_context(|| format!("unable to query directory metadata {path}"))
+    }
+
+    pub fn set_directory_metadata(
+        &self,
+        path: &str,
+        children_known: bool,
+        last_listed_at: u64,
+    ) -> Result<()> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO directory_metadata(path, children_known, last_listed_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(path) DO UPDATE SET
+                     children_known = excluded.children_known,
+                     last_listed_at = excluded.last_listed_at",
+                params![path, children_known as i64, last_listed_at],
+            )
+            .with_context(|| format!("unable to upsert directory metadata {path}"))?;
+        Ok(())
+    }
+
+    pub fn set_directory_metadata_many(&self, entries: &[DirectoryMetadata]) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .context("directory metadata transaction failed")?;
+        for entry in entries {
+            transaction
+                .execute(
+                    "INSERT INTO directory_metadata(path, children_known, last_listed_at)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(path) DO UPDATE SET
+                         children_known = excluded.children_known,
+                         last_listed_at = excluded.last_listed_at",
+                    params![entry.path, entry.children_known as i64, entry.last_listed_at],
+                )
+                .with_context(|| format!("unable to upsert directory metadata {}", entry.path))?;
+        }
+        transaction
+            .commit()
+            .context("unable to commit directory metadata update")?;
         Ok(())
     }
 
@@ -132,6 +208,11 @@ impl PathStateStore {
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY NOT NULL,
                     value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS directory_metadata (
+                    path TEXT PRIMARY KEY NOT NULL,
+                    children_known INTEGER NOT NULL DEFAULT 0,
+                    last_listed_at INTEGER NOT NULL DEFAULT 0
                 );
                 ",
             )
@@ -241,7 +322,7 @@ fn unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::PathStateStore;
+    use super::{DirectoryMetadata, PathStateStore};
     use openonedrive_ipc_types::{PathState, PathSyncState};
     use tempfile::tempdir;
 
@@ -296,6 +377,43 @@ mod tests {
         assert_eq!(
             store.get_many(&["Docs".into()]).expect("get"),
             vec![snapshot[1].clone()]
+        );
+    }
+
+    #[test]
+    fn directory_metadata_round_trips() {
+        let dir = tempdir().expect("tempdir");
+        let store = PathStateStore::open(&dir.path().join("path-state.sqlite3")).expect("store");
+        store
+            .set_directory_metadata_many(&[
+                DirectoryMetadata {
+                    path: String::new(),
+                    children_known: true,
+                    last_listed_at: 11,
+                },
+                DirectoryMetadata {
+                    path: "Docs".into(),
+                    children_known: true,
+                    last_listed_at: 12,
+                },
+            ])
+            .expect("metadata");
+
+        assert_eq!(
+            store.directory_metadata("").expect("root metadata"),
+            Some(DirectoryMetadata {
+                path: String::new(),
+                children_known: true,
+                last_listed_at: 11,
+            })
+        );
+        assert_eq!(
+            store.directory_metadata("Docs").expect("docs metadata"),
+            Some(DirectoryMetadata {
+                path: "Docs".into(),
+                children_known: true,
+                last_listed_at: 12,
+            })
         );
     }
 }

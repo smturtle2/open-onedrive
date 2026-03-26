@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
 
     KDBusService service(KDBusService::Unique);
     QQmlApplicationEngine engine;
-    ShellBackend backend;
+    ShellBackend backend(false);
     engine.rootContext()->setContextProperty(QStringLiteral("shellBackend"), &backend);
 
     const QUrl mainUrl(QStringLiteral("qrc:/qml/Main.qml"));
