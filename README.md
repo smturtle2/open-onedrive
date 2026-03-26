@@ -140,6 +140,7 @@ cargo run -p xtask -- build-integrations
 
 - `Daemon not reachable on D-Bus`: run `open-onedrive` once, or check `systemctl --user status openonedrived.service`.
 - filesystem startup fails: confirm `/dev/fuse` exists and `fusermount3` or `mount.fuse3` is available in `PATH`.
+- `Personal Vault` may appear in OneDrive but is not currently listable through `rclone`; open-onedrive skips it during background scans instead of treating it as a fatal sync failure.
 - Dolphin overlays or actions are missing: run `kbuildsycoca6`, restart Dolphin, and verify the plugin install under `~/.local/lib/qt6/plugins/kf6/`.
 - Nautilus actions or emblems are missing: confirm `nautilus-python` is installed, then restart Nautilus.
 

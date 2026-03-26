@@ -1520,7 +1520,7 @@ impl RcloneBackend {
             return Ok(false);
         }
 
-        self.append_warning_log(
+        self.append_info_log(
             "filesystem",
             format!(
                 "stale filesystem mountpoint detected at {}; attempting cleanup",
@@ -2119,10 +2119,12 @@ impl RcloneBackend {
                 if is_legacy_onedrive_remote_error(&error.to_string()) {
                     return Err(error);
                 }
-                self.append_warning_log(
-                    "sync",
-                    format!("recursive remote scan failed, retrying directory crawl: {error}"),
-                );
+                if !is_rclone_command_timeout(&error.to_string()) {
+                    self.append_warning_log(
+                        "sync",
+                        format!("recursive remote scan failed, retrying directory crawl: {error}"),
+                    );
+                }
                 self.scan_remote_entries_by_directory(&config, binary.as_path(), seed_progressively)
                     .await
             }
@@ -2181,13 +2183,18 @@ impl RcloneBackend {
                 }
                 Err(error) => {
                     let message = mark_remote_scan_error(&error.to_string());
-                    self.append_warning_log(
-                        "sync",
-                        format!("skipping remote subtree {relative_path}: {message}"),
-                    );
+                    let stored_message =
+                        known_inaccessible_remote_subtree_message(&relative_path, &message)
+                            .unwrap_or_else(|| message.clone());
+                    if !is_known_inaccessible_remote_subtree(&relative_path, &message) {
+                        self.append_warning_log(
+                            "sync",
+                            format!("skipping remote subtree {relative_path}: {message}"),
+                        );
+                    }
                     result
                         .failed_directories
-                        .insert(relative_path.clone(), message);
+                        .insert(relative_path.clone(), stored_message);
                 }
             }
 
@@ -2201,12 +2208,17 @@ impl RcloneBackend {
             }
         }
 
-        if !result.failed_directories.is_empty() {
+        let warning_count = result
+            .failed_directories
+            .iter()
+            .filter(|(path, error)| !is_known_inaccessible_remote_subtree(path, error))
+            .count();
+        if warning_count > 0 {
             self.append_warning_log(
                 "sync",
                 format!(
                     "remote scan skipped {} subtree(s) with listing errors",
-                    result.failed_directories.len()
+                    warning_count
                 ),
             );
         }
@@ -2327,7 +2339,11 @@ impl RcloneBackend {
     ) -> Result<()> {
         let existing_states = self.path_state_store.all()?;
         let mut snapshot = self.build_snapshot_from_remote_entries(entries)?;
-        preserve_failed_remote_scan_descendants(&mut snapshot, &existing_states, failed_directories);
+        preserve_failed_remote_scan_descendants(
+            &mut snapshot,
+            &existing_states,
+            failed_directories,
+        );
         apply_failed_remote_scan_directories(&mut snapshot, failed_directories);
         let store = self.path_state_store.clone();
         let snapshot_for_store = snapshot.clone();
@@ -2637,7 +2653,11 @@ impl RcloneBackend {
     }
 
     fn append_log(&self, line: String) {
-        self.append_log_entry("daemon", LogLevel::Info, line);
+        self.append_info_log("daemon", line);
+    }
+
+    fn append_info_log(&self, source: &str, line: String) {
+        self.append_log_entry(source, LogLevel::Info, line);
     }
 
     fn append_warning_log(&self, source: &str, line: String) {
@@ -2906,7 +2926,8 @@ impl RcloneBackend {
                 );
                 if cancel {
                     if let Some(responder) = queued.responder {
-                        let error = Err(anyhow!("queued action cancelled for lifecycle transition"));
+                        let error =
+                            Err(anyhow!("queued action cancelled for lifecycle transition"));
                         match responder {
                             QueuedActionResponder::Blocking(tx) => {
                                 let _ = tx.send(error);
@@ -3677,7 +3698,9 @@ impl Provider for FuseBridge {
             .next()
             .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
         let previous_size = state.size_bytes;
-        let actual_size = fs::metadata(&target).map(|metadata| metadata.len()).unwrap_or(previous_size);
+        let actual_size = fs::metadata(&target)
+            .map(|metadata| metadata.len())
+            .unwrap_or(previous_size);
         state.size_bytes = actual_size;
         state.dirty = true;
         state.hydrated = true;
@@ -4190,8 +4213,15 @@ fn create_root_path_if_missing(path: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    create_dir_all_with_reason(path)?;
-    Ok(true)
+    match fs::create_dir_all(path) {
+        Ok(()) => Ok(true),
+        Err(error)
+            if error.raw_os_error() == Some(libc::EEXIST) && mount_point_info(path)?.is_some() =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(anyhow!("unable to create {}: {error}", path.display())),
+    }
 }
 
 fn normalize_directory_query_path(root_path: &Path, raw_path: &str) -> Result<Option<String>> {
@@ -4766,7 +4796,12 @@ fn run_worker_output_once(
     {
         let worker = resolve_worker_binary()?;
         std::process::Command::new(worker)
-            .args(build_cli_args(binary, args, Some(RCLONE_QUERY_TIMEOUT), false))
+            .args(build_cli_args(
+                binary,
+                args,
+                Some(RCLONE_QUERY_TIMEOUT),
+                false,
+            ))
             .stdin(Stdio::null())
             .output()
             .with_context(|| context.to_string())
@@ -4981,6 +5016,12 @@ fn io_error(error: anyhow::Error) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+fn is_rclone_command_timeout(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("command timed out after")
+}
+
 fn set_file_descriptor_inheritable(file: &File) -> Result<()> {
     use std::os::fd::AsRawFd;
 
@@ -5024,6 +5065,23 @@ fn prefix_lsjson_entries(parent_path: &str, entries: Vec<RcloneListEntry>) -> Ve
             entry
         })
         .collect()
+}
+
+fn is_known_inaccessible_remote_subtree(relative_path: &str, error: &str) -> bool {
+    let normalized_path = relative_path.trim().to_ascii_lowercase();
+    let normalized_error = error.to_ascii_lowercase();
+    normalized_path == "personal vault"
+        && normalized_error.contains("invalidresourceid")
+        && normalized_error.contains("objecthandle is invalid")
+}
+
+fn known_inaccessible_remote_subtree_message(relative_path: &str, error: &str) -> Option<String> {
+    if !is_known_inaccessible_remote_subtree(relative_path, error) {
+        return None;
+    }
+    Some(format!(
+        "{REMOTE_SCAN_ERROR_PREFIX}{relative_path} is a OneDrive special folder that is not currently listable through rclone"
+    ))
 }
 
 fn preserve_failed_remote_scan_descendants(
@@ -5082,17 +5140,18 @@ fn apply_failed_remote_scan_directories(
 mod tests {
     use super::{
         ActionKind, ActionScheduler, BACKEND_NAME, MountPointInfo, QueuedAction,
-        QueuedActionResponder, RcloneBackend, RcloneListEntry, Runtime,
-        affected_relative_paths, apply_failed_remote_scan_directories,
-        apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
-        build_download_args, build_lsjson_args, build_lsjson_directory_args,
+        QueuedActionResponder, RcloneBackend, RcloneListEntry, Runtime, affected_relative_paths,
+        apply_failed_remote_scan_directories, apply_filesystem_start_failure, build_connect_args,
+        build_deletefile_args, build_download_args, build_lsjson_args, build_lsjson_directory_args,
         build_lsjson_single_args, build_moveto_args, build_rmdir_args, build_upload_args,
         clear_remote_scan_error, create_root_path_if_missing, derive_path_state,
         directory_metadata_for_listed_directories, expand_retry_paths, expand_selected_paths,
-        fully_listed_directories_for_entries, immediate_child_of, is_legacy_onedrive_remote_error,
-        is_openonedrive_mount, mark_remote_scan_error, normalize_path_state_snapshot,
-        parse_mount_point_info, parse_rclone_mod_time_unix, path_matches_query,
-        prefix_lsjson_entries, preserve_failed_remote_scan_descendants,
+        fully_listed_directories_for_entries, immediate_child_of,
+        is_known_inaccessible_remote_subtree, is_legacy_onedrive_remote_error,
+        is_openonedrive_mount, is_rclone_command_timeout,
+        known_inaccessible_remote_subtree_message, mark_remote_scan_error,
+        normalize_path_state_snapshot, parse_mount_point_info, parse_rclone_mod_time_unix,
+        path_matches_query, prefix_lsjson_entries, preserve_failed_remote_scan_descendants,
         read_remote_config_section, relative_path_for, remote_config_needs_repair,
         resolve_rclone_binary_with_path, revision_for_entry, sort_path_states,
     };
@@ -6111,6 +6170,33 @@ mod tests {
             String::new()
         );
         assert_eq!(clear_remote_scan_error("other failure"), "other failure");
+    }
+
+    #[test]
+    fn command_timeout_detection_matches_worker_message() {
+        assert!(is_rclone_command_timeout(
+            "worker command failed for /usr/bin/rclone: command timed out after 10000 ms"
+        ));
+        assert!(!is_rclone_command_timeout("permission denied"));
+    }
+
+    #[test]
+    fn personal_vault_failures_are_classified_as_known_inaccessible() {
+        let error = mark_remote_scan_error(
+            "rclone lsjson failed for remote directory Personal Vault: invalidRequest: invalidResourceId: ObjectHandle is Invalid",
+        );
+        assert!(is_known_inaccessible_remote_subtree(
+            "Personal Vault",
+            &error
+        ));
+        assert_eq!(
+            known_inaccessible_remote_subtree_message("Personal Vault", &error),
+            Some(
+                "remote scan failed: Personal Vault is a OneDrive special folder that is not currently listable through rclone"
+                    .to_string()
+            )
+        );
+        assert!(!is_known_inaccessible_remote_subtree("Vault", &error));
     }
 
     #[test]

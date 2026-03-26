@@ -28,8 +28,8 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString mountPath READ mountPath WRITE setMountPath NOTIFY mountPathChanged)
     Q_PROPERTY(QString effectiveMountPath READ effectiveMountPath NOTIFY effectiveMountPathChanged)
     Q_PROPERTY(bool mountPathPending READ mountPathPending NOTIFY mountPathPendingChanged)
-    Q_PROPERTY(bool mountPathValid READ mountPathValid NOTIFY mountPathChanged)
-    Q_PROPERTY(QString mountPathIssue READ mountPathIssue NOTIFY mountPathChanged)
+    Q_PROPERTY(bool mountPathValid READ mountPathValid NOTIFY mountPathValidationChanged)
+    Q_PROPERTY(QString mountPathIssue READ mountPathIssue NOTIFY mountPathValidationChanged)
     Q_PROPERTY(QString mountState READ mountState NOTIFY mountStateChanged)
     Q_PROPERTY(QString mountStateLabel READ mountStateLabel NOTIFY mountStateChanged)
     Q_PROPERTY(QString syncState READ syncState NOTIFY syncStateChanged)
@@ -139,6 +139,7 @@ Q_SIGNALS:
     void customClientIdConfiguredChanged();
     void connectionStateChanged();
     void mountPathChanged();
+    void mountPathValidationChanged();
     void effectiveMountPathChanged();
     void mountPathPendingChanged();
     void mountStateChanged();

@@ -508,6 +508,7 @@ void ShellBackend::setMountPath(const QString &mountPath)
     const bool pendingBefore = mountPathPending();
     m_mountPath = normalizedPath;
     emit mountPathChanged();
+    emit mountPathValidationChanged();
     if (pendingBefore != mountPathPending()) {
         emit mountPathPendingChanged();
     }
@@ -961,6 +962,7 @@ void ShellBackend::refreshStatus()
             emit mountStateChanged();
             emit syncStateChanged();
         }
+        emit mountPathValidationChanged();
         updateStatusMessage(
             tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
         if (previousAppState != appState()) {
@@ -997,6 +999,7 @@ void ShellBackend::refreshStatus()
                             emit mountStateChanged();
                             emit syncStateChanged();
                         }
+                        emit mountPathValidationChanged();
                         updateStatusMessage(
                             tr("Background service unavailable. Start openonedrived or run systemctl --user start openonedrived.service, then refresh here."));
                     } else {
@@ -1006,6 +1009,7 @@ void ShellBackend::refreshStatus()
                             emit mountStateChanged();
                             emit syncStateChanged();
                         }
+                        emit mountPathValidationChanged();
                         updateStatusMessage(tr("Daemon status refresh failed: %1").arg(error.message()));
                     }
                     if (previousAppState != appState()) {
@@ -1239,6 +1243,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     if (pendingBefore != mountPathPending()) {
         emit mountPathPendingChanged();
     }
+    emit mountPathValidationChanged();
 
     if (wasDashboardReady != dashboardReady()) {
         emit dashboardReadyChanged();
