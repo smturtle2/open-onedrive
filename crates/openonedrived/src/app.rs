@@ -24,8 +24,16 @@ impl OpenOneDriveApp {
         self.backend.begin_connect().await
     }
 
+    pub async fn bootstrap(self: &Arc<Self>) -> Result<()> {
+        self.backend.bootstrap().await
+    }
+
     pub async fn disconnect(self: &Arc<Self>) -> Result<()> {
         self.backend.disconnect().await
+    }
+
+    pub async fn repair_remote(self: &Arc<Self>) -> Result<()> {
+        self.backend.repair_remote().await
     }
 
     pub async fn set_root_path(self: &Arc<Self>, path: &str) -> Result<()> {

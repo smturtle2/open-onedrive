@@ -6,7 +6,7 @@ use app::OpenOneDriveApp;
 use bus::{DBUS_PATH, DBUS_SERVICE, OpenOneDriveBus};
 use clap::Parser;
 use openonedrive_rclone_backend::BackendEvent;
-use tracing::info;
+use tracing::{info, warn};
 use zbus::Connection;
 
 #[derive(Debug, Parser)]
@@ -44,6 +44,13 @@ async fn main() -> Result<()> {
         .object_server()
         .at(DBUS_PATH, OpenOneDriveBus::new(app))
         .await?;
+
+    let bootstrap_app = signal_app.clone();
+    tokio::spawn(async move {
+        if let Err(error) = bootstrap_app.bootstrap().await {
+            warn!("startup bootstrap failed: {error:#}");
+        }
+    });
 
     let signal_connection = connection.clone();
     tokio::spawn(async move {

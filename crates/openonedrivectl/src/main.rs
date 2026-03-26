@@ -20,6 +20,7 @@ enum Command {
     Status,
     BeginConnect,
     Disconnect,
+    RepairRemote,
     SetRootPath {
         path: String,
     },
@@ -63,6 +64,9 @@ async fn main() -> Result<()> {
         }
         Command::Disconnect => {
             proxy.call::<_, _, ()>("Disconnect", &()).await?;
+        }
+        Command::RepairRemote => {
+            proxy.call::<_, _, ()>("RepairRemote", &()).await?;
         }
         Command::SetRootPath { path } => {
             proxy.call::<_, _, ()>("SetRootPath", &(path)).await?;

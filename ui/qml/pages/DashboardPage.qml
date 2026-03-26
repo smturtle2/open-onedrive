@@ -48,7 +48,9 @@ Kirigami.ScrollablePage {
         case "connecting":
             return qsTr("Finish the browser sign-in flow")
         case "recovery":
-            return qsTr("Recover the filesystem and resume sync")
+            return shellBackend.needsRemoteRepair
+                    ? qsTr("Repair the OneDrive profile and reconnect")
+                    : qsTr("Recover the filesystem and resume sync")
         default:
             return qsTr("Operate the OneDrive filesystem from one place")
         }
@@ -63,7 +65,9 @@ Kirigami.ScrollablePage {
         case "connecting":
             return qsTr("Authentication is in progress. Keep this window open if you want to monitor status, or switch to Logs while the browser flow finishes.")
         case "recovery":
-            return qsTr("The remote is configured, but the filesystem needs attention. Review the status, fix the root path if needed, then retry or restart.")
+            return shellBackend.needsRemoteRepair
+                    ? qsTr("The app-owned rclone profile is stale. Repair Remote rebuilds only that private sign-in profile, preserves hydrated bytes and path state on this device, and then restarts the browser sign-in flow.")
+                    : qsTr("The remote is configured, but the filesystem needs attention. Review the status, fix the root path if needed, then retry or restart.")
         default:
             return qsTr("The visible root, tray, logs, and quick file controls all resolve from the same daemon state and path cache.")
         }
@@ -71,6 +75,7 @@ Kirigami.ScrollablePage {
 
     function showBanner() {
         return !shellBackend.daemonReachable
+                || shellBackend.needsRemoteRepair
                 || shellBackend.connectionState === "Connecting"
                 || shellBackend.connectionState === "Error"
                 || shellBackend.mountState === "Error"
@@ -82,6 +87,7 @@ Kirigami.ScrollablePage {
 
     function bannerType() {
         if (!shellBackend.daemonReachable
+                || shellBackend.needsRemoteRepair
                 || shellBackend.connectionState === "Error"
                 || shellBackend.mountState === "Error"
                 || shellBackend.syncState === "Error") {

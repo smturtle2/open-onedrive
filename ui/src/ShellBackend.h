@@ -16,6 +16,7 @@ class ShellBackend : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool remoteConfigured READ remoteConfigured NOTIFY remoteConfiguredChanged)
+    Q_PROPERTY(bool needsRemoteRepair READ needsRemoteRepair NOTIFY needsRemoteRepairChanged)
     Q_PROPERTY(bool dashboardReady READ dashboardReady NOTIFY dashboardReadyChanged)
     Q_PROPERTY(bool daemonReachable READ daemonReachable NOTIFY daemonReachableChanged)
     Q_PROPERTY(QString appState READ appState NOTIFY appStateChanged)
@@ -53,6 +54,7 @@ public:
     explicit ShellBackend(QObject *parent = nullptr);
 
     bool remoteConfigured() const;
+    bool needsRemoteRepair() const;
     bool dashboardReady() const;
     bool daemonReachable() const;
     QString appState() const;
@@ -92,6 +94,7 @@ public:
 
     Q_INVOKABLE void beginConnect();
     Q_INVOKABLE void disconnectRemote();
+    Q_INVOKABLE void repairRemote();
     Q_INVOKABLE void mountRemote();
     Q_INVOKABLE void unmountRemote();
     Q_INVOKABLE void retryMount();
@@ -110,6 +113,7 @@ public:
 
 Q_SIGNALS:
     void remoteConfiguredChanged();
+    void needsRemoteRepairChanged();
     void dashboardReadyChanged();
     void daemonReachableChanged();
     void appStateChanged();
@@ -150,6 +154,7 @@ private Q_SLOTS:
 
 private:
     bool m_remoteConfigured = false;
+    bool m_needsRemoteRepair = false;
     bool m_customClientIdConfigured = false;
     QString m_connectionState = QStringLiteral("Disconnected");
     QString m_mountPath;

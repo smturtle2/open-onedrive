@@ -60,6 +60,7 @@ pub struct PathState {
 pub struct StatusSnapshot {
     pub backend: String,
     pub remote_configured: bool,
+    pub needs_remote_repair: bool,
     pub connection_state: ConnectionState,
     pub filesystem_state: FilesystemState,
     pub sync_state: SyncState,

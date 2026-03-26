@@ -5,7 +5,7 @@
 <h1 align="center">open-onedrive</h1>
 
 <p align="center">
-  <strong>KDE Plasma 6 + Dolphin</strong> 전용 정식 안정판 <strong>v1.0.1</strong>. 일반 로컬 폴더처럼 보이는 OneDrive 루트, on-demand hydrate, 파일별 장치 유지 / online-only 전환, tray, CLI, Dolphin 통합을 한 daemon 상태 위에 올린 Linux OneDrive 클라이언트입니다.
+  <strong>KDE Plasma 6 + Dolphin</strong> 전용 정식 안정판 <strong>v1.0.2</strong>. 일반 로컬 폴더처럼 보이는 OneDrive 루트, on-demand hydrate, 파일별 장치 유지 / online-only 전환, tray, CLI, Dolphin 통합을 한 daemon 상태 위에 올린 Linux OneDrive 클라이언트입니다.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@
   <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
 </p>
 
-> `v1.0.1`은 현재 안정판 라인입니다. 범위는 의도적으로 좁게 유지합니다. 공식 지원은 `Linux x86_64`, `KDE Plasma 6`, `Dolphin`에 한정합니다.
+> `v1.0.2`는 현재 안정판 라인입니다. 범위는 의도적으로 좁게 유지합니다. 공식 지원은 `Linux x86_64`, `KDE Plasma 6`, `Dolphin`에 한정합니다.
 
 ## 개요
 
@@ -65,7 +65,7 @@
 | 로컬 파일시스템 모델 | `openonedrived`가 소유하는 커스텀 FUSE mount |
 | 안정판 설치 경로 | `~/.local` 사용자 로컬 설치 |
 
-`v1.0.1`의 비목표:
+`v1.0.2`의 비목표:
 
 - `rclone mount`
 - GNOME / Nautilus 지원
@@ -85,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/instal
 정확한 tag로 완전히 고정된 설치:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/v1.0.2/install.sh | bash
 ```
 
 release artifact 대신 source 설치:
@@ -159,7 +159,7 @@ backing_dir_name = ".openonedrive-cache"
 # Optional overrides
 # rclone_bin = "/usr/bin/rclone"
 # custom_client_id = "your-microsoft-client-id"
-# cache_limit_gb 는 v1.0.1에서 예약만 되어 있고 아직 강제되지 않습니다
+# cache_limit_gb 는 v1.0.2에서 예약만 되어 있고 아직 강제되지 않습니다
 ```
 
 보장 사항:

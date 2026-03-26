@@ -73,6 +73,11 @@ bool ShellBackend::remoteConfigured() const
     return m_remoteConfigured;
 }
 
+bool ShellBackend::needsRemoteRepair() const
+{
+    return m_needsRemoteRepair;
+}
+
 bool ShellBackend::dashboardReady() const
 {
     return m_daemonReachable && m_remoteConfigured;
@@ -100,6 +105,7 @@ QString ShellBackend::appState() const
         return QStringLiteral("connecting");
     }
     if (m_connectionState == QStringLiteral("Error")
+        || m_needsRemoteRepair
         || m_mountState == QStringLiteral("Error")
         || m_mountState == QStringLiteral("Degraded")
         || m_syncState == QStringLiteral("Error")
@@ -272,6 +278,7 @@ bool ShellBackend::canMount() const
 {
     return m_daemonReachable
            && m_remoteConfigured
+           && !m_needsRemoteRepair
            && m_connectionState == QStringLiteral("Ready")
            && m_mountState != QStringLiteral("Running")
            && m_mountState != QStringLiteral("Starting");
@@ -288,6 +295,7 @@ bool ShellBackend::canRetry() const
 {
     return m_daemonReachable
            && m_remoteConfigured
+           && !m_needsRemoteRepair
            && (m_mountState == QStringLiteral("Error")
                || m_mountState == QStringLiteral("Stopped")
                || m_connectionState == QStringLiteral("Error"));
@@ -386,6 +394,29 @@ void ShellBackend::disconnectRemote()
         return;
     }
 
+    refreshStatus();
+    refreshLogs();
+}
+
+void ShellBackend::repairRemote()
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
+        return;
+    }
+
+    if (!syncMountPathIfNeeded(iface, tr("Choose a root folder before repairing the OneDrive profile."))) {
+        return;
+    }
+
+    const QDBusReply<void> reply = iface.call(QStringLiteral("RepairRemote"));
+    if (!reply.isValid()) {
+        updateStatusMessage(tr("Repair failed: %1").arg(reply.error().message()));
+        return;
+    }
+
+    updateStatusMessage(tr("Repair cleared the stale rclone profile and restarted the browser sign-in flow. Finish the Microsoft login in your browser."));
     refreshStatus();
     refreshLogs();
 }
@@ -678,6 +709,7 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
 
     const QJsonObject object = document.object();
     const bool remoteConfigured = object.value(QStringLiteral("remote_configured")).toBool();
+    const bool needsRemoteRepair = object.value(QStringLiteral("needs_remote_repair")).toBool();
     const QString mountPath = object.value(QStringLiteral("root_path")).toString();
     const QString connectionState = object.value(QStringLiteral("connection_state")).toString();
     const QString mountState = object.value(QStringLiteral("filesystem_state")).toString();
@@ -713,6 +745,12 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     if (remoteConfigured != m_remoteConfigured) {
         m_remoteConfigured = remoteConfigured;
         emit remoteConfiguredChanged();
+    }
+
+    if (needsRemoteRepair != m_needsRemoteRepair) {
+        m_needsRemoteRepair = needsRemoteRepair;
+        emit needsRemoteRepairChanged();
+        emit mountStateChanged();
     }
 
     if (customClientIdConfigured != m_customClientIdConfigured) {
@@ -809,6 +847,12 @@ void ShellBackend::applyStatusJson(const QString &jsonPayload)
     }
     if (previousAppState != appState()) {
         emit appStateChanged();
+    }
+
+    if (m_needsRemoteRepair) {
+        updateStatusMessage(tr("The app-owned OneDrive profile came from an older release. Use Repair Remote to rebuild only the rclone profile and keep hydrated bytes plus path state on this device."));
+        updateTray();
+        return;
     }
 
     if (!lastError.isEmpty()) {

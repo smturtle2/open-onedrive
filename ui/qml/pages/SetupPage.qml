@@ -6,7 +6,11 @@ import "../components"
 
 Kirigami.ScrollablePage {
     id: page
-    title: shellBackend.remoteConfigured ? qsTr("Recover Filesystem") : qsTr("Set Up")
+    title: shellBackend.needsRemoteRepair
+           ? qsTr("Repair Remote")
+           : shellBackend.remoteConfigured
+             ? qsTr("Recover Filesystem")
+             : qsTr("Set Up")
     property var requestDisconnect: null
 
     ColumnLayout {
@@ -19,26 +23,36 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.Heading {
-            text: shellBackend.remoteConfigured ? qsTr("Reconnect the OneDrive root") : qsTr("Connect OneDrive with rclone")
+            text: shellBackend.needsRemoteRepair
+                  ? qsTr("Repair the app-owned OneDrive profile")
+                  : shellBackend.remoteConfigured
+                    ? qsTr("Reconnect the OneDrive root")
+                    : qsTr("Connect OneDrive with rclone")
             level: 1
         }
 
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: shellBackend.remoteConfigured
-                  ? qsTr("The app-owned rclone remote already exists. Choose whether to restart the filesystem, retry a failed session, or disconnect it completely.")
+            text: shellBackend.needsRemoteRepair
+                  ? qsTr("This machine still has an app-owned rclone profile from an older release. Repair Remote rebuilds only that private sign-in profile, preserves hydrated bytes and path state on this device, and restarts the browser sign-in flow.")
+                  : shellBackend.remoteConfigured
+                    ? qsTr("The app-owned rclone remote already exists. Choose whether to restart the filesystem, retry a failed session, or disconnect it completely.")
                   : qsTr("Choose where the visible OneDrive root folder should appear on this machine, then start the browser sign-in flow managed by rclone.")
         }
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            type: shellBackend.daemonReachable
-                  ? Kirigami.MessageType.Information
-                  : Kirigami.MessageType.Warning
-            text: shellBackend.daemonReachable
-                  ? qsTr("open-onedrive keeps its own rclone profile under XDG config paths and leaves your default ~/.config/rclone/rclone.conf untouched.")
-                  : qsTr("The daemon is not reachable yet. You can still review the root path and return to Logs while the service comes back.")
+            type: !shellBackend.daemonReachable
+                  ? Kirigami.MessageType.Warning
+                  : shellBackend.needsRemoteRepair
+                    ? Kirigami.MessageType.Error
+                  : Kirigami.MessageType.Information
+            text: !shellBackend.daemonReachable
+                  ? qsTr("The daemon is not reachable yet. You can still review the root path and return to Logs while the service comes back.")
+                  : shellBackend.needsRemoteRepair
+                    ? qsTr("Repair removes only the stale app-owned rclone profile under XDG config paths. It does not wipe the hydrated backing store or your saved path state.")
+                  : qsTr("open-onedrive keeps its own rclone profile under XDG config paths and leaves your default ~/.config/rclone/rclone.conf untouched.")
         }
 
         MountPathEditor {
@@ -71,12 +85,26 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
 
             Button {
-                text: shellBackend.remoteConfigured ? qsTr("Retry Filesystem") : qsTr("Connect OneDrive")
-                icon.name: shellBackend.remoteConfigured ? "view-refresh" : "network-connect"
-                enabled: shellBackend.remoteConfigured
+                text: shellBackend.needsRemoteRepair
+                      ? qsTr("Repair Remote")
+                      : shellBackend.remoteConfigured
+                        ? qsTr("Retry Filesystem")
+                        : qsTr("Connect OneDrive")
+                icon.name: shellBackend.needsRemoteRepair
+                           ? "tools-wizard"
+                           : shellBackend.remoteConfigured
+                             ? "view-refresh"
+                             : "network-connect"
+                enabled: shellBackend.needsRemoteRepair
+                         ? shellBackend.daemonReachable && shellBackend.mountPath.length > 0
+                         : shellBackend.remoteConfigured
                          ? shellBackend.daemonReachable && shellBackend.mountPath.length > 0
                          : shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-                onClicked: shellBackend.remoteConfigured ? shellBackend.retryMount() : shellBackend.beginConnect()
+                onClicked: shellBackend.needsRemoteRepair
+                           ? shellBackend.repairRemote()
+                           : shellBackend.remoteConfigured
+                             ? shellBackend.retryMount()
+                             : shellBackend.beginConnect()
             }
 
             Button {
