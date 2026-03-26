@@ -156,6 +156,14 @@ jobs:
           PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
           "${smoke_home}/.local/bin/open-onedrive" --from-smoke
 
+          for log_name in launcher-daemon.log launcher-tray.log launcher-ui.log; do
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if test -f "${smoke_home}/${log_name}"; then
+                break
+              fi
+              sleep 0.2
+            done
+          done
           test -f "${smoke_home}/launcher-daemon.log"
           test -f "${smoke_home}/launcher-tray.log"
           grep -- '--from-smoke' "${smoke_home}/launcher-ui.log"
