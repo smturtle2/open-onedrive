@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep this aligned with the latest stable tag so raw tagged installers stay pinned.
-OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.1.0}"
+OPEN_ONEDRIVE_STABLE_REF="${OPEN_ONEDRIVE_STABLE_REF:-v1.2.0}"
 
 have_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -51,6 +51,10 @@ sha256_check() {
 
 is_dry_run() {
   [[ "${OPEN_ONEDRIVE_DRY_RUN:-0}" == "1" ]]
+}
+
+assume_yes() {
+  [[ "${OPEN_ONEDRIVE_ASSUME_YES:-0}" == "1" ]]
 }
 
 run_cmd() {
@@ -137,7 +141,7 @@ install_with_dnf() {
 }
 
 install_with_pacman() {
-  run_privileged pacman -Sy --noconfirm rclone
+  run_privileged pacman -S --needed --noconfirm rclone
 }
 
 install_with_zypper() {
@@ -259,6 +263,139 @@ release_base_url() {
   printf 'https://github.com/%s/releases/latest/download\n' "$repo"
 }
 
+release_target_ref() {
+  local ref="$1"
+  local effective_ref="$ref"
+  if [[ -z "$effective_ref" ]]; then
+    effective_ref="$OPEN_ONEDRIVE_STABLE_REF"
+  fi
+  if [[ -n "$effective_ref" ]]; then
+    printf '%s\n' "$effective_ref"
+    return
+  fi
+  printf 'latest\n'
+}
+
+install_metadata_dir() {
+  printf '%s\n' "${HOME:?HOME is not set}/.local/share/open-onedrive"
+}
+
+install_metadata_file() {
+  printf '%s/install-metadata.env\n' "$(install_metadata_dir)"
+}
+
+read_metadata_value() {
+  local file="$1"
+  local key="$2"
+  if [[ ! -f "$file" ]]; then
+    return
+  fi
+  awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1); exit }' "$file"
+}
+
+installed_open_onedrive_exists() {
+  local home_dir="${HOME:?HOME is not set}"
+  [[ -x "${home_dir}/.local/bin/open-onedrive" || -x "${home_dir}/.local/bin/openonedrived" ]]
+}
+
+can_prompt_user() {
+  [[ -e /dev/tty && -r /dev/tty && -w /dev/tty && ( -t 1 || -t 2 ) ]]
+}
+
+confirm_with_tty() {
+  local prompt="$1"
+  if assume_yes; then
+    return 0
+  fi
+  if ! can_prompt_user; then
+    return 0
+  fi
+
+  local answer
+  while true; do
+    printf '%s [y/N] ' "$prompt" > /dev/tty
+    if ! IFS= read -r answer < /dev/tty; then
+      return 1
+    fi
+    case "${answer}" in
+      [Yy]|[Yy][Ee][Ss])
+        return 0
+        ;;
+      ""|[Nn]|[Nn][Oo])
+        return 1
+        ;;
+      *)
+        printf 'Please answer y or n.\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
+check_existing_installation() {
+  local target_ref="$1"
+  local target_mode="$2"
+  if ! installed_open_onedrive_exists; then
+    return 0
+  fi
+
+  local metadata_file
+  metadata_file="$(install_metadata_file)"
+  local installed_ref installed_mode prompt
+  installed_ref="$(read_metadata_value "$metadata_file" "INSTALL_REF")"
+  installed_mode="$(read_metadata_value "$metadata_file" "INSTALL_MODE")"
+
+  if [[ -n "$installed_ref" ]]; then
+    if [[ "$installed_ref" == "$target_ref" && "$installed_mode" == "$target_mode" ]]; then
+      prompt="open-onedrive ${installed_ref} (${installed_mode}) is already installed. Reinstall it?"
+    else
+      prompt="open-onedrive ${installed_ref:-unknown} (${installed_mode:-unknown}) is already installed. Replace it with ${target_ref} (${target_mode})?"
+    fi
+  else
+    prompt="An existing open-onedrive installation was found under ~/.local. Replace it with ${target_ref} (${target_mode})?"
+  fi
+
+  if is_dry_run; then
+    echo "${prompt}"
+    return 0
+  fi
+
+  if ! can_prompt_user && ! assume_yes; then
+    echo "${prompt} Continuing without an interactive prompt." >&2
+    return 0
+  fi
+
+  if confirm_with_tty "$prompt"; then
+    return 0
+  fi
+
+  if can_prompt_user; then
+    echo "Keeping the existing installation unchanged."
+    exit 0
+  fi
+
+  echo "Existing installation detected; continuing without an interactive prompt." >&2
+}
+
+write_install_metadata() {
+  local install_ref="$1"
+  local install_mode="$2"
+  local metadata_dir metadata_file
+  metadata_dir="$(install_metadata_dir)"
+  metadata_file="$(install_metadata_file)"
+
+  if is_dry_run; then
+    echo "Would write install metadata to ${metadata_file} (${install_ref}, ${install_mode})."
+    return
+  fi
+
+  mkdir -p "$metadata_dir"
+  cat > "$metadata_file" <<EOF
+INSTALL_REF=${install_ref}
+INSTALL_MODE=${install_mode}
+INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
+
 write_launcher() {
   local path="$1"
   local bin_dir="$2"
@@ -378,6 +515,8 @@ install_release_tree() {
   if have_cmd kbuildsycoca6; then
     kbuildsycoca6 >/dev/null 2>&1 || true
   fi
+
+  write_install_metadata "${OPEN_ONEDRIVE_INSTALL_REF_ACTUAL}" "${OPEN_ONEDRIVE_INSTALL_MODE_ACTUAL}"
 }
 
 install_from_release() {
@@ -431,6 +570,7 @@ install_from_source() {
 
   echo "Installing from temporary checkout at ${source_dir}..."
   bash "$source_dir/scripts/install.sh" "$@"
+  write_install_metadata "${OPEN_ONEDRIVE_INSTALL_REF_ACTUAL}" "${OPEN_ONEDRIVE_INSTALL_MODE_ACTUAL}"
 }
 
 main() {
@@ -440,6 +580,15 @@ main() {
   if [[ "${OPEN_ONEDRIVE_BUILD_FROM_SOURCE:-0}" == "1" ]]; then
     mode="source"
   fi
+
+  if [[ "$mode" == "release" ]]; then
+    OPEN_ONEDRIVE_INSTALL_REF_ACTUAL="$(release_target_ref "$ref")"
+  else
+    OPEN_ONEDRIVE_INSTALL_REF_ACTUAL="source@${ref:-main}"
+  fi
+  OPEN_ONEDRIVE_INSTALL_MODE_ACTUAL="$mode"
+
+  check_existing_installation "$OPEN_ONEDRIVE_INSTALL_REF_ACTUAL" "$OPEN_ONEDRIVE_INSTALL_MODE_ACTUAL"
 
   OPEN_ONEDRIVE_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/open-onedrive-install.XXXXXX")"
   trap 'rm -rf "${OPEN_ONEDRIVE_TMPDIR:-}"' EXIT

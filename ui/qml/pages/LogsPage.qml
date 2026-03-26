@@ -64,6 +64,9 @@ Kirigami.Page {
                     || message.indexOf("copyto") >= 0
                     || message.indexOf("rescan") >= 0
         }
+        if (page.filterMode === 3) {
+            return level === "error"
+        }
         return true
     }
 
@@ -125,66 +128,65 @@ Kirigami.Page {
         anchors.margins: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
 
-        RowLayout {
+        Rectangle {
             Layout.fillWidth: true
-
-            Kirigami.Heading {
-                text: qsTr("Recent daemon and rclone logs")
-                level: 1
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            Button {
-                text: qsTr("Copy filtered")
-                icon.name: "edit-copy"
-                enabled: page.filteredEntries.length > 0
-                onClicked: page.copyEntries(page.filteredEntries)
-            }
-
-            Button {
-                text: qsTr("Copy all")
-                icon.name: "edit-copy"
-                enabled: shellBackend.recentLogEntries.length > 0
-                onClicked: page.copyEntries(shellBackend.recentLogEntries)
-            }
-
-            Button {
-                text: qsTr("Refresh")
-                icon.name: "view-refresh"
-                onClicked: shellBackend.refreshLogs()
-            }
-        }
-
-        Kirigami.InlineMessage {
-            Layout.fillWidth: true
-            visible: page.hasPinnedIssue
-            type: shellBackend.lastSyncError.length > 0
-                  || shellBackend.connectionState === "Error"
-                  || shellBackend.mountState === "Error"
-                  || shellBackend.syncState === "Error"
-                  || shellBackend.conflictCount > 0
-                  || !shellBackend.daemonReachable
-                  ? Kirigami.MessageType.Error
-                  : Kirigami.MessageType.Information
-            showCloseButton: false
-            text: page.pinnedIssueText
-        }
-
-        Frame {
-            Layout.fillWidth: true
+            radius: Kirigami.Units.largeSpacing
+            color: "#f7fafc"
+            border.width: 1
+            border.color: Qt.rgba(7 / 255, 31 / 255, 52 / 255, 0.08)
 
             ColumnLayout {
                 anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
                 spacing: Kirigami.Units.mediumSpacing
 
-                Label {
+                RowLayout {
                     Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Search recent entries by source, severity, message text, or timestamp. Copy only the filtered slice when you need to attach focused diagnostics.")
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Kirigami.Heading {
+                            text: qsTr("Recent daemon and rclone activity")
+                            level: 1
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.neutralTextColor
+                            text: qsTr("Filter for the slice you need, then copy only that context when you are debugging recovery work.")
+                        }
+                    }
+
+                    Button {
+                        text: qsTr("Copy visible")
+                        icon.name: "edit-copy"
+                        enabled: page.filteredEntries.length > 0
+                        onClicked: page.copyEntries(page.filteredEntries)
+                    }
+
+                    Button {
+                        text: qsTr("Refresh")
+                        icon.name: "view-refresh"
+                        onClicked: shellBackend.refreshLogs()
+                    }
+                }
+
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    visible: page.hasPinnedIssue
+                    type: shellBackend.lastSyncError.length > 0
+                          || shellBackend.connectionState === "Error"
+                          || shellBackend.mountState === "Error"
+                          || shellBackend.syncState === "Error"
+                          || shellBackend.conflictCount > 0
+                          || !shellBackend.daemonReachable
+                          ? Kirigami.MessageType.Error
+                          : Kirigami.MessageType.Information
+                    showCloseButton: false
+                    text: page.pinnedIssueText
                 }
 
                 RowLayout {
@@ -201,18 +203,29 @@ Kirigami.Page {
                         }
                     }
 
-                    ComboBox {
-                        model: [
-                            qsTr("All entries"),
-                            qsTr("Warnings and errors"),
-                            qsTr("Transfers")
-                        ]
-
-                        onCurrentIndexChanged: {
-                            page.filterMode = currentIndex
+                    Button {
+                        text: qsTr("Clear")
+                        visible: page.filterText.length > 0
+                        onClicked: {
+                            page.filterText = ""
                             page.rebuildFilteredEntries()
                         }
                     }
+                }
+
+                TabBar {
+                    Layout.fillWidth: true
+                    currentIndex: page.filterMode
+
+                    onCurrentIndexChanged: {
+                        page.filterMode = currentIndex
+                        page.rebuildFilteredEntries()
+                    }
+
+                    TabButton { text: qsTr("All") }
+                    TabButton { text: qsTr("Attention") }
+                    TabButton { text: qsTr("Transfers") }
+                    TabButton { text: qsTr("Errors") }
                 }
 
                 Label {
@@ -229,7 +242,7 @@ Kirigami.Page {
             visible: shellBackend.recentLogEntries.length === 0
             wrapMode: Text.WordWrap
             color: Kirigami.Theme.neutralTextColor
-            text: qsTr("No structured log entries yet. Start the sign-in flow or the filesystem to capture daemon and rclone output.")
+            text: qsTr("No structured log entries yet. Start sign-in or the filesystem to capture daemon and rclone output.")
         }
 
         Label {
@@ -248,15 +261,21 @@ Kirigami.Page {
             spacing: Kirigami.Units.smallSpacing
             model: page.filteredEntries
 
-            delegate: Frame {
+            delegate: Rectangle {
                 required property var modelData
                 readonly property var entry: modelData
 
                 width: ListView.view.width
-                padding: Kirigami.Units.mediumSpacing
+                radius: Kirigami.Units.largeSpacing
+                color: "white"
+                border.width: 1
+                border.color: Qt.rgba(7 / 255, 31 / 255, 52 / 255, 0.08)
+                implicitHeight: logLayout.implicitHeight + Kirigami.Units.largeSpacing
 
                 ColumnLayout {
+                    id: logLayout
                     anchors.fill: parent
+                    anchors.margins: Kirigami.Units.mediumSpacing
                     spacing: Kirigami.Units.smallSpacing
 
                     RowLayout {

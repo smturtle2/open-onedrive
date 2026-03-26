@@ -51,22 +51,22 @@
 - 커스텀 FUSE 위에 올린 보이는 OneDrive 루트 폴더
 - 일반 Linux 앱에서도 동작하는 on-demand hydrate
 - 파일별 `Keep on this device` / `Make online-only`
-- Overview, Explorer, Setup, Logs를 나눠 제공하는 상태 인식 셸
+- 좌측 레일 기반 Overview, Explorer, Setup, Logs 셸
 - 큐 깊이, backing 사용량, pinned 파일 수, 마지막 동기화 상태를 한 번에 보는 compact runtime inspector
-- 경로를 직접 입력하지 않아도 되는 searchable Explorer 화면
+- 경로를 직접 입력하지 않아도 되는 debounced 전체 검색과 direct residency action을 갖춘 Explorer 화면
 - level, source, 시간, 최신 문제 고정을 포함한 structured logs 화면
 - 루트 경로를 바꿀 때 안전하면 숨김 hydrated cache도 같이 옮기는 흐름
 - `~/.config/rclone/rclone.conf`와 분리된 app-owned `rclone.conf`
 - Dolphin overlay와 context action을 통한 탐색기 안 residency 제어
 - tray 지속성, CLI, Dolphin 통합이 하나의 daemon 상태를 공유
-- checksum 검증과 launcher smoke test가 포함된 `curl ... | bash` 설치 경로
+- checksum 검증, 기존 설치 업그레이드 확인, launcher smoke test가 포함된 `curl ... | bash` 설치 경로
 
 ## 운영 표면
 
-- `Overview`: primary action, compact runtime inspector, diagnostics를 한 페이지에 모읍니다
-- `Explorer`: path-state 데이터를 탐색하고 검색하며, 파일별 residency를 경로 입력 없이 바꿉니다
+- `Overview`: 다음 액션, compact runtime inspector, recent activity를 한 페이지에 모읍니다
+- `Explorer`: path-state 데이터를 탐색하고 debounced 전체 검색을 수행하며, 파일별 residency를 경로 입력 없이 바꿉니다
 - `Setup`: 첫 연결, root path 변경, remote repair, clean disconnect를 같이 다룹니다
-- `Logs`: 구조화된 daemon 및 `rclone` 출력을 검색하고, 최신 문제를 고정하고, 필터된 로그를 복사해 복구 작업을 돕습니다
+- `Logs`: 구조화된 daemon 및 `rclone` 출력을 검색하고, `All / Attention / Transfers / Errors` 필터로 좁히고, 필터된 로그를 복사해 복구 작업을 돕습니다
 - `Tray`: 창을 닫아도 제어면을 유지하고, 백그라운드에서 actionable error만 알립니다
 - `Dolphin`: visible root에서 바로 per-file residency를 overlay와 context action으로 노출합니다
 
@@ -110,14 +110,22 @@ release artifact 대신 source 설치:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
 ```
 
+자동화 환경에서 interactive upgrade prompt 생략:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
+```
+
 release installer가 하는 일:
 
 - Linux release archive와 SHA256 파일 다운로드
+- 기존 설치가 있으면 interactive upgrade / reinstall 여부 확인
 - checksum 검증 후 압축 해제
 - 바이너리, KDE plugin, icon, launcher, user service를 홈 디렉터리에 설치
 - `rclone`이 없으면 자동 설치 시도
 - FUSE 3 런타임이 없으면 경고 출력
 - `systemd --user`가 있으면 `openonedrived.service` 활성화
+- 이후 업그레이드 비교를 위해 `~/.local/share/open-onedrive/install-metadata.env`에 설치 메타데이터 기록
 
 실행과 확인:
 
@@ -131,7 +139,7 @@ openonedrivectl status
 
 1. `~/OneDrive` 같은 빈 루트 폴더를 고릅니다.
 2. `rclone`이 시작한 Microsoft 브라우저 로그인 과정을 끝냅니다.
-3. daemon이 setup 대기, 정상 실행, 복구 필요 중 어떤 상태인지에 따라 셸이 Setup, Overview, Explorer, Logs로 먼저 안내합니다.
+3. 좌측 레일 셸에서 Setup, Overview, Explorer, Logs를 오가며 현재 상태를 계속 확인합니다.
 4. 필요하면 파일시스템을 시작합니다.
 5. Dolphin, 터미널, VS Code, LibreOffice 같은 일반 앱에서 루트 폴더를 엽니다.
 6. Explorer, tray, CLI, Dolphin action으로 파일을 로컬 유지하거나 다시 online-only로 되돌립니다.
@@ -153,8 +161,8 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 
 복구 표면:
 
-- 셸은 복구가 다음 단계일 때 Setup 또는 Logs를 먼저 열어줍니다
-- Explorer 페이지는 searchable path-state view와 bulk residency action을 제공합니다
+- 좌측 레일 셸은 Setup과 Logs를 항상 한 번에 열 수 있게 두고, 다음 권장 화면만 따로 보여줍니다
+- Explorer 페이지는 searchable path-state view와 bulk / row-level residency action을 제공합니다
 - logs 페이지는 structured daemon / `rclone` 출력에 검색과 필터를 적용해 복구 맥락을 좁혀볼 수 있습니다
 - tray 알림은 백그라운드의 actionable error 중심으로만 보내고, 창을 닫아도 tray 제어면은 남깁니다
 - Dolphin overlay는 daemon signal로 cache를 무효화해 local-only 추정치에 의존하지 않습니다
@@ -165,6 +173,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 
 - `~/.config/open-onedrive/config.toml`
 - `~/.config/open-onedrive/rclone/rclone.conf`
+- `~/.local/share/open-onedrive/install-metadata.env`
 - `~/.local/state/open-onedrive/runtime-state.toml`
 - `~/.local/state/open-onedrive/path-state.sqlite3`
 

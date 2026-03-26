@@ -145,6 +145,8 @@ struct UploadScheduler {
     scheduled: BTreeSet<String>,
     retry_after_current: BTreeSet<String>,
     worker_running: bool,
+    stop_after_current: bool,
+    active_uploads: u32,
 }
 
 pub struct RcloneBackend {
@@ -339,6 +341,7 @@ impl RcloneBackend {
         let mut updated_config = self.current_config().await;
         let previous_root_path = updated_config.root_path.clone();
         validate_root_path(&requested_path, &updated_config.backing_dir_name)?;
+        self.pause_uploads_for_lifecycle(true).await?;
 
         let should_restart = self.runtime.read().await.filesystem_state == FilesystemState::Running;
         self.stop_filesystem().await?;
@@ -360,6 +363,10 @@ impl RcloneBackend {
             self.start_filesystem().await?;
         } else {
             self.persist_runtime().await?;
+        }
+        if !self.runtime.read().await.sync_paused && self.runtime.read().await.remote_configured {
+            self.resume_upload_queue();
+            self.enqueue_dirty_uploads()?;
         }
         Ok(())
     }
@@ -486,6 +493,7 @@ impl RcloneBackend {
     pub async fn disconnect(self: &Arc<Self>) -> Result<()> {
         self.stop_connect_process().await?;
         self.stop_rescan_loop().await;
+        self.pause_uploads_for_lifecycle(true).await?;
         self.stop_filesystem().await?;
         remove_file_if_exists(&self.paths.rclone_config_file)?;
         self.clear_backing_root()?;
@@ -683,6 +691,7 @@ impl RcloneBackend {
 
     pub async fn pause_sync(&self) -> Result<()> {
         self.stop_rescan_loop().await;
+        self.pause_uploads_for_lifecycle(true).await?;
         {
             let mut runtime = self.runtime.write().await;
             runtime.sync_paused = true;
@@ -703,6 +712,7 @@ impl RcloneBackend {
         }
         self.persist_runtime().await?;
         self.emit_event(BackendEvent::SyncStateChanged);
+        self.resume_upload_queue();
         self.restart_rescan_loop().await;
         self.enqueue_dirty_uploads()?;
         self.spawn_rescan("resume");
@@ -883,6 +893,7 @@ impl RcloneBackend {
     async fn prepare_remote_repair(self: &Arc<Self>) -> Result<()> {
         self.stop_connect_process().await?;
         self.stop_rescan_loop().await;
+        self.pause_uploads_for_lifecycle(true).await?;
         self.stop_filesystem().await?;
         remove_file_if_exists(&self.paths.rclone_config_file)?;
 
@@ -969,7 +980,10 @@ impl RcloneBackend {
                 runtime.last_sync_error = error.clone();
                 error_message = Some(error);
             } else {
-                runtime.sync_state = if runtime.sync_paused {
+                runtime.sync_state = if runtime.pending_downloads > 0 || runtime.pending_uploads > 0
+                {
+                    SyncState::Syncing
+                } else if runtime.sync_paused {
                     SyncState::Paused
                 } else {
                     SyncState::Idle
@@ -1506,27 +1520,103 @@ impl RcloneBackend {
                 scheduler.scheduled.insert(relative_path.clone());
                 scheduler.queue.push_back(relative_path.clone());
             }
-            if scheduler.worker_running {
+            if scheduler.stop_after_current || scheduler.worker_running {
                 false
             } else {
                 scheduler.worker_running = true;
                 true
             }
         };
-
-        {
-            let mut runtime = self.runtime_write_guard();
-            runtime.pending_uploads = runtime.pending_uploads.saturating_add(1);
-            runtime.sync_state = SyncState::Syncing;
-        }
-        if let Err(error) = self.persist_runtime_blocking() {
-            warn!("unable to persist runtime state: {error:#}");
-        }
-        self.emit_event(BackendEvent::SyncStateChanged);
+        let _ = self.sync_upload_runtime_from_scheduler_blocking();
 
         if should_spawn_worker {
             self.spawn_upload_worker();
         }
+    }
+
+    fn sync_upload_runtime_from_scheduler_blocking(&self) -> Result<()> {
+        let pending_uploads = {
+            let scheduler = self
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.queue.len() as u32 + scheduler.active_uploads
+        };
+
+        {
+            let mut runtime = self.runtime_write_guard();
+            runtime.pending_uploads = pending_uploads;
+            if runtime.pending_uploads > 0 || runtime.pending_downloads > 0 {
+                runtime.sync_state = SyncState::Syncing;
+            } else if runtime.sync_paused {
+                runtime.sync_state = SyncState::Paused;
+            } else if runtime.sync_state != SyncState::Error {
+                runtime.sync_state = SyncState::Idle;
+            }
+        }
+
+        self.persist_runtime_blocking()?;
+        self.emit_event(BackendEvent::SyncStateChanged);
+        Ok(())
+    }
+
+    fn resume_upload_queue(self: &Arc<Self>) {
+        let should_spawn = {
+            let mut scheduler = self
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.stop_after_current = false;
+            if scheduler.worker_running || scheduler.queue.is_empty() {
+                false
+            } else {
+                scheduler.worker_running = true;
+                true
+            }
+        };
+        let _ = self.sync_upload_runtime_from_scheduler_blocking();
+        if should_spawn {
+            self.spawn_upload_worker();
+        }
+    }
+
+    async fn pause_uploads_for_lifecycle(&self, clear_queue: bool) -> Result<()> {
+        {
+            let mut scheduler = self
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.stop_after_current = true;
+        }
+
+        loop {
+            let active_uploads = {
+                let scheduler = self
+                    .upload_scheduler
+                    .lock()
+                    .expect("upload scheduler poisoned");
+                scheduler.active_uploads
+            };
+            if active_uploads == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        if clear_queue {
+            let mut scheduler = self
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.queue.clear();
+            scheduler.scheduled.clear();
+            scheduler.retry_after_current.clear();
+            scheduler.worker_running = false;
+            scheduler.active_uploads = 0;
+        }
+
+        self.sync_upload_runtime_from_scheduler_blocking()?;
+        Ok(())
     }
 
     fn enqueue_dirty_uploads(self: &Arc<Self>) -> Result<u32> {
@@ -1552,11 +1642,20 @@ impl RcloneBackend {
                         .upload_scheduler
                         .lock()
                         .expect("upload scheduler poisoned");
-                    match scheduler.queue.pop_front() {
-                        Some(path) => Some(path),
-                        None => {
-                            scheduler.worker_running = false;
-                            None
+                    if scheduler.stop_after_current {
+                        scheduler.worker_running = false;
+                        None
+                    } else {
+                        match scheduler.queue.pop_front() {
+                            Some(path) => {
+                                scheduler.active_uploads =
+                                    scheduler.active_uploads.saturating_add(1);
+                                Some(path)
+                            }
+                            None => {
+                                scheduler.worker_running = false;
+                                None
+                            }
                         }
                     }
                 };
@@ -1595,6 +1694,7 @@ impl RcloneBackend {
                         .upload_scheduler
                         .lock()
                         .expect("upload scheduler poisoned");
+                    scheduler.active_uploads = scheduler.active_uploads.saturating_sub(1);
                     if scheduler.retry_after_current.remove(&relative_path) {
                         scheduler.queue.push_back(relative_path.clone());
                         true
@@ -1604,19 +1704,7 @@ impl RcloneBackend {
                     }
                 };
 
-                {
-                    let mut runtime = backend.runtime.write().await;
-                    runtime.pending_uploads = runtime.pending_uploads.saturating_sub(1);
-                    if runtime.pending_uploads == 0 && runtime.pending_downloads == 0 {
-                        runtime.sync_state = if runtime.sync_paused {
-                            SyncState::Paused
-                        } else {
-                            SyncState::Idle
-                        };
-                    }
-                }
-                let _ = backend.persist_runtime().await;
-                backend.emit_event(BackendEvent::SyncStateChanged);
+                let _ = backend.sync_upload_runtime_from_scheduler_blocking();
 
                 if should_requeue {
                     backend.append_warning_log(
@@ -3818,6 +3906,93 @@ mod tests {
             .complete_sync_activity(None)
             .await
             .expect("complete sync activity");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn complete_sync_activity_stays_syncing_while_transfers_remain() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        {
+            let mut runtime = backend.runtime.write().await;
+            runtime.pending_uploads = 1;
+            runtime.sync_state = SyncState::Scanning;
+        }
+
+        backend
+            .complete_sync_activity(None)
+            .await
+            .expect("complete sync activity");
+
+        let status = backend.status().await.expect("status");
+        assert_eq!(status.sync_state, SyncState::Syncing);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pause_sync_clears_queued_uploads_before_marking_paused() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        {
+            let mut scheduler = backend
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.queue.push_back("Docs/report.txt".into());
+            scheduler.scheduled.insert("Docs/report.txt".into());
+            scheduler.worker_running = true;
+        }
+        backend
+            .sync_upload_runtime_from_scheduler_blocking()
+            .expect("sync runtime");
+
+        backend.pause_sync().await.expect("pause sync");
+
+        let scheduler = backend
+            .upload_scheduler
+            .lock()
+            .expect("upload scheduler poisoned");
+        assert!(scheduler.queue.is_empty());
+        assert!(scheduler.scheduled.is_empty());
+        assert!(scheduler.stop_after_current);
+        drop(scheduler);
+
+        let status = backend.status().await.expect("status");
+        assert_eq!(status.pending_uploads, 0);
+        assert_eq!(status.sync_state, SyncState::Paused);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn prepare_remote_repair_clears_queued_uploads() {
+        let dir = tempdir().expect("tempdir");
+        let backend = build_backend(dir.path()).await;
+        {
+            let mut scheduler = backend
+                .upload_scheduler
+                .lock()
+                .expect("upload scheduler poisoned");
+            scheduler.queue.push_back("Docs/report.txt".into());
+            scheduler.scheduled.insert("Docs/report.txt".into());
+            scheduler.worker_running = true;
+        }
+        backend
+            .sync_upload_runtime_from_scheduler_blocking()
+            .expect("sync runtime");
+
+        backend
+            .prepare_remote_repair()
+            .await
+            .expect("prepare repair");
+
+        let scheduler = backend
+            .upload_scheduler
+            .lock()
+            .expect("upload scheduler poisoned");
+        assert!(scheduler.queue.is_empty());
+        assert!(scheduler.scheduled.is_empty());
+        assert!(scheduler.stop_after_current);
+        drop(scheduler);
+
+        let status = backend.status().await.expect("status");
+        assert_eq!(status.pending_uploads, 0);
     }
 
     #[tokio::test(flavor = "multi_thread")]

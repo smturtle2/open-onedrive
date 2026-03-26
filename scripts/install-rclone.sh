@@ -9,6 +9,10 @@ is_dry_run() {
   [[ "${OPEN_ONEDRIVE_DRY_RUN:-0}" == "1" ]]
 }
 
+assume_yes() {
+  [[ "${OPEN_ONEDRIVE_ASSUME_YES:-0}" == "1" ]]
+}
+
 run_cmd() {
   if is_dry_run; then
     printf '+'
@@ -40,7 +44,7 @@ install_with_dnf() {
 }
 
 install_with_pacman() {
-  run_privileged pacman -Sy --noconfirm rclone
+  run_privileged pacman -S --needed --noconfirm rclone
 }
 
 install_with_zypper() {
@@ -96,8 +100,63 @@ attempt_install() {
   return 1
 }
 
+can_prompt_user() {
+  [[ -e /dev/tty && -r /dev/tty && -w /dev/tty && ( -t 1 || -t 2 ) ]]
+}
+
+confirm_with_tty() {
+  local prompt="$1"
+  if assume_yes; then
+    return 0
+  fi
+  if ! can_prompt_user; then
+    return 0
+  fi
+
+  local answer
+  while true; do
+    printf '%s [y/N] ' "$prompt" > /dev/tty
+    if ! IFS= read -r answer < /dev/tty; then
+      return 1
+    fi
+    case "${answer}" in
+      [Yy]|[Yy][Ee][Ss])
+        return 0
+        ;;
+      ""|[Nn]|[Nn][Oo])
+        return 1
+        ;;
+      *)
+        printf 'Please answer y or n.\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
 main() {
   if have_cmd rclone; then
+    local current_version
+    current_version="$(rclone version 2>/dev/null | head -n1 | sed 's/^rclone //')"
+    if [[ "${OPEN_ONEDRIVE_UPGRADE_RCLONE:-0}" != "1" ]]; then
+      if [[ -n "$current_version" ]]; then
+        echo "Using existing rclone ${current_version}."
+      else
+        echo "Using existing rclone installation."
+      fi
+      exit 0
+    fi
+
+    if is_dry_run; then
+      echo "Would upgrade existing rclone ${current_version:-unknown version}."
+    elif ! can_prompt_user && ! assume_yes; then
+      echo "rclone ${current_version:-unknown version} is already installed. Continuing with a non-interactive upgrade."
+    elif ! confirm_with_tty "rclone ${current_version:-unknown version} is already installed. Upgrade it anyway?"; then
+      echo "Keeping the existing rclone installation."
+      exit 0
+    fi
+  fi
+
+  if have_cmd rclone && [[ "${OPEN_ONEDRIVE_UPGRADE_RCLONE:-0}" != "1" ]]; then
     exit 0
   fi
 

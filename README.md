@@ -51,22 +51,22 @@ The result is a normal local path for regular Linux apps, with explicit per-file
 - visible root folder backed by a custom FUSE filesystem
 - on-demand hydration for normal Linux apps, not only KDE apps
 - per-file `Keep on this device` and `Make online-only`
-- status-aware shell with dedicated Overview, Explorer, Setup, and Logs surfaces
+- left-rail shell with dedicated Overview, Explorer, Setup, and Logs surfaces
 - compact runtime inspector for queue depth, backing usage, pinned files, and last sync state
-- searchable in-app Explorer for residency control without typing paths by hand
+- searchable in-app Explorer with debounced whole-tree search, denser rows, and direct residency actions
 - structured logs with level, source, time, and a pinned latest issue for recovery work
 - root-path moves carry the hidden hydrated backing store to the new root when it is safe to do so
 - app-owned `rclone.conf` under XDG paths, isolated from `~/.config/rclone/rclone.conf`
 - Dolphin overlays and file actions for residency control inside the visible root
 - tray persistence, CLI, and Dolphin integration, all backed by the same daemon state
-- stable one-line installer with checksum-verified release archives and staged launcher smoke tests
+- stable one-line installer with checksum-verified release archives, existing-install upgrade checks, and staged launcher smoke tests
 
 ## Operator Surfaces
 
-- `Overview`: the primary action, compact runtime inspector, and diagnostics stay together
-- `Explorer`: browse path-state data, search the tree, and apply per-file residency changes without manual path input
+- `Overview`: a compact operator surface for the next action, runtime inspector, and recent activity
+- `Explorer`: browse path-state data, run debounced whole-tree search, and apply per-file residency changes without manual path input
 - `Setup`: first-run connection, root-path edits, remote repair, and clean disconnect stay together
-- `Logs`: search structured daemon and `rclone` output, pin the latest issue, and copy filtered recovery context
+- `Logs`: search structured daemon and `rclone` output, switch between All / Attention / Transfers / Errors, and copy filtered recovery context
 - `Tray`: closing the window keeps the controls resident and reserves notifications for actionable background errors
 - `Dolphin`: overlays and context actions expose per-file residency from the visible root itself
 
@@ -110,14 +110,22 @@ Install from source instead of release artifacts:
 curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_BUILD_FROM_SOURCE=1 bash
 ```
 
+Skip interactive upgrade prompts in automation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smturtle2/open-onedrive/main/install.sh | env OPEN_ONEDRIVE_ASSUME_YES=1 bash
+```
+
 What the release installer does:
 
 - downloads the Linux release archive and SHA256 file
+- checks whether an existing install is present and prompts before interactive upgrades or reinstalls
 - verifies the archive before extracting it
 - installs binaries, KDE plugins, icon, launcher, and user service into your home directory
 - installs `rclone` automatically if it is missing
 - warns when FUSE 3 runtime support is missing
 - enables `openonedrived.service` for the current user when `systemd --user` is available
+- writes install metadata under `~/.local/share/open-onedrive/install-metadata.env` for later upgrade checks
 
 Launch and verify:
 
@@ -131,7 +139,7 @@ Typical first run:
 
 1. Choose an empty visible root such as `~/OneDrive`.
 2. Finish the Microsoft browser sign-in flow started by `rclone`.
-3. Let the shell route you to Setup, Overview, Explorer, or Logs depending on whether the daemon is waiting for setup, running normally, or needs recovery.
+3. Use the left-rail workspace shell to move between Setup, Overview, Explorer, and Logs while the current status stays visible.
 4. Start the filesystem if it is not already running.
 5. Open the visible root from Dolphin, a terminal, VS Code, LibreOffice, or another regular app.
 6. Keep selected files local or return them to online-only mode from Explorer, the tray, the CLI, or Dolphin actions.
@@ -153,8 +161,8 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 
 Recovery surfaces:
 
-- the shell routes to Setup or Logs first when recovery is the next meaningful step
-- the Explorer page exposes searchable path-state data with bulk residency actions
+- the left-rail shell keeps Setup and Logs one click away while still surfacing the recommended next view
+- the Explorer page exposes searchable path-state data with bulk and row-level residency actions
 - the logs page supports quick search plus filtered recovery work around structured daemon and `rclone` output
 - tray notifications are reserved for actionable background errors, while closing the window keeps the tray controls resident
 - Dolphin overlays invalidate from daemon signals rather than using a disconnected local cache
@@ -165,6 +173,7 @@ The app stores its own state under XDG project paths, typically:
 
 - `~/.config/open-onedrive/config.toml`
 - `~/.config/open-onedrive/rclone/rclone.conf`
+- `~/.local/share/open-onedrive/install-metadata.env`
 - `~/.local/state/open-onedrive/runtime-state.toml`
 - `~/.local/state/open-onedrive/path-state.sqlite3`
 

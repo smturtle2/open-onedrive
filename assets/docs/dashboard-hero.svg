@@ -6,15 +6,15 @@
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
   <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive shell</text>
 
-  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">State-aware shell, compact recovery, one visible folder.</text>
-  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">Overview, Explorer, Setup, and Logs shift around what the daemon needs next, while the hidden hydrated cache follows safe root-path moves.</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">Left-rail shell, direct residency actions, one visible folder.</text>
+  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">Overview, Explorer, Setup, and Logs stay fixed in one operator shell, while the hidden hydrated cache follows safe root-path moves.</text>
 
   <g filter="url(#shadow)">
     <rect x="80" y="244" width="658" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>
     <rect x="104" y="272" width="610" height="108" rx="24" fill="#102234"/>
     <text x="132" y="316" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="16">State</text>
     <text x="132" y="350" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="34" font-weight="700">Filesystem running</text>
-    <text x="132" y="374" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="16">Primary action, tray note, and recommended page shift with daemon status.</text>
+    <text x="132" y="374" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="16">Primary action, visible navigation, and the next recommended page stay together in one stable shell.</text>
     <rect x="534" y="298" width="156" height="34" rx="17" fill="#1D4C77"/>
     <text x="565" y="320" fill="#F3F8FF" font-family="Arial, sans-serif" font-size="15">Open Folder</text>
     <rect x="534" y="340" width="156" height="34" rx="17" fill="#152C45"/>
@@ -36,8 +36,8 @@
 
     <rect x="420" y="520" width="294" height="100" rx="20" fill="#11263A"/>
     <text x="448" y="552" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Logs</text>
-    <text x="448" y="586" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Search the latest issue</text>
-    <text x="448" y="608" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">Pinned recovery text plus quick filters narrow recent daemon and rclone output.</text>
+    <text x="448" y="586" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Filter the latest issue fast</text>
+    <text x="448" y="608" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="15">Pinned recovery text plus All / Attention / Transfers / Errors filters narrow recent daemon and rclone output.</text>
   </g>
 
   <g filter="url(#shadow)">

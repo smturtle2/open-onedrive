@@ -6,7 +6,7 @@
     <rect x="70" y="72" width="534" height="496" rx="30" fill="#0D1826" stroke="#233A5A"/>
     <text x="114" y="138" fill="#AFC1DD" font-family="Arial, sans-serif" font-size="24">open-onedrive</text>
     <text x="114" y="214" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="54" font-weight="700">OneDrive as a normal KDE folder.</text>
-    <text x="114" y="286" fill="#C2D1E6" font-family="Arial, sans-serif" font-size="24">State-aware shell, on-demand hydration, per-file residency, searchable logs, tray persistence, and safe hidden-cache moves between visible roots.</text>
+    <text x="114" y="286" fill="#C2D1E6" font-family="Arial, sans-serif" font-size="24">Left-rail shell, on-demand hydration, per-file residency, direct Explorer actions, searchable logs, tray persistence, and safe hidden-cache moves between visible roots.</text>
 
     <rect x="114" y="344" width="198" height="42" rx="21" fill="#153454"/>
     <text x="142" y="371" fill="#EAF1FB" font-family="Arial, sans-serif" font-size="18">KDE Plasma 6 + Dolphin</text>
@@ -22,7 +22,7 @@
     <rect x="660" y="92" width="550" height="456" rx="32" fill="#0D1725" stroke="#243B5B"/>
     <rect x="694" y="126" width="482" height="104" rx="24" fill="#102234"/>
     <text x="722" y="166" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">State-aware shell</text>
-    <text x="722" y="202" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Primary action and recommended page shift with daemon status.</text>
+    <text x="722" y="202" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="30" font-weight="700">Primary action, fixed navigation, and the next recovery step stay in one shell.</text>
 
     <rect x="694" y="254" width="482" height="90" rx="20" fill="#0F2134"/>
     <text x="722" y="286" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Compact runtime inspector</text>
@@ -30,8 +30,8 @@
 
     <rect x="694" y="366" width="228" height="142" rx="22" fill="#11263A"/>
     <text x="720" y="400" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Logs</text>
-    <text x="720" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Search and pin the latest issue</text>
-    <text x="720" y="458" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Recent daemon and rclone output stays close to retry and repair flows.</text>
+    <text x="720" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="20" font-weight="700">Filter and pin the latest issue</text>
+    <text x="720" y="458" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Recent daemon and rclone output stays close to retry and repair flows with fast severity filters.</text>
 
     <rect x="948" y="366" width="228" height="142" rx="22" fill="#11263A"/>
     <text x="974" y="400" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Tray + root move</text>

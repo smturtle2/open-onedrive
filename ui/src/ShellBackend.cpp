@@ -56,6 +56,20 @@ bool isDaemonUnavailableError(const QDBusError &error)
         return false;
     }
 }
+
+QString actionLabelForMethod(const QString &method)
+{
+    if (method == QStringLiteral("KeepLocal")) {
+        return QObject::tr("Keep on device");
+    }
+    if (method == QStringLiteral("MakeOnlineOnly")) {
+        return QObject::tr("Make online-only");
+    }
+    if (method == QStringLiteral("RetryTransfer")) {
+        return QObject::tr("Retry transfer");
+    }
+    return method;
+}
 }
 
 ShellBackend::ShellBackend(QObject *parent)
@@ -1273,11 +1287,12 @@ bool ShellBackend::invokePathAction(const QString &method,
 
     const QDBusReply<uint> reply = iface.call(method, QStringList{normalizedPath});
     if (!reply.isValid()) {
-        updateStatusMessage(tr("%1 failed: %2").arg(method, reply.error().message()));
+        updateStatusMessage(tr("%1 failed: %2").arg(actionLabelForMethod(method), reply.error().message()));
         return false;
     }
 
-    updateStatusMessage(tr("%1 applied to %2 item(s).").arg(method, QString::number(reply.value())));
+    updateStatusMessage(
+        tr("%1 applied to %2 item(s).").arg(actionLabelForMethod(method), QString::number(reply.value())));
     return true;
 }
 
@@ -1308,11 +1323,12 @@ bool ShellBackend::invokePathsAction(const QString &method,
 
     const QDBusReply<uint> reply = iface.call(method, normalizedPaths);
     if (!reply.isValid()) {
-        updateStatusMessage(tr("%1 failed: %2").arg(method, reply.error().message()));
+        updateStatusMessage(tr("%1 failed: %2").arg(actionLabelForMethod(method), reply.error().message()));
         return false;
     }
 
-    updateStatusMessage(tr("%1 applied to %2 item(s).").arg(method, QString::number(reply.value())));
+    updateStatusMessage(
+        tr("%1 applied to %2 item(s).").arg(actionLabelForMethod(method), QString::number(reply.value())));
     return true;
 }
 

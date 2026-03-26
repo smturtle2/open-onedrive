@@ -4,10 +4,10 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.ApplicationWindow {
     id: root
-    width: 1040
-    height: 720
-    minimumWidth: 820
-    minimumHeight: 620
+    width: 1220
+    height: 780
+    minimumWidth: 920
+    minimumHeight: 660
     title: qsTr("open-onedrive")
 
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
