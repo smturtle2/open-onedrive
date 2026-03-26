@@ -1,6 +1,6 @@
 use crate::app::OpenOneDriveApp;
 use openonedrive_ipc_types::{
-    ConnectionState, FilesystemState, PathState, StatusSnapshot, SyncState,
+    ConnectionState, FilesystemState, LogEntry, PathState, StatusSnapshot, SyncState,
 };
 use std::sync::Arc;
 use zbus::{SignalContext, interface};
@@ -151,6 +151,20 @@ impl OpenOneDriveBus {
             .map_err(map_error)
     }
 
+    async fn get_recent_logs(&self, limit: u32) -> zbus::fdo::Result<Vec<LogEntry>> {
+        self.app
+            .get_recent_logs(limit as usize)
+            .await
+            .map_err(map_error)
+    }
+
+    async fn get_recent_logs_json(&self, limit: u32) -> zbus::fdo::Result<String> {
+        self.app
+            .get_recent_logs_json(limit as usize)
+            .await
+            .map_err(map_error)
+    }
+
     async fn get_path_states(&self, paths: Vec<String>) -> zbus::fdo::Result<Vec<PathState>> {
         self.app.get_path_states(&paths).await.map_err(map_error)
     }
@@ -158,6 +172,28 @@ impl OpenOneDriveBus {
     async fn get_path_states_json(&self, paths: Vec<String>) -> zbus::fdo::Result<String> {
         self.app
             .get_path_states_json(&paths)
+            .await
+            .map_err(map_error)
+    }
+
+    async fn list_directory(&self, path: &str) -> zbus::fdo::Result<Vec<PathState>> {
+        self.app.list_directory(path).await.map_err(map_error)
+    }
+
+    async fn list_directory_json(&self, path: &str) -> zbus::fdo::Result<String> {
+        self.app.list_directory_json(path).await.map_err(map_error)
+    }
+
+    async fn search_paths(&self, query: &str, limit: u32) -> zbus::fdo::Result<Vec<PathState>> {
+        self.app
+            .search_paths(query, limit as usize)
+            .await
+            .map_err(map_error)
+    }
+
+    async fn search_paths_json(&self, query: &str, limit: u32) -> zbus::fdo::Result<String> {
+        self.app
+            .search_paths_json(query, limit as usize)
             .await
             .map_err(map_error)
     }

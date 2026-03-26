@@ -16,6 +16,7 @@
 #include <QEvent>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
@@ -272,6 +273,11 @@ QString ShellBackend::lastLogLine() const
 QStringList ShellBackend::recentLogs() const
 {
     return m_recentLogs;
+}
+
+QVariantList ShellBackend::recentLogEntries() const
+{
+    return m_recentLogEntries;
 }
 
 bool ShellBackend::canMount() const
@@ -591,11 +597,41 @@ void ShellBackend::keepLocalPath(const QString &path)
     }
 }
 
+void ShellBackend::keepLocalPaths(const QStringList &paths)
+{
+    if (invokePathsAction(QStringLiteral("KeepLocal"),
+                          paths,
+                          tr("Select at least one path inside the OneDrive root folder."))) {
+        refreshStatus();
+        refreshLogs();
+    }
+}
+
 void ShellBackend::makeOnlineOnlyPath(const QString &path)
 {
     if (invokePathAction(QStringLiteral("MakeOnlineOnly"),
                          path,
                          tr("Enter a path inside the OneDrive root folder."))) {
+        refreshStatus();
+        refreshLogs();
+    }
+}
+
+void ShellBackend::makeOnlineOnlyPaths(const QStringList &paths)
+{
+    if (invokePathsAction(QStringLiteral("MakeOnlineOnly"),
+                          paths,
+                          tr("Select at least one path inside the OneDrive root folder."))) {
+        refreshStatus();
+        refreshLogs();
+    }
+}
+
+void ShellBackend::retryTransferPaths(const QStringList &paths)
+{
+    if (invokePathsAction(QStringLiteral("RetryTransfer"),
+                          paths,
+                          tr("Select at least one path inside the OneDrive root folder."))) {
         refreshStatus();
         refreshLogs();
     }
@@ -612,6 +648,74 @@ void ShellBackend::copyRecentLogsToClipboard()
         clipboard->setText(m_recentLogs.join(QLatin1Char('\n')));
         updateStatusMessage(tr("Copied recent logs to the clipboard."));
     }
+}
+
+void ShellBackend::copyLinesToClipboard(const QStringList &lines)
+{
+    if (lines.isEmpty()) {
+        updateStatusMessage(tr("No log lines to copy."));
+        return;
+    }
+
+    if (QClipboard *clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(lines.join(QLatin1Char('\n')));
+        updateStatusMessage(tr("Copied the selected log lines to the clipboard."));
+    }
+}
+
+QString ShellBackend::listDirectoryJson(const QString &path)
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
+        return QStringLiteral("[]");
+    }
+
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("ListDirectoryJson"), path);
+    if (!reply.isValid()) {
+        updateStatusMessage(tr("Directory listing failed: %1").arg(reply.error().message()));
+        return QStringLiteral("[]");
+    }
+
+    return reply.value();
+}
+
+QString ShellBackend::searchPathsJson(const QString &query, int limit)
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
+        return QStringLiteral("[]");
+    }
+
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("SearchPathsJson"),
+                                                 query,
+                                                 qMax(0, limit));
+    if (!reply.isValid()) {
+        updateStatusMessage(tr("Search failed: %1").arg(reply.error().message()));
+        return QStringLiteral("[]");
+    }
+
+    return reply.value();
+}
+
+void ShellBackend::openPath(const QString &path)
+{
+    const QString normalizedPath = normalizeMountPath(path);
+    if (normalizedPath.isEmpty()) {
+        updateStatusMessage(tr("Choose a path inside the OneDrive root folder first."));
+        return;
+    }
+
+    if (!QFileInfo(normalizedPath).isAbsolute() && m_effectiveMountPath.isEmpty()) {
+        updateStatusMessage(tr("Choose a root folder first."));
+        return;
+    }
+
+    const QString absolutePath = QFileInfo(normalizedPath).isAbsolute()
+                                     ? normalizedPath
+                                     : QDir(m_effectiveMountPath).filePath(normalizedPath);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(absolutePath));
 }
 
 void ShellBackend::refreshStatus()
@@ -679,13 +783,34 @@ void ShellBackend::refreshLogs()
         return;
     }
 
-    const QDBusReply<QStringList> reply = iface.call(QStringLiteral("GetRecentLogLines"), 100U);
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("GetRecentLogsJson"), 100U);
     if (!reply.isValid()) {
         return;
     }
 
-    if (reply.value() != m_recentLogs) {
-        m_recentLogs = reply.value();
+    const QJsonDocument document = QJsonDocument::fromJson(reply.value().toUtf8());
+    if (!document.isArray()) {
+        return;
+    }
+
+    const QVariantList entries = document.array().toVariantList();
+    QStringList lines;
+    lines.reserve(entries.size());
+    for (const QVariant &entryVariant : entries) {
+        const QVariantMap entry = entryVariant.toMap();
+        const QString timestamp = formatTimestamp(entry.value(QStringLiteral("timestamp_unix")).toLongLong());
+        const QString source = entry.value(QStringLiteral("source")).toString();
+        const QString level = entry.value(QStringLiteral("level")).toString().toUpper();
+        const QString message = entry.value(QStringLiteral("message")).toString();
+        lines << QStringLiteral("[%1] [%2] [%3] %4").arg(timestamp,
+                                                         level.isEmpty() ? QStringLiteral("INFO") : level,
+                                                         source.isEmpty() ? QStringLiteral("daemon") : source,
+                                                         message);
+    }
+
+    if (entries != m_recentLogEntries || lines != m_recentLogs) {
+        m_recentLogEntries = entries;
+        m_recentLogs = lines;
         emit recentLogsChanged();
     }
 }
@@ -981,7 +1106,7 @@ void ShellBackend::connectDaemonSignals()
                 QString::fromLatin1(kInterface),
                 QStringLiteral("PathStatesChanged"),
                 this,
-                SLOT(onDaemonActivity()));
+                SLOT(onPathStatesChanged()));
     bus.connect(QString::fromLatin1(kService),
                 QString::fromLatin1(kPath),
                 QString::fromLatin1(kInterface),
@@ -1156,6 +1281,41 @@ bool ShellBackend::invokePathAction(const QString &method,
     return true;
 }
 
+bool ShellBackend::invokePathsAction(const QString &method,
+                                     const QStringList &paths,
+                                     const QString &emptyPathMessage)
+{
+    QStringList normalizedPaths;
+    normalizedPaths.reserve(paths.size());
+    for (const QString &path : paths) {
+        const QString normalizedPath = normalizeMountPath(path);
+        if (!normalizedPath.isEmpty()) {
+            normalizedPaths << normalizedPath;
+        }
+    }
+
+    normalizedPaths.removeDuplicates();
+    if (normalizedPaths.isEmpty()) {
+        updateStatusMessage(emptyPathMessage);
+        return false;
+    }
+
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        updateStatusMessage(tr("Daemon not reachable on D-Bus."));
+        return false;
+    }
+
+    const QDBusReply<uint> reply = iface.call(method, normalizedPaths);
+    if (!reply.isValid()) {
+        updateStatusMessage(tr("%1 failed: %2").arg(method, reply.error().message()));
+        return false;
+    }
+
+    updateStatusMessage(tr("%1 applied to %2 item(s).").arg(method, QString::number(reply.value())));
+    return true;
+}
+
 QString ShellBackend::normalizeMountPath(const QString &mountPath)
 {
     const QString trimmedPath = mountPath.trimmed();
@@ -1183,6 +1343,12 @@ QString ShellBackend::formatTimestamp(qint64 secondsSinceEpoch)
 void ShellBackend::onDaemonActivity()
 {
     refreshStatus();
+}
+
+void ShellBackend::onPathStatesChanged()
+{
+    refreshStatus();
+    emit pathStatesChanged();
 }
 
 void ShellBackend::onLogsUpdated()

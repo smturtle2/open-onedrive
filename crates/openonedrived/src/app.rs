@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use openonedrive_config::{AppConfig, ProjectPaths};
-use openonedrive_ipc_types::{PathState, StatusSnapshot};
+use openonedrive_ipc_types::{LogEntry, PathState, StatusSnapshot};
 use openonedrive_rclone_backend::{BackendEvent, RcloneBackend};
 use std::fs;
 use std::sync::Arc;
@@ -104,12 +104,36 @@ impl OpenOneDriveApp {
         Ok(self.backend.recent_log_lines(limit).await)
     }
 
+    pub async fn get_recent_logs(&self, limit: usize) -> Result<Vec<LogEntry>> {
+        Ok(self.backend.recent_logs(limit).await)
+    }
+
+    pub async fn get_recent_logs_json(&self, limit: usize) -> Result<String> {
+        self.backend.recent_logs_json(limit).await
+    }
+
     pub async fn get_path_states(&self, paths: &[String]) -> Result<Vec<PathState>> {
         self.backend.get_path_states(paths).await
     }
 
     pub async fn get_path_states_json(&self, paths: &[String]) -> Result<String> {
         self.backend.get_path_states_json(paths).await
+    }
+
+    pub async fn list_directory(&self, path: &str) -> Result<Vec<PathState>> {
+        self.backend.list_directory(path).await
+    }
+
+    pub async fn list_directory_json(&self, path: &str) -> Result<String> {
+        self.backend.list_directory_json(path).await
+    }
+
+    pub async fn search_paths(&self, query: &str, limit: usize) -> Result<Vec<PathState>> {
+        self.backend.search_paths(query, limit).await
+    }
+
+    pub async fn search_paths_json(&self, query: &str, limit: usize) -> Result<String> {
+        self.backend.search_paths_json(query, limit).await
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<BackendEvent> {

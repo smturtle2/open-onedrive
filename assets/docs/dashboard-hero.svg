@@ -4,10 +4,10 @@
   <circle cx="104" cy="92" r="10" fill="#FF7B7B"/>
   <circle cx="140" cy="92" r="10" fill="#FFBE6B"/>
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
-  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive v1.0.3 shell</text>
+  <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive shell</text>
 
   <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">State-aware shell, compact recovery, one visible folder.</text>
-  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">The dashboard now opens to Setup, Overview, or Logs based on what the daemon needs next, while the hidden hydrated cache follows safe root-path moves.</text>
+  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">Overview, Explorer, Setup, and Logs shift around what the daemon needs next, while the hidden hydrated cache follows safe root-path moves.</text>
 
   <g filter="url(#shadow)">
     <rect x="80" y="244" width="658" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>

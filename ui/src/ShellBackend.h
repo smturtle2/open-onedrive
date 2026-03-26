@@ -4,6 +4,7 @@
 #include <QString>
 #include <QStringList>
 #include <QUrl>
+#include <QVariantList>
 
 class QTimer;
 class QDBusInterface;
@@ -44,6 +45,7 @@ class ShellBackend : public QObject
     Q_PROPERTY(QString rcloneVersion READ rcloneVersion NOTIFY rcloneVersionChanged)
     Q_PROPERTY(QString lastLogLine READ lastLogLine NOTIFY lastLogLineChanged)
     Q_PROPERTY(QStringList recentLogs READ recentLogs NOTIFY recentLogsChanged)
+    Q_PROPERTY(QVariantList recentLogEntries READ recentLogEntries NOTIFY recentLogsChanged)
     Q_PROPERTY(bool canMount READ canMount NOTIFY mountStateChanged)
     Q_PROPERTY(bool canUnmount READ canUnmount NOTIFY mountStateChanged)
     Q_PROPERTY(bool canRetry READ canRetry NOTIFY mountStateChanged)
@@ -82,6 +84,7 @@ public:
     QString rcloneVersion() const;
     QString lastLogLine() const;
     QStringList recentLogs() const;
+    QVariantList recentLogEntries() const;
     bool canMount() const;
     bool canUnmount() const;
     bool canRetry() const;
@@ -106,8 +109,15 @@ public:
     Q_INVOKABLE void setMountPathFromUrl(const QUrl &mountPathUrl);
     Q_INVOKABLE QUrl mountPathDialogFolder() const;
     Q_INVOKABLE void keepLocalPath(const QString &path);
+    Q_INVOKABLE void keepLocalPaths(const QStringList &paths);
     Q_INVOKABLE void makeOnlineOnlyPath(const QString &path);
+    Q_INVOKABLE void makeOnlineOnlyPaths(const QStringList &paths);
+    Q_INVOKABLE void retryTransferPaths(const QStringList &paths);
     Q_INVOKABLE void copyRecentLogsToClipboard();
+    Q_INVOKABLE void copyLinesToClipboard(const QStringList &lines);
+    Q_INVOKABLE QString listDirectoryJson(const QString &path);
+    Q_INVOKABLE QString searchPathsJson(const QString &query, int limit = 200);
+    Q_INVOKABLE void openPath(const QString &path);
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshLogs();
 
@@ -131,6 +141,7 @@ Q_SIGNALS:
     void rcloneVersionChanged();
     void lastLogLineChanged();
     void recentLogsChanged();
+    void pathStatesChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -143,12 +154,14 @@ private:
     void updateStatusMessage(const QString &message);
     void updateTray();
     bool invokePathAction(const QString &method, const QString &path, const QString &emptyPathMessage);
+    bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);
     static QString normalizeMountPath(const QString &mountPath);
     static QString formatBytes(qint64 bytes);
     static QString formatTimestamp(qint64 secondsSinceEpoch);
 
 private Q_SLOTS:
     void onDaemonActivity();
+    void onPathStatesChanged();
     void onLogsUpdated();
     void onErrorRaised(const QString &message);
 
@@ -176,6 +189,7 @@ private:
     QString m_rcloneVersion;
     QString m_lastLogLine;
     QStringList m_recentLogs;
+    QVariantList m_recentLogEntries;
     QWindow *m_mainWindow = nullptr;
     KStatusNotifierItem *m_tray = nullptr;
     QMenu *m_trayMenu = nullptr;

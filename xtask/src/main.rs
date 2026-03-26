@@ -24,6 +24,10 @@ enum Task {
     BuildUi,
     BuildIntegrations,
     Install,
+    SyncVersion {
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -31,6 +35,7 @@ fn main() -> Result<()> {
     match cli.command {
         Task::Bootstrap => bootstrap(),
         Task::Check => {
+            sync_version(true)?;
             cargo(&["check", "--workspace"])?;
             Ok(())
         }
@@ -41,6 +46,7 @@ fn main() -> Result<()> {
         Task::BuildUi => cmake_build("ui", "build/ui"),
         Task::BuildIntegrations => cmake_build("integrations", "build/integrations"),
         Task::Install => install(),
+        Task::SyncVersion { check } => sync_version(check),
     }
 }
 
@@ -224,6 +230,34 @@ fn ensure_rclone_installed() -> Result<()> {
     Ok(())
 }
 
+fn sync_version(check: bool) -> Result<()> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("unable to determine repository root")?;
+    let version = env!("CARGO_PKG_VERSION");
+    let stable_ref = format!("v{version}");
+
+    sync_line_by_prefix(
+        &repo_root.join("install.sh"),
+        "OPEN_ONEDRIVE_STABLE_REF=",
+        &format!("OPEN_ONEDRIVE_STABLE_REF=\"${{OPEN_ONEDRIVE_STABLE_REF:-{stable_ref}}}\""),
+        check,
+    )?;
+    sync_json_string_field(
+        &repo_root.join("integrations/dolphin-actions/metadata.json"),
+        "\"Version\": ",
+        version,
+        check,
+    )?;
+
+    if check {
+        println!("version-linked files are in sync for {stable_ref}");
+    } else {
+        println!("synchronized version-linked files for {stable_ref}");
+    }
+    Ok(())
+}
+
 fn cargo(args: &[&str]) -> Result<()> {
     let status = Command::new("cargo")
         .args(args)
@@ -353,6 +387,72 @@ fn render_template(template_path: &str, replacements: &[(&str, &str)]) -> Result
         content = content.replace(needle, value);
     }
     Ok(content)
+}
+
+fn sync_line_by_prefix(path: &Path, prefix: &str, expected_line: &str, check: bool) -> Result<()> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("unable to read {}", path.display()))?;
+    let mut found = false;
+    let mut changed = false;
+    let mut lines = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with(prefix) {
+            found = true;
+            if line != expected_line {
+                changed = true;
+            }
+            lines.push(expected_line.to_string());
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+
+    if !found {
+        bail!("unable to find line starting with {prefix:?} in {}", path.display());
+    }
+    if check {
+        if changed {
+            bail!("{} is out of sync; run `cargo run -p xtask -- sync-version`", path.display());
+        }
+        return Ok(());
+    }
+    if changed {
+        let mut updated = lines.join("\n");
+        if content.ends_with('\n') {
+            updated.push('\n');
+        }
+        fs::write(path, updated).with_context(|| format!("unable to write {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn sync_json_string_field(path: &Path, field_prefix: &str, value: &str, check: bool) -> Result<()> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("unable to read {}", path.display()))?;
+    let marker = format!("{field_prefix}\"");
+    let start = content
+        .find(&marker)
+        .with_context(|| format!("unable to find {field_prefix:?} in {}", path.display()))?;
+    let value_start = start + marker.len();
+    let value_end = content[value_start..]
+        .find('"')
+        .map(|offset| value_start + offset)
+        .with_context(|| format!("unable to parse string field in {}", path.display()))?;
+    let current = &content[value_start..value_end];
+
+    if check {
+        if current != value {
+            bail!("{} is out of sync; run `cargo run -p xtask -- sync-version`", path.display());
+        }
+        return Ok(());
+    }
+    if current != value {
+        let mut updated = content.clone();
+        updated.replace_range(value_start..value_end, value);
+        fs::write(path, updated).with_context(|| format!("unable to write {}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn set_mode(path: &Path, executable: bool) -> Result<()> {

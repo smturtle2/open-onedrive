@@ -47,6 +47,9 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
+      - name: Verify version-linked files
+        run: cargo run -p xtask -- sync-version --check
+
       - name: Build release artifacts
         run: |
           cargo build --workspace --release
@@ -114,6 +117,26 @@ jobs:
 
           cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'
           #!/usr/bin/env bash
+          printf 'daemon %s\n' "$*" >> "${HOME}/launcher-daemon.log"
+          sleep 2
+          EOF
+          chmod +x "${smoke_home}/.local/bin/openonedrived"
+          cat > "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'ui %s\n' "$*" >> "${HOME}/launcher-ui.log"
+          exit 0
+          EOF
+          chmod +x "${smoke_home}/.local/lib/open-onedrive/open-onedrive-ui"
+
+          HOME="${smoke_home}" \
+          PATH="${fake_bin}:${bootstrap_bin}:${PATH}" \
+          "${smoke_home}/.local/bin/open-onedrive" --from-smoke
+
+          test -f "${smoke_home}/launcher-daemon.log"
+          grep -- '--from-smoke' "${smoke_home}/launcher-ui.log"
+
+          cat > "${smoke_home}/.local/bin/openonedrived" <<'EOF'
+          #!/usr/bin/env bash
           trap 'exit 0' TERM INT
           while true; do
             sleep 1
@@ -143,6 +166,7 @@ jobs:
             gh release create "${tag}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "${tag}" \
+              --generate-notes \
               --verify-tag
           fi
 

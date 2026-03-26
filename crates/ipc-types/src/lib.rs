@@ -30,6 +30,14 @@ pub enum SyncState {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+pub enum LogLevel {
+    #[default]
+    Info,
+    Warning,
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
 pub enum PathSyncState {
     #[default]
@@ -54,6 +62,14 @@ pub struct PathState {
     pub last_sync_at: u64,
     pub base_revision: String,
     pub conflict_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+pub struct LogEntry {
+    pub timestamp_unix: u64,
+    pub source: String,
+    pub level: LogLevel,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, Default)]

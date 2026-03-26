@@ -203,7 +203,12 @@ impl Filesystem for OpenOneDriveFs {
         };
 
         if let Some(size) = size {
-            if self.provider.set_len(&path, size).is_err() || self.refresh_snapshot().is_err() {
+            if self
+                .provider
+                .set_len(&provider_path(&path), size)
+                .is_err()
+                || self.refresh_snapshot().is_err()
+            {
                 reply.error(EIO);
                 return;
             }
@@ -279,7 +284,12 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self.provider.create_dir(&path).is_err() || self.refresh_snapshot().is_err() {
+        if self
+            .provider
+            .create_dir(&provider_path(&path))
+            .is_err()
+            || self.refresh_snapshot().is_err()
+        {
             reply.error(EIO);
             return;
         }
@@ -299,7 +309,12 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self.provider.remove_file(&path).is_err() || self.refresh_snapshot().is_err() {
+        if self
+            .provider
+            .remove_file(&provider_path(&path))
+            .is_err()
+            || self.refresh_snapshot().is_err()
+        {
             reply.error(EIO);
             return;
         }
@@ -315,7 +330,12 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self.provider.remove_dir(&path).is_err() || self.refresh_snapshot().is_err() {
+        if self
+            .provider
+            .remove_dir(&provider_path(&path))
+            .is_err()
+            || self.refresh_snapshot().is_err()
+        {
             reply.error(EIO);
             return;
         }
@@ -347,7 +367,12 @@ impl Filesystem for OpenOneDriveFs {
             }
         };
 
-        if self.provider.rename_path(&from, &to).is_err() || self.refresh_snapshot().is_err() {
+        if self
+            .provider
+            .rename_path(&provider_path(&from), &provider_path(&to))
+            .is_err()
+            || self.refresh_snapshot().is_err()
+        {
             reply.error(EIO);
             return;
         }
@@ -373,9 +398,10 @@ impl Filesystem for OpenOneDriveFs {
             create: false,
             truncate: (flags & libc::O_TRUNC) != 0,
         };
-        match self.provider.open_file(&path, request) {
+        let provider_path = provider_path(&path);
+        match self.provider.open_file(&provider_path, request) {
             Ok(file) => {
-                let fh = self.open_handle(path, file, request.write);
+                let fh = self.open_handle(provider_path, file, request.write);
                 reply.opened(fh, 0);
             }
             Err(_) => reply.error(EIO),
@@ -409,7 +435,8 @@ impl Filesystem for OpenOneDriveFs {
             create: true,
             truncate: true,
         };
-        match self.provider.open_file(&path, request) {
+        let provider_path = provider_path(&path);
+        match self.provider.open_file(&provider_path, request) {
             Ok(file) => {
                 if self.refresh_snapshot().is_err() {
                     reply.error(EIO);
@@ -419,7 +446,7 @@ impl Filesystem for OpenOneDriveFs {
                     reply.error(EIO);
                     return;
                 };
-                let fh = self.open_handle(path, file, true);
+                let fh = self.open_handle(provider_path, file, true);
                 reply.created(&TTL, &attr, 0, fh, flags as u32);
             }
             Err(_) => reply.error(EIO),
@@ -646,6 +673,10 @@ fn join_path(parent: &str, child: &str) -> String {
     }
 }
 
+fn provider_path(path: &str) -> String {
+    path.trim_start_matches('/').to_string()
+}
+
 fn normalize_path(path: &str) -> String {
     if path.is_empty() || path == "/" {
         return "/".to_string();
@@ -698,4 +729,34 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SnapshotHandle, VirtualEntry, provider_path};
+
+    #[test]
+    fn provider_paths_strip_the_virtual_root_prefix() {
+        assert_eq!(provider_path("/Docs/file.txt"), "Docs/file.txt");
+        assert_eq!(provider_path("Docs/file.txt"), "Docs/file.txt");
+        assert_eq!(provider_path("/"), "");
+    }
+
+    #[test]
+    fn snapshot_stores_virtual_paths_but_provider_paths_stay_relative() {
+        let snapshot = SnapshotHandle::default();
+        snapshot.rebuild(&[VirtualEntry {
+            path: "Docs/file.txt".into(),
+            is_dir: false,
+            size_bytes: 12,
+            modified_unix: 1,
+        }]);
+
+        let state = snapshot.read();
+        let node = state
+            .lookup_child(1, "Docs")
+            .expect("virtual docs directory should exist");
+        assert_eq!(node.path, "/Docs");
+        assert_eq!(provider_path(&node.path), "Docs");
+    }
 }

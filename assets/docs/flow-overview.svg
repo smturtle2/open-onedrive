@@ -10,7 +10,7 @@
     <rect x="88" y="214" width="284" height="8" rx="4" fill="#4B7CFF"/>
     <text x="122" y="274" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">1. Bootstrap</text>
     <text x="122" y="314" fill="#D6E1F2" font-family="Arial, sans-serif" font-size="20">curl | bash</text>
-    <text x="122" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Downloads a signed release asset, installs rclone if needed, and stages the KDE desktop integration.</text>
+    <text x="122" y="346" fill="#9CB0CD" font-family="Arial, sans-serif" font-size="18">Downloads a checksum-verified release asset, installs rclone if needed, and stages the KDE desktop integration.</text>
   </g>
 
   <g filter="url(#shadow)">

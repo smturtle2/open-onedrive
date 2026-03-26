@@ -4,7 +4,7 @@
 
   <g filter="url(#shadow)">
     <rect x="70" y="72" width="534" height="496" rx="30" fill="#0D1826" stroke="#233A5A"/>
-    <text x="114" y="138" fill="#AFC1DD" font-family="Arial, sans-serif" font-size="24">open-onedrive v1.0.3</text>
+    <text x="114" y="138" fill="#AFC1DD" font-family="Arial, sans-serif" font-size="24">open-onedrive</text>
     <text x="114" y="214" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="54" font-weight="700">OneDrive as a normal KDE folder.</text>
     <text x="114" y="286" fill="#C2D1E6" font-family="Arial, sans-serif" font-size="24">State-aware shell, on-demand hydration, per-file residency, searchable logs, tray persistence, and safe hidden-cache moves between visible roots.</text>
 

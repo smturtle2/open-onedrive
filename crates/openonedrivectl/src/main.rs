@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use openonedrive_ipc_types::{PathState, StatusSnapshot};
+use openonedrive_ipc_types::{LogEntry, PathState, StatusSnapshot};
 use zbus::Proxy;
 
 const DBUS_SERVICE: &str = "io.github.smturtle2.OpenOneDrive1";
@@ -39,12 +39,23 @@ enum Command {
     RetryTransfer {
         paths: Vec<String>,
     },
+    ListDirectory {
+        #[arg(default_value = "")]
+        path: String,
+    },
+    SearchPaths {
+        query: String,
+        #[arg(default_value_t = 100)]
+        limit: u32,
+    },
     PathStates {
         paths: Vec<String>,
     },
     Logs {
         #[arg(default_value_t = 50)]
         limit: u32,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -102,14 +113,27 @@ async fn main() -> Result<()> {
             let count: u32 = proxy.call("RetryTransfer", &(paths)).await?;
             println!("retried {count} transfer item(s)");
         }
+        Command::ListDirectory { path } => {
+            let states: Vec<PathState> = proxy.call("ListDirectory", &(path)).await?;
+            println!("{}", serde_json::to_string_pretty(&states)?);
+        }
+        Command::SearchPaths { query, limit } => {
+            let states: Vec<PathState> = proxy.call("SearchPaths", &(query, limit)).await?;
+            println!("{}", serde_json::to_string_pretty(&states)?);
+        }
         Command::PathStates { paths } => {
             let states: Vec<PathState> = proxy.call("GetPathStates", &(paths)).await?;
             println!("{}", serde_json::to_string_pretty(&states)?);
         }
-        Command::Logs { limit } => {
-            let lines: Vec<String> = proxy.call("GetRecentLogLines", &(limit)).await?;
-            for line in lines {
-                println!("{line}");
+        Command::Logs { limit, json } => {
+            if json {
+                let entries: Vec<LogEntry> = proxy.call("GetRecentLogs", &(limit)).await?;
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                let lines: Vec<String> = proxy.call("GetRecentLogLines", &(limit)).await?;
+                for line in lines {
+                    println!("{line}");
+                }
             }
         }
     }

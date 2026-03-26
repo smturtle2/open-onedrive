@@ -7,8 +7,9 @@ import "../components"
 Kirigami.ScrollablePage {
     id: page
     title: qsTr("Overview")
-    property string quickPath: ""
+
     property var requestDisconnect: null
+    property var requestExplorer: null
 
     function stateColor() {
         if (shellBackend.mountState === "Running") {
@@ -69,7 +70,7 @@ Kirigami.ScrollablePage {
                     ? qsTr("The saved OneDrive sign-in for this machine is stale. Repair Remote rebuilds it and keeps your local hydrated files in place.")
                     : qsTr("The account is connected, but the filesystem needs attention. Review the status, fix the root path if needed, then retry.")
         default:
-            return qsTr("The visible root, tray, logs, and quick file controls all reflect the same daemon state, so you can act from one place.")
+            return qsTr("The visible root, tray, logs, and Explorer all reflect the same daemon state, so you can browse files and check runtime health without typing paths manually.")
         }
     }
 
@@ -111,6 +112,68 @@ Kirigami.ScrollablePage {
         return qsTr("Path changes stay local until you connect again or restart the filesystem.")
     }
 
+    function primaryActionText() {
+        if (!shellBackend.remoteConfigured) {
+            return qsTr("Connect OneDrive")
+        }
+        if (shellBackend.needsRemoteRepair) {
+            return qsTr("Repair Remote")
+        }
+        if (shellBackend.canRetry) {
+            return qsTr("Retry Filesystem")
+        }
+        if (shellBackend.canMount) {
+            return qsTr("Start Filesystem")
+        }
+        if (shellBackend.effectiveMountPath.length > 0) {
+            return qsTr("Open Explorer")
+        }
+        return qsTr("Refresh")
+    }
+
+    function primaryActionIcon() {
+        if (!shellBackend.remoteConfigured) {
+            return "network-connect"
+        }
+        if (shellBackend.needsRemoteRepair) {
+            return "tools-wizard"
+        }
+        if (shellBackend.canRetry) {
+            return "view-refresh"
+        }
+        if (shellBackend.canMount) {
+            return "folder-cloud"
+        }
+        if (shellBackend.effectiveMountPath.length > 0) {
+            return "folder-open"
+        }
+        return "view-refresh"
+    }
+
+    function runPrimaryAction() {
+        if (!shellBackend.remoteConfigured) {
+            shellBackend.beginConnect()
+            return
+        }
+        if (shellBackend.needsRemoteRepair) {
+            shellBackend.repairRemote()
+            return
+        }
+        if (shellBackend.canRetry) {
+            shellBackend.retryMount()
+            return
+        }
+        if (shellBackend.canMount) {
+            shellBackend.mountRemote()
+            return
+        }
+        if (shellBackend.effectiveMountPath.length > 0 && requestExplorer) {
+            requestExplorer()
+            return
+        }
+        shellBackend.refreshStatus()
+    }
+
     Dialog {
         id: disconnectDialog
         modal: true
@@ -134,6 +197,74 @@ Kirigami.ScrollablePage {
                 color: Kirigami.Theme.neutralTextColor
                 text: qsTr("Use this only when you want to sign in again or intentionally remove the local OneDrive setup.")
             }
+        }
+    }
+
+    Menu {
+        id: overflowMenu
+
+        MenuItem {
+            text: qsTr("Refresh status")
+            icon.name: "view-refresh"
+            onTriggered: shellBackend.refreshStatus()
+        }
+
+        MenuItem {
+            text: qsTr("Start filesystem")
+            icon.name: "folder-cloud"
+            visible: shellBackend.canMount
+            onTriggered: shellBackend.mountRemote()
+        }
+
+        MenuItem {
+            text: qsTr("Stop filesystem")
+            icon.name: "media-eject"
+            visible: shellBackend.canUnmount
+            onTriggered: shellBackend.unmountRemote()
+        }
+
+        MenuItem {
+            text: qsTr("Retry filesystem")
+            icon.name: "view-refresh"
+            visible: shellBackend.canRetry
+            onTriggered: shellBackend.retryMount()
+        }
+
+        MenuItem {
+            text: qsTr("Rescan remote")
+            icon.name: "folder-sync"
+            visible: shellBackend.daemonReachable && shellBackend.remoteConfigured
+            onTriggered: shellBackend.rescanRemote()
+        }
+
+        MenuItem {
+            text: qsTr("Pause sync")
+            icon.name: "media-playback-pause"
+            visible: shellBackend.canPauseSync
+            onTriggered: shellBackend.pauseSync()
+        }
+
+        MenuItem {
+            text: qsTr("Resume sync")
+            icon.name: "media-playback-start"
+            visible: shellBackend.canResumeSync
+            onTriggered: shellBackend.resumeSync()
+        }
+
+        MenuSeparator { }
+
+        MenuItem {
+            text: qsTr("Open root folder")
+            icon.name: "document-open-folder"
+            visible: shellBackend.effectiveMountPath.length > 0
+            onTriggered: shellBackend.openMountLocation()
+        }
+
+        MenuItem {
+            text: qsTr("Disconnect")
+            icon.name: "network-disconnect"
+            visible: shellBackend.remoteConfigured
+            onTriggered: requestDisconnect ? requestDisconnect() : disconnectDialog.open()
         }
     }
 
@@ -300,86 +431,25 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.smallSpacing
 
                     Button {
-                        text: qsTr("Refresh")
-                        icon.name: "view-refresh"
-                        onClicked: shellBackend.refreshStatus()
-                    }
-
-                    Button {
-                        text: qsTr("Connect OneDrive")
-                        icon.name: "network-connect"
-                        visible: !shellBackend.remoteConfigured
+                        text: page.primaryActionText()
+                        icon.name: page.primaryActionIcon()
                         highlighted: true
-                        enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-                        onClicked: shellBackend.beginConnect()
-                    }
-
-                    Button {
-                        text: qsTr("Repair Remote")
-                        icon.name: "tools-wizard"
-                        visible: shellBackend.needsRemoteRepair
-                        highlighted: true
-                        enabled: shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-                        onClicked: shellBackend.repairRemote()
-                    }
-
-                    Button {
-                        text: qsTr("Start Filesystem")
-                        icon.name: "folder-cloud"
-                        highlighted: shellBackend.canMount && !shellBackend.needsRemoteRepair
-                        enabled: shellBackend.canMount
-                        onClicked: shellBackend.mountRemote()
-                    }
-
-                    Button {
-                        text: qsTr("Stop Filesystem")
-                        icon.name: "media-eject"
-                        enabled: shellBackend.canUnmount
-                        onClicked: shellBackend.unmountRemote()
-                    }
-
-                    Button {
-                        text: qsTr("Retry")
-                        icon.name: "view-refresh"
-                        highlighted: shellBackend.canRetry
-                        enabled: shellBackend.canRetry
-                        onClicked: shellBackend.retryMount()
-                    }
-
-                    Button {
-                        text: qsTr("Rescan")
-                        icon.name: "folder-sync"
-                        enabled: shellBackend.daemonReachable && shellBackend.remoteConfigured
-                        onClicked: shellBackend.rescanRemote()
-                    }
-
-                    Button {
-                        text: qsTr("Pause Sync")
-                        icon.name: "media-playback-pause"
-                        enabled: shellBackend.canPauseSync
-                        onClicked: shellBackend.pauseSync()
-                    }
-
-                    Button {
-                        text: qsTr("Resume Sync")
-                        icon.name: "media-playback-start"
-                        enabled: shellBackend.canResumeSync
-                        onClicked: shellBackend.resumeSync()
-                    }
-
-                    Button {
-                        text: qsTr("Open Folder")
-                        icon.name: "document-open-folder"
-                        enabled: shellBackend.effectiveMountPath.length > 0
-                        onClicked: shellBackend.openMountLocation()
-                    }
-
-                    Button {
-                        text: qsTr("Disconnect")
-                        icon.name: "network-disconnect"
-                        visible: shellBackend.remoteConfigured
                         enabled: shellBackend.daemonReachable
-                        onClicked: requestDisconnect ? requestDisconnect() : disconnectDialog.open()
+                                 && (!shellBackend.needsRemoteRepair || shellBackend.mountPath.length > 0)
+                                 && (!shellBackend.remoteConfigured || true)
+                        onClicked: page.runPrimaryAction()
+                    }
+
+                    Button {
+                        text: qsTr("Refresh Logs")
+                        icon.name: "view-list-text"
+                        onClicked: shellBackend.refreshLogs()
+                    }
+
+                    Button {
+                        text: qsTr("More actions")
+                        icon.name: "overflow-menu"
+                        onClicked: overflowMenu.open()
                     }
                 }
             }
@@ -582,7 +652,7 @@ Kirigami.ScrollablePage {
                 spacing: Kirigami.Units.mediumSpacing
 
                 Kirigami.Heading {
-                    text: qsTr("Quick file controls")
+                    text: qsTr("Explorer")
                     level: 3
                 }
 
@@ -590,38 +660,26 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Enter an absolute path inside the OneDrive root, or a path relative to that root.")
+                    text: qsTr("Browse folders, search paths, and switch files between kept-local and online-only without manually entering paths.")
                 }
 
                 RowLayout {
                     Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
 
-                    TextField {
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("Documents/report.pdf")
-                        text: page.quickPath
-                        onTextEdited: page.quickPath = text
+                    Button {
+                        text: qsTr("Open Explorer")
+                        icon.name: "folder-open"
+                        highlighted: true
+                        enabled: shellBackend.daemonReachable
+                        onClicked: requestExplorer ? requestExplorer() : undefined
                     }
 
                     Button {
-                        text: qsTr("Keep on device")
-                        icon.name: "emblem-favorite"
-                        enabled: page.quickPath.trim().length > 0 && shellBackend.daemonReachable
-                        onClicked: shellBackend.keepLocalPath(page.quickPath)
-                    }
-
-                    Button {
-                        text: qsTr("Make online-only")
-                        icon.name: "folder-download"
-                        enabled: page.quickPath.trim().length > 0 && shellBackend.daemonReachable
-                        onClicked: shellBackend.makeOnlineOnlyPath(page.quickPath)
-                    }
-
-                    Button {
-                        text: qsTr("Retry transfer")
-                        icon.name: "view-refresh"
-                        enabled: page.quickPath.trim().length > 0 && shellBackend.daemonReachable
-                        onClicked: shellBackend.retryTransferPath(page.quickPath)
+                        text: qsTr("Open Root Folder")
+                        icon.name: "document-open-folder"
+                        enabled: shellBackend.effectiveMountPath.length > 0
+                        onClicked: shellBackend.openMountLocation()
                     }
                 }
             }
@@ -670,7 +728,7 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Dolphin overlays and actions operate on the visible root only and ignore the hidden backing directory. Use the Logs tab for the full recent output.")
+                    text: qsTr("Dolphin overlays and actions operate on the visible root only and ignore the hidden backing directory. Use Explorer for residency work and Logs for full daemon output.")
                 }
             }
         }

@@ -10,6 +10,7 @@ Kirigami.Page {
     property int currentIndex: 0
     property bool userSelectedPage: false
     property bool internalPageChange: false
+    property bool recommendationLocked: false
 
     function stateAccent() {
         if (shellBackend.appState === "running") {
@@ -60,23 +61,30 @@ Kirigami.Page {
             return qsTr("One action is needed before normal sync resumes. Repair or retry first, then use Logs if you need more detail.")
         }
         if (shellBackend.appState === "running") {
-            return qsTr("The visible root is active. Use Overview for file residency and queue health, or Setup when you need to move the root.")
+            return qsTr("The visible root is active. Use Explorer for residency control, Overview for runtime health, or Setup when you need to move the root.")
         }
         return qsTr("OneDrive is connected, but the visible filesystem is not running yet. Start it when you are ready to expose the local folder.")
     }
 
     function recommendedIndex() {
         if (shellBackend.appState === "welcome" || shellBackend.appState === "recovery") {
-            return 1
+            return 2
         }
         if (shellBackend.appState === "daemon-unavailable") {
-            return 2
+            return 3
+        }
+        if (shellBackend.remoteConfigured) {
+            return 1
         }
         return 0
     }
 
     function setPage(index, fromUser) {
         if (page.currentIndex === index) {
+            if (fromUser) {
+                page.userSelectedPage = true
+                page.recommendationLocked = true
+            }
             return
         }
         page.internalPageChange = true
@@ -84,13 +92,15 @@ Kirigami.Page {
         page.internalPageChange = false
         if (fromUser) {
             page.userSelectedPage = true
+            page.recommendationLocked = true
         }
     }
 
-    function syncRecommendedPage(force) {
-        if (force || !page.userSelectedPage || page.currentIndex !== 2) {
-            page.setPage(page.recommendedIndex(), false)
+    function syncRecommendedPage() {
+        if (page.userSelectedPage || page.recommendationLocked) {
+            return
         }
+        page.setPage(page.recommendedIndex(), false)
     }
 
     function primaryActionText() {
@@ -109,8 +119,8 @@ Kirigami.Page {
         if (shellBackend.canMount) {
             return qsTr("Start Filesystem")
         }
-        if (shellBackend.remoteConfigured && shellBackend.effectiveMountPath.length > 0) {
-            return qsTr("Open Folder")
+        if (shellBackend.remoteConfigured) {
+            return qsTr("Open Explorer")
         }
         return qsTr("Refresh")
     }
@@ -131,37 +141,22 @@ Kirigami.Page {
         if (shellBackend.canMount) {
             return "folder-cloud"
         }
-        if (shellBackend.remoteConfigured && shellBackend.effectiveMountPath.length > 0) {
-            return "document-open-folder"
+        if (shellBackend.remoteConfigured) {
+            return "folder-open"
         }
         return "view-refresh"
     }
 
     function primaryActionEnabled() {
-        if (shellBackend.appState === "daemon-unavailable") {
-            return true
-        }
-        if (shellBackend.appState === "welcome") {
+        if (shellBackend.appState === "welcome" || shellBackend.needsRemoteRepair) {
             return shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-        }
-        if (shellBackend.needsRemoteRepair) {
-            return shellBackend.daemonReachable && shellBackend.mountPath.length > 0
-        }
-        if (shellBackend.canRetry) {
-            return true
-        }
-        if (shellBackend.canMount) {
-            return true
-        }
-        if (shellBackend.remoteConfigured && shellBackend.effectiveMountPath.length > 0) {
-            return true
         }
         return true
     }
 
     function runPrimaryAction() {
         if (shellBackend.appState === "daemon-unavailable") {
-            page.setPage(2, true)
+            page.setPage(3, true)
             return
         }
         if (shellBackend.appState === "welcome") {
@@ -180,8 +175,8 @@ Kirigami.Page {
             shellBackend.mountRemote()
             return
         }
-        if (shellBackend.remoteConfigured && shellBackend.effectiveMountPath.length > 0) {
-            shellBackend.openMountLocation()
+        if (shellBackend.remoteConfigured) {
+            page.setPage(1, true)
             return
         }
         shellBackend.refreshStatus()
@@ -191,13 +186,20 @@ Kirigami.Page {
         disconnectDialog.open()
     }
 
-    Component.onCompleted: syncRecommendedPage(true)
+    Component.onCompleted: page.syncRecommendedPage()
+
+    Timer {
+        interval: 1400
+        running: true
+        repeat: false
+        onTriggered: page.recommendationLocked = true
+    }
 
     Connections {
         target: shellBackend
 
         function onAppStateChanged() {
-            page.syncRecommendedPage(false)
+            page.syncRecommendedPage()
         }
     }
 
@@ -240,6 +242,7 @@ Kirigami.Page {
                 color: Kirigami.Theme.backgroundColor
                 border.width: 1
                 border.color: page.stateAccent()
+
                 Behavior on color {
                     ColorAnimation { duration: 180 }
                 }
@@ -274,6 +277,7 @@ Kirigami.Page {
                         color: page.stateAccent()
                         implicitHeight: stateBadgeLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
                         implicitWidth: stateBadgeLabel.implicitWidth + Kirigami.Units.largeSpacing * 2
+
                         Behavior on color {
                             ColorAnimation { duration: 180 }
                         }
@@ -298,12 +302,9 @@ Kirigami.Page {
                     text: shellBackend.statusMessage
                 }
 
-                RowLayout {
+                Flow {
                     Layout.fillWidth: true
-
-                    Item {
-                        Layout.fillWidth: true
-                    }
+                    spacing: Kirigami.Units.smallSpacing
 
                     Button {
                         text: page.primaryActionText()
@@ -316,7 +317,7 @@ Kirigami.Page {
                     Button {
                         text: qsTr("Logs")
                         icon.name: "view-list-text"
-                        onClicked: page.setPage(2, true)
+                        onClicked: page.setPage(3, true)
                     }
 
                     Button {
@@ -330,11 +331,20 @@ Kirigami.Page {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Closing the window keeps open-onedrive in the system tray so sync, recovery, and quick controls stay available.")
+                    text: qsTr("Closing the window keeps open-onedrive in the system tray so sync, recovery, and file actions stay available.")
                 }
 
-                RowLayout {
+                Flow {
                     Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Button {
+                        text: qsTr("Explorer")
+                        icon.name: "folder-open"
+                        visible: shellBackend.remoteConfigured
+                        enabled: shellBackend.daemonReachable
+                        onClicked: page.setPage(1, true)
+                    }
 
                     Button {
                         text: qsTr("Open Folder")
@@ -358,15 +368,21 @@ Kirigami.Page {
         TabBar {
             Layout.fillWidth: true
             currentIndex: page.currentIndex
+
             onCurrentIndexChanged: {
                 if (!page.internalPageChange) {
                     page.userSelectedPage = true
+                    page.recommendationLocked = true
                     page.currentIndex = currentIndex
                 }
             }
 
             TabButton {
                 text: qsTr("Overview")
+            }
+
+            TabButton {
+                text: qsTr("Explorer")
             }
 
             TabButton {
@@ -385,10 +401,17 @@ Kirigami.Page {
 
             DashboardPage {
                 requestDisconnect: page.openDisconnectDialog
+                requestExplorer: function() {
+                    page.setPage(1, true)
+                }
             }
+
+            ExplorerPage { }
+
             SetupPage {
                 requestDisconnect: page.openDisconnectDialog
             }
+
             LogsPage { }
         }
     }

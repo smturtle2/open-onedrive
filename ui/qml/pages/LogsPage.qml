@@ -3,13 +3,13 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.ScrollablePage {
+Kirigami.Page {
     id: page
     title: qsTr("Logs")
 
     property string filterText: ""
     property int filterMode: 0
-    property var filteredLogs: []
+    property var filteredEntries: []
     readonly property bool hasPinnedIssue: !shellBackend.daemonReachable
                                          || shellBackend.connectionState === "Error"
                                          || shellBackend.mountState === "Error"
@@ -20,58 +20,110 @@ Kirigami.ScrollablePage {
                                               ? shellBackend.lastSyncError
                                               : shellBackend.statusMessage
 
-    function lineMatchesMode(line) {
-        const lower = line.toLowerCase()
+    function formatTimestamp(unixSeconds) {
+        if (!unixSeconds || unixSeconds <= 0) {
+            return qsTr("Unknown time")
+        }
+        return Qt.formatDateTime(new Date(unixSeconds * 1000), "yyyy-MM-dd hh:mm:ss")
+    }
+
+    function levelLabel(level) {
+        const normalized = String(level || "").toLowerCase()
+        if (normalized === "warning") {
+            return qsTr("Warning")
+        }
+        if (normalized === "error") {
+            return qsTr("Error")
+        }
+        return qsTr("Info")
+    }
+
+    function levelColor(level) {
+        const normalized = String(level || "").toLowerCase()
+        if (normalized === "warning") {
+            return "#8b6f00"
+        }
+        if (normalized === "error") {
+            return "#b3261e"
+        }
+        return "#295c8a"
+    }
+
+    function entryMatchesMode(entry) {
+        const level = String(entry.level || "").toLowerCase()
+        const source = String(entry.source || "").toLowerCase()
+        const message = String(entry.message || "").toLowerCase()
         if (page.filterMode === 1) {
-            return lower.indexOf("error") >= 0
-                    || lower.indexOf("failed") >= 0
-                    || lower.indexOf("conflict") >= 0
-                    || lower.indexOf("warning") >= 0
+            return level === "warning" || level === "error"
         }
         if (page.filterMode === 2) {
-            return lower.indexOf("upload") >= 0
-                    || lower.indexOf("download") >= 0
-                    || lower.indexOf("sync") >= 0
-                    || lower.indexOf("copyto") >= 0
-                    || lower.indexOf("rescan") >= 0
+            return source.indexOf("rclone") >= 0
+                    || message.indexOf("upload") >= 0
+                    || message.indexOf("download") >= 0
+                    || message.indexOf("sync") >= 0
+                    || message.indexOf("copyto") >= 0
+                    || message.indexOf("rescan") >= 0
         }
         return true
     }
 
-    function rebuildFilteredLogs() {
+    function entryMatchesQuery(entry) {
         const query = page.filterText.trim().toLowerCase()
-        const next = []
-        for (let index = 0; index < shellBackend.recentLogs.length; ++index) {
-            const line = shellBackend.recentLogs[index]
-            if (!page.lineMatchesMode(line)) {
-                continue
-            }
-            if (query.length > 0 && line.toLowerCase().indexOf(query) < 0) {
-                continue
-            }
-            next.push(line)
+        if (query.length === 0) {
+            return true
         }
-        page.filteredLogs = next
+        const haystack = [
+            String(entry.source || "").toLowerCase(),
+            String(entry.level || "").toLowerCase(),
+            String(entry.message || "").toLowerCase(),
+            page.formatTimestamp(entry.timestamp_unix).toLowerCase()
+        ].join(" ")
+        return haystack.indexOf(query) >= 0
     }
 
-    Component.onCompleted: rebuildFilteredLogs()
+    function formattedLine(entry) {
+        const source = String(entry.source || "").length > 0 ? entry.source : "daemon"
+        return qsTr("[%1] [%2] [%3] %4")
+                .arg(page.formatTimestamp(entry.timestamp_unix))
+                .arg(String(entry.level || "info").toUpperCase())
+                .arg(source)
+                .arg(String(entry.message || ""))
+    }
+
+    function copyEntries(entries) {
+        const lines = []
+        for (let index = 0; index < entries.length; ++index) {
+            lines.push(page.formattedLine(entries[index]))
+        }
+        shellBackend.copyLinesToClipboard(lines)
+    }
+
+    function rebuildFilteredEntries() {
+        const next = []
+        for (let index = 0; index < shellBackend.recentLogEntries.length; ++index) {
+            const entry = shellBackend.recentLogEntries[index]
+            if (!page.entryMatchesMode(entry) || !page.entryMatchesQuery(entry)) {
+                continue
+            }
+            next.push(entry)
+        }
+        page.filteredEntries = next
+    }
+
+    Component.onCompleted: rebuildFilteredEntries()
 
     Connections {
         target: shellBackend
 
         function onRecentLogsChanged() {
-            page.rebuildFilteredLogs()
+            page.rebuildFilteredEntries()
         }
     }
 
     ColumnLayout {
-        width: Math.min(parent.width, 960)
-        x: Math.max(0, (parent.width - width) / 2)
+        anchors.fill: parent
+        anchors.margins: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
-
-        Item {
-            Layout.preferredHeight: Kirigami.Units.largeSpacing
-        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -86,10 +138,17 @@ Kirigami.ScrollablePage {
             }
 
             Button {
-                text: qsTr("Copy")
+                text: qsTr("Copy filtered")
                 icon.name: "edit-copy"
-                enabled: shellBackend.recentLogs.length > 0
-                onClicked: shellBackend.copyRecentLogsToClipboard()
+                enabled: page.filteredEntries.length > 0
+                onClicked: page.copyEntries(page.filteredEntries)
+            }
+
+            Button {
+                text: qsTr("Copy all")
+                icon.name: "edit-copy"
+                enabled: shellBackend.recentLogEntries.length > 0
+                onClicked: page.copyEntries(shellBackend.recentLogEntries)
             }
 
             Button {
@@ -116,7 +175,6 @@ Kirigami.ScrollablePage {
 
         Frame {
             Layout.fillWidth: true
-            Layout.fillHeight: true
 
             ColumnLayout {
                 anchors.fill: parent
@@ -126,7 +184,7 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("Use search and filters to isolate the lines that matter while you retry transfers or restart the filesystem.")
+                    text: qsTr("Search recent entries by source, severity, message text, or timestamp. Copy only the filtered slice when you need to attach focused diagnostics.")
                 }
 
                 RowLayout {
@@ -137,21 +195,22 @@ Kirigami.ScrollablePage {
                         Layout.fillWidth: true
                         placeholderText: qsTr("Search logs")
                         text: page.filterText
-                        onTextEdited: {
+                        onTextChanged: {
                             page.filterText = text
-                            page.rebuildFilteredLogs()
+                            page.rebuildFilteredEntries()
                         }
                     }
 
                     ComboBox {
                         model: [
-                            qsTr("All lines"),
-                            qsTr("Errors only"),
+                            qsTr("All entries"),
+                            qsTr("Warnings and errors"),
                             qsTr("Transfers")
                         ]
-                        onActivated: {
+
+                        onCurrentIndexChanged: {
                             page.filterMode = currentIndex
-                            page.rebuildFilteredLogs()
+                            page.rebuildFilteredEntries()
                         }
                     }
                 }
@@ -160,44 +219,84 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("%1 of %2 recent line(s) shown.").arg(page.filteredLogs.length).arg(shellBackend.recentLogs.length)
+                    text: qsTr("%1 of %2 recent entries shown.").arg(page.filteredEntries.length).arg(shellBackend.recentLogEntries.length)
                 }
+            }
+        }
 
-                Label {
-                    Layout.fillWidth: true
-                    visible: shellBackend.recentLogs.length === 0
-                    wrapMode: Text.WordWrap
-                    color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("No log lines yet. Start the sign-in flow or the filesystem to capture daemon and rclone output.")
-                }
+        Label {
+            Layout.fillWidth: true
+            visible: shellBackend.recentLogEntries.length === 0
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.neutralTextColor
+            text: qsTr("No structured log entries yet. Start the sign-in flow or the filesystem to capture daemon and rclone output.")
+        }
 
-                Label {
-                    Layout.fillWidth: true
-                    visible: shellBackend.recentLogs.length > 0 && page.filteredLogs.length === 0
-                    wrapMode: Text.WordWrap
-                    color: Kirigami.Theme.neutralTextColor
-                    text: qsTr("No log lines match the current filter.")
-                }
+        Label {
+            Layout.fillWidth: true
+            visible: shellBackend.recentLogEntries.length > 0 && page.filteredEntries.length === 0
+            wrapMode: Text.WordWrap
+            color: Kirigami.Theme.neutralTextColor
+            text: qsTr("No log entries match the current filter.")
+        }
 
-                ListView {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: page.filteredLogs.length > 0
-                    clip: true
+        ListView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: page.filteredEntries.length > 0
+            clip: true
+            spacing: Kirigami.Units.smallSpacing
+            model: page.filteredEntries
+
+            delegate: Frame {
+                required property var modelData
+                readonly property var entry: modelData
+
+                width: ListView.view.width
+                padding: Kirigami.Units.mediumSpacing
+
+                ColumnLayout {
+                    anchors.fill: parent
                     spacing: Kirigami.Units.smallSpacing
-                    model: page.filteredLogs
 
-                    delegate: Frame {
-                        required property string modelData
-                        width: ListView.view.width
-                        padding: Kirigami.Units.mediumSpacing
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Rectangle {
+                            radius: 999
+                            color: page.levelColor(entry.level)
+                            implicitHeight: levelLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
+                            implicitWidth: levelLabel.implicitWidth + Kirigami.Units.mediumSpacing * 2
+
+                            Label {
+                                id: levelLabel
+                                anchors.centerIn: parent
+                                text: page.levelLabel(entry.level)
+                                color: "white"
+                                font.bold: true
+                            }
+                        }
 
                         Label {
-                            width: parent.width
-                            wrapMode: Text.WrapAnywhere
-                            text: modelData
-                            font.family: "monospace"
+                            text: String(entry.source || "").length > 0 ? entry.source : qsTr("daemon")
+                            font.bold: true
                         }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: page.formatTimestamp(entry.timestamp_unix)
+                            color: Kirigami.Theme.neutralTextColor
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: String(entry.message || "")
                     }
                 }
             }
