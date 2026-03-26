@@ -29,8 +29,10 @@ use vfs::{OpenOneDriveFs, OpenRequest, Provider, SnapshotHandle, VirtualEntry};
 
 const MAX_RECENT_LOGS: usize = 200;
 const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
+const RECURSIVE_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 pub const BACKEND_NAME: &str = "custom-fuse-rclone";
 const LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR: &str = "unable to get drive_id and drive_type";
+const REMOTE_SCAN_ERROR_PREFIX: &str = "remote scan failed: ";
 const RCLONE_ONEDRIVE_DEFAULT_CLIENT_ID: &str = "b15665d9-eda6-4092-8539-0eec376afd59";
 const RCLONE_ONEDRIVE_DEFAULT_CLIENT_SECRET_OBSCURED: &str =
     "_JUdzh3LnKNqSPcf4Wu5fgMFIQOI8glZu_akYgR8yf6egowNBg-R";
@@ -147,6 +149,12 @@ struct UploadScheduler {
     worker_running: bool,
     stop_after_current: bool,
     active_uploads: u32,
+}
+
+#[derive(Debug, Default)]
+struct RemoteScanResult {
+    entries: Vec<RcloneListEntry>,
+    failed_directories: BTreeMap<String, String>,
 }
 
 pub struct RcloneBackend {
@@ -561,14 +569,21 @@ impl RcloneBackend {
         self.persist_runtime().await?;
         self.emit_event(BackendEvent::FilesystemStateChanged);
         let result: Result<()> = async {
-            if !self.runtime.read().await.sync_paused {
-                self.rescan().await?;
+            if self.path_state_store.all()?.is_empty() {
+                if let Err(error) = self.seed_root_snapshot_preview().await {
+                    self.append_warning_log(
+                        "filesystem",
+                        format!("unable to seed root listing before mount: {error}"),
+                    );
+                    self.refresh_virtual_snapshot()?;
+                }
             } else {
                 self.refresh_virtual_snapshot()?;
             }
 
             let root_handle = File::open(&config.root_path)
                 .with_context(|| format!("unable to open {}", config.root_path.display()))?;
+            set_file_descriptor_inheritable(&root_handle)?;
             *self.underlay_root.lock().expect("underlay root poisoned") = Some(root_handle);
 
             let provider: Arc<dyn Provider> = Arc::new(FuseBridge {
@@ -597,6 +612,7 @@ impl RcloneBackend {
             self.emit_event(BackendEvent::ConnectionStateChanged);
             if !self.runtime.read().await.sync_paused {
                 self.restart_rescan_loop().await;
+                self.spawn_rescan("filesystem-start");
             }
             Ok(())
         }
@@ -667,8 +683,21 @@ impl RcloneBackend {
 
         self.begin_sync_activity(SyncState::Scanning)?;
         let result: Result<u32> = async {
-            let entries = self.scan_remote_entries().await?;
-            let snapshot = self.build_snapshot_from_remote_entries(&entries)?;
+            let existing_states = self.path_state_store.all()?;
+            let store_is_empty = existing_states.is_empty();
+            let seed_progressively =
+                store_is_empty || existing_states.iter().all(|state| !state.path.contains('/'));
+            if store_is_empty {
+                if let Err(error) = self.seed_root_snapshot_preview().await {
+                    self.append_warning_log(
+                        "sync",
+                        format!("unable to seed root listing before full scan: {error}"),
+                    );
+                }
+            }
+            let remote_scan = self.scan_remote_entries(seed_progressively).await?;
+            let mut snapshot = self.build_snapshot_from_remote_entries(&remote_scan.entries)?;
+            apply_failed_remote_scan_directories(&mut snapshot, &remote_scan.failed_directories);
             let store = self.path_state_store.clone();
             let snapshot_for_store = snapshot.clone();
             tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
@@ -721,14 +750,14 @@ impl RcloneBackend {
 
     pub async fn keep_local(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
         let config = self.current_config().await;
-        let selected_paths = expand_selected_paths(&config.root_path, raw_paths)?;
-        if selected_paths.is_empty() {
-            bail!("select at least one file or directory inside the OneDrive folder");
-        }
-
+        let states = self.path_state_store.all()?;
         self.begin_sync_activity(SyncState::Syncing)?;
         let mut changed = Vec::new();
         let result = (|| -> Result<u32> {
+            let selected_paths = expand_selected_paths(&config.root_path, raw_paths, &states)?;
+            if selected_paths.is_empty() {
+                bail!("select at least one file or directory inside the OneDrive folder");
+            }
             for relative_path in &selected_paths {
                 self.hydrate_relative_path_sync(relative_path)?;
                 changed.push(relative_path.clone());
@@ -758,15 +787,29 @@ impl RcloneBackend {
 
     pub async fn make_online_only(self: &Arc<Self>, raw_paths: &[String]) -> Result<u32> {
         let config = self.current_config().await;
-        let selected_paths = expand_selected_paths(&config.root_path, raw_paths)?;
-        if selected_paths.is_empty() {
-            bail!("select at least one file or directory inside the OneDrive folder");
-        }
+        let states = self.path_state_store.all()?;
 
         self.begin_sync_activity(SyncState::Syncing)?;
         let mut changed = Vec::new();
         let result = (|| -> Result<u32> {
+            let selected_paths = expand_selected_paths(&config.root_path, raw_paths, &states)?;
+            if selected_paths.is_empty() {
+                bail!("select at least one file or directory inside the OneDrive folder");
+            }
+            let state_map = states
+                .iter()
+                .map(|state| (state.path.clone(), state))
+                .collect::<HashMap<_, _>>();
             for relative_path in &selected_paths {
+                let Some(state) = state_map.get(relative_path) else {
+                    bail!("unknown path {relative_path}");
+                };
+                if !state.is_dir && (state.dirty || state.state == PathSyncState::Conflict) {
+                    bail!("cannot evict {} while it has local changes", relative_path);
+                }
+            }
+            let eviction_order = sort_paths_for_eviction(&selected_paths, &state_map);
+            for relative_path in &eviction_order {
                 self.evict_relative_path_sync(relative_path)?;
                 changed.push(relative_path.clone());
             }
@@ -1082,17 +1125,143 @@ impl RcloneBackend {
         Ok(())
     }
 
-    async fn scan_remote_entries(&self) -> Result<Vec<RcloneListEntry>> {
+    async fn scan_remote_entries(&self, seed_progressively: bool) -> Result<RemoteScanResult> {
         let config = self.current_config().await;
         let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
-        let output = Command::new(binary)
-            .args(build_lsjson_args(&config, &self.paths))
+        match self
+            .run_lsjson_command(
+                &binary,
+                build_lsjson_args(&config, &self.paths),
+                "remote scan",
+                Some(RECURSIVE_SCAN_TIMEOUT),
+            )
+            .await
+        {
+            Ok(entries) => Ok(RemoteScanResult {
+                entries,
+                failed_directories: BTreeMap::new(),
+            }),
+            Err(error) => {
+                if is_legacy_onedrive_remote_error(&error.to_string()) {
+                    return Err(error);
+                }
+                self.append_warning_log(
+                    "sync",
+                    format!(
+                        "recursive remote scan failed, retrying directory crawl: {error}"
+                    ),
+                );
+                self.scan_remote_entries_by_directory(
+                    &config,
+                    binary.as_path(),
+                    seed_progressively,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn scan_remote_entries_by_directory(
+        &self,
+        config: &AppConfig,
+        binary: &Path,
+        seed_progressively: bool,
+    ) -> Result<RemoteScanResult> {
+        let root_entries = self
+            .run_lsjson_command(
+                binary,
+                build_lsjson_directory_args(config, &self.paths, None, false),
+                "remote root",
+                None,
+            )
+            .await?;
+        let mut result = RemoteScanResult::default();
+        let mut queue = VecDeque::new();
+
+        for entry in root_entries {
+            if entry.path.is_empty() {
+                continue;
+            }
+            if entry.is_dir {
+                queue.push_back(entry.path.clone());
+            }
+            result.entries.push(entry);
+        }
+
+        while let Some(relative_path) = queue.pop_front() {
+            match self
+                .run_lsjson_command(
+                    binary,
+                    build_lsjson_directory_args(config, &self.paths, Some(&relative_path), false),
+                    &format!("remote directory {relative_path}"),
+                    None,
+                )
+                .await
+            {
+                Ok(children) => {
+                    for child in prefix_lsjson_entries(&relative_path, children) {
+                        if child.path.is_empty() {
+                            continue;
+                        }
+                        if child.is_dir {
+                            queue.push_back(child.path.clone());
+                        }
+                        result.entries.push(child);
+                    }
+                }
+                Err(error) => {
+                    let message = mark_remote_scan_error(&error.to_string());
+                    self.append_warning_log(
+                        "sync",
+                        format!("skipping remote subtree {relative_path}: {message}"),
+                    );
+                    result
+                        .failed_directories
+                        .insert(relative_path.clone(), message);
+                }
+            }
+
+            if seed_progressively {
+                self.persist_remote_scan_progress(&result.entries, &result.failed_directories)
+                    .await?;
+            }
+        }
+
+        if !result.failed_directories.is_empty() {
+            self.append_warning_log(
+                "sync",
+                format!(
+                    "remote scan skipped {} subtree(s) with listing errors",
+                    result.failed_directories.len()
+                ),
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn run_lsjson_command(
+        &self,
+        binary: &Path,
+        args: Vec<OsString>,
+        scope: &str,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<RcloneListEntry>> {
+        let output_future = Command::new(binary)
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
-            .await
-            .context("failed to execute rclone lsjson")?;
+            .kill_on_drop(true)
+            .output();
+        let output = match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, output_future)
+                .await
+                .with_context(|| format!("rclone lsjson timed out for {scope}"))??,
+            None => output_future
+                .await
+                .with_context(|| format!("failed to execute rclone lsjson for {scope}"))?,
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1100,7 +1269,7 @@ impl RcloneBackend {
                 bail!("{}", build_remote_repair_message(&stderr));
             }
             bail!(
-                "rclone lsjson failed{}",
+                "rclone lsjson failed for {scope}{}",
                 if stderr.is_empty() {
                     String::new()
                 } else {
@@ -1113,6 +1282,51 @@ impl RcloneBackend {
             String::from_utf8(output.stdout).context("rclone lsjson returned invalid utf-8")?;
         serde_json::from_str::<Vec<RcloneListEntry>>(&payload)
             .context("unable to parse rclone lsjson output")
+    }
+
+    async fn seed_root_snapshot_preview(&self) -> Result<()> {
+        let config = self.current_config().await;
+        let binary = resolve_rclone_binary(config.rclone_bin.as_deref())?;
+        let root_entries = self
+            .run_lsjson_command(
+                binary.as_path(),
+                build_lsjson_directory_args(&config, &self.paths, None, false),
+                "remote root preview",
+                None,
+            )
+            .await?;
+        if root_entries.is_empty() {
+            return Ok(());
+        }
+
+        let snapshot = self.build_snapshot_from_remote_entries(&root_entries)?;
+        let store = self.path_state_store.clone();
+        let snapshot_for_store = snapshot.clone();
+        tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
+            .await
+            .context("path-state preview write task join failed")??;
+        self.refresh_virtual_snapshot_with_states(&snapshot);
+        self.sync_runtime_sets_from_states(&snapshot)?;
+        self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
+        Ok(())
+    }
+
+    async fn persist_remote_scan_progress(
+        &self,
+        entries: &[RcloneListEntry],
+        failed_directories: &BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut snapshot = self.build_snapshot_from_remote_entries(entries)?;
+        apply_failed_remote_scan_directories(&mut snapshot, failed_directories);
+        let store = self.path_state_store.clone();
+        let snapshot_for_store = snapshot.clone();
+        tokio::task::spawn_blocking(move || store.replace_all(&snapshot_for_store))
+            .await
+            .context("path-state progress write task join failed")??;
+        self.refresh_virtual_snapshot_with_states(&snapshot);
+        self.sync_runtime_sets_from_states(&snapshot)?;
+        self.emit_event(BackendEvent::PathStatesChanged(Vec::new()));
+        Ok(())
     }
 
     fn fetch_remote_file_entry_sync(&self, relative_path: &str) -> Result<Option<RcloneListEntry>> {
@@ -1175,7 +1389,7 @@ impl RcloneBackend {
             let pinned = existing_state.is_some_and(|state| state.pinned);
             let dirty = existing_state.is_some_and(|state| state.dirty);
             let error = existing_state
-                .map(|state| state.error.clone())
+                .map(|state| clear_remote_scan_error(&state.error))
                 .unwrap_or_default();
             let conflict_reason = existing_state
                 .map(|state| state.conflict_reason.clone())
@@ -1194,7 +1408,7 @@ impl RcloneBackend {
                 path: entry.path.clone(),
                 is_dir: entry.is_dir,
                 state: PathSyncState::OnlineOnly,
-                size_bytes: entry.size,
+                size_bytes: entry.size_bytes(),
                 pinned,
                 hydrated,
                 dirty,
@@ -1790,6 +2004,12 @@ impl RcloneBackend {
             let path = self.backing_file_path(relative_path)?;
             fs::create_dir_all(&path)
                 .with_context(|| format!("unable to create {}", path.display()))?;
+            let mut state = current;
+            state.hydrated = true;
+            state.error.clear();
+            state.state = derive_path_state(&state);
+            state.last_sync_at = unix_timestamp();
+            self.path_state_store.upsert_many(&[state])?;
             return Ok(path);
         }
 
@@ -1861,13 +2081,18 @@ impl RcloneBackend {
             .into_iter()
             .next()
             .with_context(|| format!("unknown path {}", relative_path))?;
-        if state.dirty || state.state == PathSyncState::Conflict {
+        if !state.is_dir && (state.dirty || state.state == PathSyncState::Conflict) {
             bail!("cannot evict {} while it has local changes", relative_path);
         }
         let path = self.backing_file_path(relative_path)?;
         if path.exists() {
-            fs::remove_file(&path)
-                .with_context(|| format!("unable to remove {}", path.display()))?;
+            if state.is_dir {
+                fs::remove_dir_all(&path)
+                    .with_context(|| format!("unable to remove {}", path.display()))?;
+            } else {
+                fs::remove_file(&path)
+                    .with_context(|| format!("unable to remove {}", path.display()))?;
+            }
             remove_empty_parent_dirs(&path, &self.backing_root_access_path()?)?;
         }
         state.hydrated = false;
@@ -1928,7 +2153,7 @@ impl RcloneBackend {
         state.error.clear();
         state.conflict_reason.clear();
         state.hydrated = true;
-        state.size_bytes = verified_remote.size;
+        state.size_bytes = verified_remote.size_bytes();
         state.last_sync_at =
             parse_rclone_mod_time_unix(&verified_remote.mod_time).unwrap_or_else(unix_timestamp);
         state.base_revision = revision_for_entry(&verified_remote);
@@ -2514,14 +2739,49 @@ fn is_legacy_onedrive_remote_error(message: &str) -> bool {
     message.contains(LEGACY_ONEDRIVE_DRIVE_METADATA_ERROR)
 }
 
-fn expand_selected_paths(root_path: &Path, raw_paths: &[String]) -> Result<BTreeSet<String>> {
-    let mut files = BTreeSet::new();
-    for raw_path in raw_paths {
-        let relative = relative_path_for(root_path, Path::new(raw_path))?;
-        let absolute = root_path.join(&relative);
-        collect_selected_files(root_path, &absolute, &mut files)?;
+fn clear_remote_scan_error(message: &str) -> String {
+    message
+        .strip_prefix(REMOTE_SCAN_ERROR_PREFIX)
+        .map_or_else(|| message.to_string(), |_| String::new())
+}
+
+fn mark_remote_scan_error(message: &str) -> String {
+    if message.starts_with(REMOTE_SCAN_ERROR_PREFIX) {
+        message.to_string()
+    } else {
+        format!("{REMOTE_SCAN_ERROR_PREFIX}{message}")
     }
-    Ok(files)
+}
+
+fn expand_selected_paths(
+    root_path: &Path,
+    raw_paths: &[String],
+    states: &[PathState],
+) -> Result<BTreeSet<String>> {
+    let state_map = states
+        .iter()
+        .map(|state| (state.path.clone(), state))
+        .collect::<HashMap<_, _>>();
+    let mut selected = BTreeSet::new();
+
+    for raw_path in raw_paths {
+        let relative = relative_string(&relative_path_for(root_path, Path::new(raw_path))?);
+        let Some(state) = state_map.get(&relative) else {
+            bail!("unknown path {relative}");
+        };
+
+        selected.insert(relative.clone());
+        if state.is_dir {
+            let prefix = format!("{relative}/");
+            selected.extend(
+                states
+                    .iter()
+                    .filter(|candidate| candidate.path.starts_with(&prefix))
+                    .map(|candidate| candidate.path.clone()),
+            );
+        }
+    }
+    Ok(selected)
 }
 
 fn expand_retry_paths(
@@ -2569,30 +2829,6 @@ fn is_retryable_state(state: &PathState) -> bool {
         || !state.conflict_reason.is_empty()
 }
 
-fn collect_selected_files(
-    root_path: &Path,
-    path: &Path,
-    files: &mut BTreeSet<String>,
-) -> Result<()> {
-    let metadata =
-        fs::metadata(path).with_context(|| format!("unable to inspect {}", path.display()))?;
-    if metadata.is_dir() {
-        for entry in
-            fs::read_dir(path).with_context(|| format!("unable to read {}", path.display()))?
-        {
-            let entry = entry.with_context(|| format!("unable to read {}", path.display()))?;
-            collect_selected_files(root_path, &entry.path(), files)?;
-        }
-        return Ok(());
-    }
-
-    if metadata.is_file() {
-        let relative = relative_path_for(root_path, path)?;
-        files.insert(relative_string(&relative));
-    }
-    Ok(())
-}
-
 fn relative_path_for(root_path: &Path, raw_path: &Path) -> Result<PathBuf> {
     let absolute = if raw_path.is_absolute() {
         raw_path.to_path_buf()
@@ -2634,6 +2870,25 @@ fn normalize_directory_query_path(root_path: &Path, raw_path: &str) -> Result<Op
     }
     let relative = relative_path_for(root_path, Path::new(trimmed))?;
     Ok(Some(relative_string(&relative)))
+}
+
+fn sort_paths_for_eviction(
+    paths: &BTreeSet<String>,
+    state_map: &HashMap<String, &PathState>,
+) -> Vec<String> {
+    let mut ordered = paths.iter().cloned().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        let left_depth = left.matches('/').count();
+        let right_depth = right.matches('/').count();
+        let left_is_dir = state_map.get(left).is_some_and(|state| state.is_dir);
+        let right_is_dir = state_map.get(right).is_some_and(|state| state.is_dir);
+
+        right_depth
+            .cmp(&left_depth)
+            .then_with(|| left_is_dir.cmp(&right_is_dir))
+            .then_with(|| left.cmp(right))
+    });
+    ordered
 }
 
 fn immediate_child_of(path: &str, parent: Option<&str>) -> bool {
@@ -2843,11 +3098,17 @@ struct RcloneListEntry {
     #[serde(rename = "IsDir", default)]
     is_dir: bool,
     #[serde(rename = "Size", default)]
-    size: u64,
+    size: i64,
     #[serde(rename = "ModTime", default)]
     mod_time: String,
     #[serde(rename = "Hashes", default)]
     hashes: BTreeMap<String, String>,
+}
+
+impl RcloneListEntry {
+    fn size_bytes(&self) -> u64 {
+        u64::try_from(self.size).unwrap_or_default()
+    }
 }
 
 fn revision_for_entry(entry: &RcloneListEntry) -> String {
@@ -2857,7 +3118,7 @@ fn revision_for_entry(entry: &RcloneListEntry) -> String {
         .find(|(_, value)| !value.is_empty())
         .map(|(name, value)| format!(":{name}={value}"))
         .unwrap_or_default();
-    format!("{}:{}{}", entry.size, entry.mod_time, hash_fragment)
+    format!("{}:{}{}", entry.size_bytes(), entry.mod_time, hash_fragment)
 }
 
 fn apply_filesystem_start_failure(runtime: &mut Runtime, message: String) {
@@ -3071,15 +3332,31 @@ pub fn build_connect_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsStr
 }
 
 pub fn build_lsjson_args(config: &AppConfig, paths: &ProjectPaths) -> Vec<OsString> {
-    vec![
+    build_lsjson_directory_args(config, paths, None, true)
+}
+
+fn build_lsjson_directory_args(
+    config: &AppConfig,
+    paths: &ProjectPaths,
+    relative_path: Option<&str>,
+    recursive: bool,
+) -> Vec<OsString> {
+    let target = match relative_path.filter(|path| !path.is_empty()) {
+        Some(path) => format!("{}:{path}", config.remote_name),
+        None => format!("{}:", config.remote_name),
+    };
+    let mut args = vec![
         OsString::from("lsjson"),
-        OsString::from(format!("{}:", config.remote_name)),
+        OsString::from(target),
         OsString::from("--config"),
         paths.rclone_config_file.as_os_str().to_os_string(),
-        OsString::from("--recursive"),
-        OsString::from("--hash"),
-        OsString::from("--no-mimetype"),
-    ]
+    ];
+    if recursive {
+        args.push(OsString::from("--recursive"));
+    }
+    args.push(OsString::from("--hash"));
+    args.push(OsString::from("--no-mimetype"));
+    args
 }
 
 fn build_lsjson_single_args(
@@ -3251,15 +3528,90 @@ fn io_error(error: anyhow::Error) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+fn set_file_descriptor_inheritable(file: &File) -> Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let fd = file.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error()).context("unable to inspect file descriptor flags");
+    }
+
+    let updated = flags & !libc::FD_CLOEXEC;
+    if updated == flags {
+        return Ok(());
+    }
+
+    let status = unsafe { libc::fcntl(fd, libc::F_SETFD, updated) };
+    if status < 0 {
+        return Err(io::Error::last_os_error())
+            .context("unable to clear close-on-exec from file descriptor");
+    }
+    Ok(())
+}
+
+fn prefix_lsjson_entries(parent_path: &str, entries: Vec<RcloneListEntry>) -> Vec<RcloneListEntry> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            let normalized = entry.path.trim_start_matches('/');
+            if normalized.is_empty() {
+                return entry;
+            }
+
+            entry.path = if normalized == parent_path
+                || normalized
+                    .strip_prefix(parent_path)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+            {
+                normalized.to_string()
+            } else {
+                relative_string(&Path::new(parent_path).join(normalized))
+            };
+            entry
+        })
+        .collect()
+}
+
+fn apply_failed_remote_scan_directories(
+    snapshot: &mut Vec<PathState>,
+    failed_directories: &BTreeMap<String, String>,
+) {
+    for (path, error) in failed_directories {
+        if let Some(state) = snapshot.iter_mut().find(|state| state.path == *path) {
+            state.is_dir = true;
+            state.state = PathSyncState::Error;
+            state.error = error.clone();
+            continue;
+        }
+
+        snapshot.push(PathState {
+            path: path.clone(),
+            is_dir: true,
+            state: PathSyncState::Error,
+            size_bytes: 0,
+            pinned: false,
+            hydrated: false,
+            dirty: false,
+            error: error.clone(),
+            last_sync_at: unix_timestamp(),
+            base_revision: String::new(),
+            conflict_reason: String::new(),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         BACKEND_NAME, RcloneBackend, RcloneListEntry, Runtime, affected_relative_paths,
         apply_filesystem_start_failure, build_connect_args, build_deletefile_args,
-        build_download_args, build_lsjson_args, build_lsjson_single_args, build_moveto_args,
-        build_rmdir_args, build_upload_args, derive_path_state, expand_retry_paths,
-        expand_selected_paths, immediate_child_of, is_legacy_onedrive_remote_error,
-        normalize_path_state_snapshot, parse_rclone_mod_time_unix, path_matches_query,
+        apply_failed_remote_scan_directories, build_download_args, build_lsjson_args,
+        build_lsjson_directory_args, build_lsjson_single_args, build_moveto_args,
+        build_rmdir_args, build_upload_args, clear_remote_scan_error, derive_path_state,
+        expand_retry_paths, expand_selected_paths, immediate_child_of,
+        is_legacy_onedrive_remote_error, mark_remote_scan_error, normalize_path_state_snapshot,
+        parse_rclone_mod_time_unix, path_matches_query, prefix_lsjson_entries,
         read_remote_config_section, relative_path_for, remote_config_needs_repair,
         resolve_rclone_binary_with_path, revision_for_entry, sort_path_states,
     };
@@ -3338,6 +3690,68 @@ mod tests {
         assert!(!build_deletefile_args(&config, &paths, "Docs/file.txt").is_empty());
         assert!(!build_rmdir_args(&config, &paths, "Docs").is_empty());
         assert!(!build_moveto_args(&config, &paths, "Docs/a.txt", "Docs/b.txt").is_empty());
+
+        let nested_lsjson = build_lsjson_directory_args(&config, &paths, Some("Docs"), false)
+            .into_iter()
+            .map(|value| value.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(nested_lsjson.contains(&"openonedrive:Docs".to_string()));
+        assert!(!nested_lsjson.contains(&"--recursive".to_string()));
+    }
+
+    #[test]
+    fn lsjson_entry_prefixing_preserves_nested_paths() {
+        let prefixed = prefix_lsjson_entries(
+            "Docs",
+            vec![
+                RcloneListEntry {
+                    path: "child.txt".into(),
+                    is_dir: false,
+                    size: 1,
+                    mod_time: String::new(),
+                    hashes: BTreeMap::new(),
+                },
+                RcloneListEntry {
+                    path: "nested".into(),
+                    is_dir: true,
+                    size: 0,
+                    mod_time: String::new(),
+                    hashes: BTreeMap::new(),
+                },
+                RcloneListEntry {
+                    path: "Docs/already-full.txt".into(),
+                    is_dir: false,
+                    size: 1,
+                    mod_time: String::new(),
+                    hashes: BTreeMap::new(),
+                },
+            ],
+        );
+
+        assert_eq!(
+            prefixed
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>(),
+            vec![
+                "Docs/child.txt".to_string(),
+                "Docs/nested".to_string(),
+                "Docs/already-full.txt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn lsjson_directory_entries_accept_negative_size_markers() {
+        let entries = serde_json::from_str::<Vec<RcloneListEntry>>(
+            r#"[{"Path":"Docs","IsDir":true,"Size":-1,"ModTime":"2026-03-25T00:00:00Z","Hashes":{}}]"#,
+        )
+        .expect("parse lsjson");
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].size_bytes(), 0);
+        assert_eq!(revision_for_entry(&entries[0]), "0:2026-03-25T00:00:00Z");
     }
 
     #[test]
@@ -3613,6 +4027,19 @@ mod tests {
                     conflict_reason: String::new(),
                 },
                 PathState {
+                    path: "Vault".into(),
+                    is_dir: true,
+                    state: PathSyncState::Error,
+                    size_bytes: 0,
+                    pinned: false,
+                    hydrated: false,
+                    dirty: false,
+                    error: "remote scan failed: invalidRequest".into(),
+                    last_sync_at: 1,
+                    base_revision: "dir".into(),
+                    conflict_reason: String::new(),
+                },
+                PathState {
                     path: "Docs/alpha/spec.md".into(),
                     is_dir: false,
                     state: PathSyncState::PinnedLocal,
@@ -3634,7 +4061,7 @@ mod tests {
                 .into_iter()
                 .map(|state| state.path)
                 .collect::<Vec<_>>(),
-            vec!["Docs".to_string()]
+            vec!["Docs".to_string(), "Vault".to_string()]
         );
 
         let docs_entries = backend.list_directory("Docs").await.expect("docs entries");
@@ -3742,19 +4169,77 @@ mod tests {
     }
 
     #[test]
-    fn expands_selected_directories_into_relative_files() {
+    fn expands_selected_directories_from_snapshot_without_visible_tree() {
         let dir = tempdir().expect("tempdir");
         let root = dir.path().join("root");
-        fs::create_dir_all(root.join("docs/nested")).expect("root tree");
-        fs::write(root.join("docs/readme.md"), "a").expect("write file");
-        fs::write(root.join("docs/nested/spec.txt"), "b").expect("write file");
+        fs::create_dir_all(&root).expect("root");
+        let snapshot = vec![
+            PathState {
+                path: "docs".into(),
+                is_dir: true,
+                state: PathSyncState::OnlineOnly,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "docs/nested".into(),
+                is_dir: true,
+                state: PathSyncState::OnlineOnly,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "docs/readme.md".into(),
+                is_dir: false,
+                state: PathSyncState::OnlineOnly,
+                size_bytes: 1,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "rev1".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
+                path: "docs/nested/spec.txt".into(),
+                is_dir: false,
+                state: PathSyncState::OnlineOnly,
+                size_bytes: 1,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: String::new(),
+                last_sync_at: 1,
+                base_revision: "rev2".into(),
+                conflict_reason: String::new(),
+            },
+        ];
 
-        let selected = expand_selected_paths(&root, &[root.join("docs").display().to_string()])
-            .expect("expand selected paths");
+        let selected = expand_selected_paths(
+            &root,
+            &[root.join("docs").display().to_string()],
+            &snapshot,
+        )
+        .expect("expand selected paths");
 
         assert_eq!(
             selected.into_iter().collect::<Vec<_>>(),
             vec![
+                "docs".to_string(),
+                "docs/nested".to_string(),
                 "docs/nested/spec.txt".to_string(),
                 "docs/readme.md".to_string()
             ]
@@ -3871,15 +4356,74 @@ mod tests {
                 base_revision: "rev".into(),
                 conflict_reason: String::new(),
             },
+            PathState {
+                path: "Vault".into(),
+                is_dir: true,
+                state: PathSyncState::Error,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: "remote scan failed: invalidRequest".into(),
+                last_sync_at: 3,
+                base_revision: String::new(),
+                conflict_reason: String::new(),
+            },
         ]);
 
-        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized.len(), 3);
         let docs = normalized
-            .into_iter()
+            .iter()
             .find(|state| state.path == "Docs")
             .expect("docs dir");
         assert_eq!(docs.state, PathSyncState::AvailableLocal);
         assert!(!docs.pinned);
+
+        let vault = normalized
+            .into_iter()
+            .find(|state| state.path == "Vault")
+            .expect("vault dir");
+        assert_eq!(vault.state, PathSyncState::Error);
+        assert!(!vault.error.is_empty());
+    }
+
+    #[test]
+    fn remote_scan_errors_clear_after_successful_listing() {
+        assert_eq!(
+            clear_remote_scan_error(&mark_remote_scan_error("boom")),
+            String::new()
+        );
+        assert_eq!(clear_remote_scan_error("other failure"), "other failure");
+    }
+
+    #[test]
+    fn failed_remote_scan_directories_mark_existing_directory_entries() {
+        let mut snapshot = vec![PathState {
+            path: "Vault".into(),
+            is_dir: true,
+            state: PathSyncState::OnlineOnly,
+            size_bytes: 0,
+            pinned: false,
+            hydrated: false,
+            dirty: false,
+            error: String::new(),
+            last_sync_at: 1,
+            base_revision: "dir".into(),
+            conflict_reason: String::new(),
+        }];
+        let failed = BTreeMap::from([(
+            "Vault".to_string(),
+            mark_remote_scan_error("rclone lsjson failed for remote directory Vault: invalidRequest")
+        )]);
+
+        apply_failed_remote_scan_directories(&mut snapshot, &failed);
+
+        let vault = snapshot
+            .into_iter()
+            .find(|state| state.path == "Vault")
+            .expect("vault dir");
+        assert_eq!(vault.state, PathSyncState::Error);
+        assert!(vault.error.starts_with("remote scan failed: "));
     }
 
     #[test]

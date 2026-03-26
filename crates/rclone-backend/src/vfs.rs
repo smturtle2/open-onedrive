@@ -87,7 +87,6 @@ impl OpenOneDriveFs {
     pub fn mount_options() -> Vec<MountOption> {
         vec![
             MountOption::FSName("openonedrive".to_string()),
-            MountOption::AutoUnmount,
             MountOption::DefaultPermissions,
         ]
     }

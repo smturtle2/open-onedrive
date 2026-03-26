@@ -6,8 +6,8 @@
   <circle cx="176" cy="92" r="10" fill="#4FD18B"/>
   <text x="228" y="99" fill="#DDE7F7" font-family="Arial, sans-serif" font-size="24">open-onedrive shell</text>
 
-  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">Left-rail shell, direct residency actions, one visible folder.</text>
-  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">Overview, Explorer, Setup, and Logs stay fixed in one operator shell, while the hidden hydrated cache follows safe root-path moves.</text>
+  <text x="92" y="156" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="46" font-weight="700">Left-rail shell, clear Explorer states, one visible folder.</text>
+  <text x="92" y="196" fill="#A9BAD6" font-family="Arial, sans-serif" font-size="22">Overview, Explorer, Setup, and Logs stay fixed in one operator shell, while Explorer keeps online-only items visible and the hidden hydrated cache follows safe root-path moves.</text>
 
   <g filter="url(#shadow)">
     <rect x="80" y="244" width="658" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>
@@ -43,12 +43,12 @@
   <g filter="url(#shadow)">
     <rect x="774" y="244" width="426" height="404" rx="30" fill="#0D1826" stroke="#233A5A"/>
     <text x="808" y="292" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="28" font-weight="700">Explorer + tray</text>
-    <text x="808" y="324" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Residency controls stay close to the file path, while background recovery stays close to the tray.</text>
+    <text x="808" y="324" fill="#93A8CA" font-family="Arial, sans-serif" font-size="18">Residency filters, explicit empty/error states, and tray recovery keep file state readable without guessing.</text>
 
     <rect x="808" y="358" width="170" height="220" rx="24" fill="#13243B"/>
     <text x="830" y="392" fill="#D7E2F2" font-family="Arial, sans-serif" font-size="16">Documents/report.pdf</text>
     <rect x="830" y="414" width="126" height="30" rx="15" fill="#1A3654"/>
-    <text x="857" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">pinned</text>
+    <text x="850" y="434" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">online-only</text>
     <rect x="830" y="462" width="126" height="34" rx="17" fill="#183553"/>
     <text x="842" y="484" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="14">Keep on device</text>
     <rect x="830" y="510" width="126" height="34" rx="17" fill="#183553"/>
@@ -62,9 +62,9 @@
     <text x="1026" y="450" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Controls stay resident in the system tray.</text>
 
     <rect x="1000" y="488" width="166" height="122" rx="22" fill="#11263A"/>
-    <text x="1026" y="522" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Pinned issue</text>
-    <text x="1026" y="556" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">Retry the filesystem</text>
-    <text x="1026" y="578" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">Logs stay one click away while the daemon needs attention.</text>
+    <text x="1026" y="522" fill="#8EA6C8" font-family="Arial, sans-serif" font-size="15">Explorer</text>
+    <text x="1026" y="556" fill="#F7FBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">Empty and error split</text>
+    <text x="1026" y="578" fill="#C4D4EA" font-family="Arial, sans-serif" font-size="14">True empty folders and daemon failures no longer look the same.</text>
   </g>
 
   <defs>

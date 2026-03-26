@@ -424,7 +424,7 @@ Kirigami.ScrollablePage {
                         Button {
                             text: qsTr("Open Folder")
                             icon.name: "document-open-folder"
-                            enabled: shellBackend.effectiveMountPath.length > 0
+                            enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
                             onClicked: shellBackend.openMountLocation()
                         }
                     }

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>OneDrive as a normal KDE folder.</strong><br/>
-  Visible root, on-demand hydration, per-file residency, tray-aware recovery, and one daemon state shared by the shell, CLI, and Dolphin.
+  Visible root, on-demand hydration, per-file and folder residency, tray-aware recovery, and one daemon state shared by the shell, CLI, and Dolphin.
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/docs/dashboard-hero.svg" alt="open-onedrive overview shell, logs, explorer actions, and tray" width="100%">
+  <img src="./assets/docs/app-shell-screenshot.png" alt="open-onedrive shell showing the Explorer empty-state guidance and left-rail workspace" width="100%">
 </p>
 
 <p align="center">
@@ -44,27 +44,27 @@ Instead:
 - `openonedrived` owns the custom FUSE filesystem, on-demand hydration, upload queue, path-state cache, conflicts, and retry flow
 - the Qt/Kirigami shell, tray, CLI, and Dolphin plugins all read the same daemon state
 
-The result is a normal local path for regular Linux apps, with explicit per-file residency controls.
+The result is a normal local path for regular Linux apps, with explicit file and folder residency controls.
 
 ## Highlights
 
 - visible root folder backed by a custom FUSE filesystem
 - on-demand hydration for normal Linux apps, not only KDE apps
-- per-file `Keep on this device` and `Make online-only`
+- per-file and folder `Keep on this device` / `Make online-only`
 - left-rail shell with dedicated Overview, Explorer, Setup, and Logs surfaces
 - compact runtime inspector for queue depth, backing usage, pinned files, and last sync state
-- searchable in-app Explorer with debounced whole-tree search, denser rows, and direct residency actions
+- searchable in-app Explorer with debounced whole-tree search, residency filters, explicit empty/error states, and direct file or folder actions
 - structured logs with level, source, time, and a pinned latest issue for recovery work
 - root-path moves carry the hidden hydrated backing store to the new root when it is safe to do so
 - app-owned `rclone.conf` under XDG paths, isolated from `~/.config/rclone/rclone.conf`
 - Dolphin overlays and file actions for residency control inside the visible root
 - tray persistence, CLI, and Dolphin integration, all backed by the same daemon state
-- stable one-line installer with checksum-verified release archives, existing-install upgrade checks, and staged launcher smoke tests
+- stable one-line installer with checksum-verified release archives, existing-install upgrade checks, and release-workflow smoke tests for launcher and upgrade paths
 
 ## Operator Surfaces
 
 - `Overview`: a compact operator surface for the next action, runtime inspector, and recent activity
-- `Explorer`: browse path-state data, run debounced whole-tree search, and apply per-file residency changes without manual path input
+- `Explorer`: browse path-state data, keep online-only items visible, separate true empty folders from backend errors, filter by residency, and apply file or folder actions without manual path input
 - `Setup`: first-run connection, root-path edits, remote repair, and clean disconnect stay together
 - `Logs`: search structured daemon and `rclone` output, switch between All / Attention / Transfers / Errors, and copy filtered recovery context
 - `Tray`: closing the window keeps the controls resident and reserves notifications for actionable background errors
@@ -162,7 +162,7 @@ openonedrivectl path-states ~/OneDrive/Documents/report.pdf
 Recovery surfaces:
 
 - the left-rail shell keeps Setup and Logs one click away while still surfacing the recommended next view
-- the Explorer page exposes searchable path-state data with bulk and row-level residency actions
+- the Explorer page exposes searchable path-state data with explicit unavailable/error/empty states plus bulk and row-level residency actions
 - the logs page supports quick search plus filtered recovery work around structured daemon and `rclone` output
 - tray notifications are reserved for actionable background errors, while closing the window keeps the tray controls resident
 - Dolphin overlays invalidate from daemon signals rather than using a disconnected local cache

@@ -251,6 +251,19 @@ mod tests {
         let store = PathStateStore::open(&dir.path().join("path-state.sqlite3")).expect("store");
         let snapshot = vec![
             PathState {
+                path: "Broken Vault".into(),
+                is_dir: true,
+                state: PathSyncState::Error,
+                size_bytes: 0,
+                pinned: false,
+                hydrated: false,
+                dirty: false,
+                error: "remote scan failed: rclone lsjson failed for remote directory Broken Vault: invalidRequest".into(),
+                last_sync_at: 46,
+                base_revision: "dir".into(),
+                conflict_reason: String::new(),
+            },
+            PathState {
                 path: "Docs".into(),
                 is_dir: true,
                 state: PathSyncState::PinnedLocal,
@@ -282,7 +295,7 @@ mod tests {
         assert_eq!(store.all().expect("all"), snapshot);
         assert_eq!(
             store.get_many(&["Docs".into()]).expect("get"),
-            vec![snapshot[0].clone()]
+            vec![snapshot[1].clone()]
         );
     }
 }

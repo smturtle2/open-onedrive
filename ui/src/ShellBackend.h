@@ -115,6 +115,8 @@ public:
     Q_INVOKABLE void retryTransferPaths(const QStringList &paths);
     Q_INVOKABLE void copyRecentLogsToClipboard();
     Q_INVOKABLE void copyLinesToClipboard(const QStringList &lines);
+    Q_INVOKABLE QVariantMap listDirectoryResult(const QString &path);
+    Q_INVOKABLE QVariantMap searchPathsResult(const QString &query, int limit = 200);
     Q_INVOKABLE QString listDirectoryJson(const QString &path);
     Q_INVOKABLE QString searchPathsJson(const QString &query, int limit = 200);
     Q_INVOKABLE void openPath(const QString &path);
@@ -155,6 +157,7 @@ private:
     void updateTray();
     bool invokePathAction(const QString &method, const QString &path, const QString &emptyPathMessage);
     bool invokePathsAction(const QString &method, const QStringList &paths, const QString &emptyPathMessage);
+    QVariantMap parseExplorerEntries(const QString &jsonPayload, const QString &invalidMessage) const;
     static QString normalizeMountPath(const QString &mountPath);
     static QString formatBytes(qint64 bytes);
     static QString formatTimestamp(qint64 secondsSinceEpoch);

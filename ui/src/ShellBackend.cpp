@@ -70,6 +70,17 @@ QString actionLabelForMethod(const QString &method)
     }
     return method;
 }
+
+QVariantMap explorerResult(const QString &state,
+                           const QString &message,
+                           const QVariantList &entries = {})
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("state"), state);
+    result.insert(QStringLiteral("message"), message);
+    result.insert(QStringLiteral("entries"), entries);
+    return result;
+}
 }
 
 ShellBackend::ShellBackend(QObject *parent)
@@ -694,6 +705,31 @@ QString ShellBackend::listDirectoryJson(const QString &path)
     return reply.value();
 }
 
+QVariantMap ShellBackend::listDirectoryResult(const QString &path)
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        const QString message = tr("Background service unavailable. Start openonedrived and refresh here.");
+        updateStatusMessage(message);
+        return explorerResult(QStringLiteral("unavailable"), message);
+    }
+
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("ListDirectoryJson"), path);
+    if (!reply.isValid()) {
+        const QDBusError error = reply.error();
+        const bool unavailable = isDaemonUnavailableError(error);
+        const QString message = unavailable
+                                    ? tr("Background service unavailable. Start openonedrived and refresh here.")
+                                    : tr("Directory listing failed: %1").arg(error.message());
+        updateStatusMessage(message);
+        return explorerResult(unavailable ? QStringLiteral("unavailable")
+                                          : QStringLiteral("error"),
+                              message);
+    }
+
+    return parseExplorerEntries(reply.value(), tr("Directory listing returned invalid data."));
+}
+
 QString ShellBackend::searchPathsJson(const QString &query, int limit)
 {
     QDBusInterface iface = daemonInterface();
@@ -711,6 +747,33 @@ QString ShellBackend::searchPathsJson(const QString &query, int limit)
     }
 
     return reply.value();
+}
+
+QVariantMap ShellBackend::searchPathsResult(const QString &query, int limit)
+{
+    QDBusInterface iface = daemonInterface();
+    if (!iface.isValid()) {
+        const QString message = tr("Background service unavailable. Start openonedrived and refresh here.");
+        updateStatusMessage(message);
+        return explorerResult(QStringLiteral("unavailable"), message);
+    }
+
+    const QDBusReply<QString> reply = iface.call(QStringLiteral("SearchPathsJson"),
+                                                 query,
+                                                 qMax(0, limit));
+    if (!reply.isValid()) {
+        const QDBusError error = reply.error();
+        const bool unavailable = isDaemonUnavailableError(error);
+        const QString message = unavailable
+                                    ? tr("Background service unavailable. Start openonedrived and refresh here.")
+                                    : tr("Search failed: %1").arg(error.message());
+        updateStatusMessage(message);
+        return explorerResult(unavailable ? QStringLiteral("unavailable")
+                                          : QStringLiteral("error"),
+                              message);
+    }
+
+    return parseExplorerEntries(reply.value(), tr("Search returned invalid data."));
 }
 
 void ShellBackend::openPath(const QString &path)
@@ -1330,6 +1393,19 @@ bool ShellBackend::invokePathsAction(const QString &method,
     updateStatusMessage(
         tr("%1 applied to %2 item(s).").arg(actionLabelForMethod(method), QString::number(reply.value())));
     return true;
+}
+
+QVariantMap ShellBackend::parseExplorerEntries(const QString &jsonPayload,
+                                               const QString &invalidMessage) const
+{
+    const QJsonDocument document = QJsonDocument::fromJson(jsonPayload.toUtf8());
+    if (!document.isArray()) {
+        return explorerResult(QStringLiteral("error"), invalidMessage);
+    }
+
+    return explorerResult(QStringLiteral("ok"),
+                          QString(),
+                          document.array().toVariantList());
 }
 
 QString ShellBackend::normalizeMountPath(const QString &mountPath)

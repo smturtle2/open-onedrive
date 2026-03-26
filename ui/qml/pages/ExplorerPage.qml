@@ -9,12 +9,23 @@ Kirigami.Page {
 
     property string currentPath: ""
     property var entries: []
+    property var filteredEntries: []
     property var selectedPaths: []
     property bool pendingSearchReset: true
+    property string loadState: "loading"
+    property string loadMessage: ""
+    property int residencyFilter: 0
 
     readonly property string trimmedSearchText: searchField.text.trim()
     readonly property bool searchActive: trimmedSearchText.length > 0
-    readonly property bool readyForBrowsing: shellBackend.remoteConfigured && shellBackend.daemonReachable
+    readonly property bool queryReady: shellBackend.remoteConfigured && shellBackend.daemonReachable
+    readonly property bool canManageResidencyActions: queryReady && loadState !== "error" && loadState !== "unavailable"
+    readonly property bool canOpenMountedPaths: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
+    readonly property color canvasColor: "#f3f6fb"
+    readonly property color surfaceColor: "#ffffff"
+    readonly property color mutedSurfaceColor: "#eef3f9"
+    readonly property color lineColor: Qt.rgba(10 / 255, 28 / 255, 49 / 255, 0.08)
+    readonly property color textMutedColor: "#5f6f82"
 
     function normalizePath(path) {
         let normalized = String(path || "")
@@ -27,12 +38,25 @@ Kirigami.Page {
         return normalized
     }
 
-    function parseEntries(payload) {
-        try {
-            const parsed = JSON.parse(payload)
-            return Array.isArray(parsed) ? parsed : []
-        } catch (error) {
-            return []
+    function applyResult(result, clearSelection) {
+        const resultState = String((result && result.state) || "error")
+        const resultMessage = String((result && result.message) || "")
+        const resultEntries = result && result.entries !== undefined ? result.entries : []
+
+        page.entries = resultEntries
+        if (resultState === "ok") {
+            page.loadState = resultEntries.length > 0 ? "ready" : "empty"
+            page.loadMessage = ""
+        } else {
+            page.loadState = resultState
+            page.loadMessage = resultMessage
+        }
+
+        page.rebuildFilteredEntries()
+        if (clearSelection) {
+            page.clearSelection()
+        } else {
+            page.pruneSelectionTo(page.filteredEntries)
         }
     }
 
@@ -79,21 +103,52 @@ Kirigami.Page {
         return qsTr("Online-only")
     }
 
+    function stateHint(entry) {
+        const state = String(entry.state || "")
+        if (state === "PinnedLocal") {
+            return qsTr("Always keep a local copy")
+        }
+        if (state === "AvailableLocal") {
+            return qsTr("Local copy already available")
+        }
+        if (state === "Syncing") {
+            return qsTr("Transfer work in progress")
+        }
+        if (state === "Conflict") {
+            return qsTr("Needs a manual retry")
+        }
+        if (state === "Error") {
+            return qsTr("Last operation failed")
+        }
+        return qsTr("Download when first opened")
+    }
+
     function stateColor(entry) {
         const state = String(entry.state || "")
         if (state === "PinnedLocal") {
-            return "#1f7a4d"
+            return "#147a51"
         }
         if (state === "AvailableLocal") {
-            return "#295c8a"
+            return "#215f9b"
         }
         if (state === "Syncing") {
-            return "#3c73d4"
+            return "#2e75c8"
         }
         if (state === "Conflict" || state === "Error") {
-            return "#b3261e"
+            return "#b53b2d"
         }
-        return "#6a7783"
+        return "#7a8796"
+    }
+
+    function stateGroup(entry) {
+        const state = String(entry.state || "")
+        if (state === "OnlineOnly") {
+            return 1
+        }
+        if (state === "PinnedLocal" || state === "AvailableLocal") {
+            return 2
+        }
+        return 3
     }
 
     function detailText(entry) {
@@ -151,12 +206,12 @@ Kirigami.Page {
         page.selectedPaths = []
     }
 
-    function pruneSelection() {
+    function pruneSelectionTo(entries) {
         const valid = []
         for (let index = 0; index < page.selectedPaths.length; ++index) {
             const path = page.selectedPaths[index]
-            for (let entryIndex = 0; entryIndex < page.entries.length; ++entryIndex) {
-                if (page.entries[entryIndex].path === path) {
+            for (let entryIndex = 0; entryIndex < entries.length; ++entryIndex) {
+                if (entries[entryIndex].path === path) {
                     valid.push(path)
                     break
                 }
@@ -165,16 +220,51 @@ Kirigami.Page {
         page.selectedPaths = valid
     }
 
-    function refresh(clearSelection) {
-        const payload = page.searchActive
-                ? shellBackend.searchPathsJson(page.trimmedSearchText, 200)
-                : shellBackend.listDirectoryJson(page.currentPath)
-        page.entries = page.parseEntries(payload)
-        if (clearSelection) {
-            page.clearSelection()
-        } else {
-            page.pruneSelection()
+    function filterMatches(entry) {
+        if (page.residencyFilter === 0) {
+            return true
         }
+        return page.stateGroup(entry) === page.residencyFilter
+    }
+
+    function countForFilter(filterIndex) {
+        let count = 0
+        for (let index = 0; index < page.entries.length; ++index) {
+            if (filterIndex === 0 || page.stateGroup(page.entries[index]) === filterIndex) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    function rebuildFilteredEntries() {
+        const next = []
+        for (let index = 0; index < page.entries.length; ++index) {
+            const entry = page.entries[index]
+            if (page.filterMatches(entry)) {
+                next.push(entry)
+            }
+        }
+        page.filteredEntries = next
+        page.pruneSelectionTo(next)
+    }
+
+    function refresh(clearSelection) {
+        if (!shellBackend.remoteConfigured) {
+            page.entries = []
+            page.filteredEntries = []
+            page.loadState = "unconfigured"
+            page.loadMessage = qsTr("Connect OneDrive and choose a visible folder before browsing files here.")
+            if (clearSelection) {
+                page.clearSelection()
+            }
+            return
+        }
+
+        const result = page.searchActive
+                ? shellBackend.searchPathsResult(page.trimmedSearchText, 200)
+                : shellBackend.listDirectoryResult(page.currentPath)
+        page.applyResult(result, clearSelection)
     }
 
     function requestRefresh(clearSelection) {
@@ -187,6 +277,9 @@ Kirigami.Page {
     }
 
     function openCurrentFolder() {
+        if (!page.canOpenMountedPaths) {
+            return
+        }
         if (page.currentPath.length > 0) {
             shellBackend.openPath(page.currentPath)
             return
@@ -204,6 +297,10 @@ Kirigami.Page {
         page.refresh(true)
     }
 
+    function canOpenEntry(entry) {
+        return entry.is_dir || page.canOpenMountedPaths
+    }
+
     function showEntry(entry) {
         if (entry.is_dir) {
             page.currentPath = page.normalizePath(entry.path)
@@ -213,7 +310,9 @@ Kirigami.Page {
             page.refresh(true)
             return
         }
-        shellBackend.openPath(entry.path)
+        if (page.canOpenMountedPaths) {
+            shellBackend.openPath(entry.path)
+        }
     }
 
     function runSelectionAction(callback) {
@@ -260,9 +359,9 @@ Kirigami.Page {
 
     function listCountLabel() {
         if (page.searchActive) {
-            return qsTr("%1 search result(s)").arg(page.entries.length)
+            return qsTr("%1 search result(s)").arg(page.filteredEntries.length)
         }
-        return qsTr("%1 item(s) in %2").arg(page.entries.length).arg(page.currentPath.length > 0 ? page.currentPath : qsTr("root"))
+        return qsTr("%1 item(s) in %2").arg(page.filteredEntries.length).arg(page.currentPath.length > 0 ? page.currentPath : qsTr("root"))
     }
 
     Timer {
@@ -280,6 +379,19 @@ Kirigami.Page {
         function onPathStatesChanged() {
             page.refresh(false)
         }
+
+        function onRemoteConfiguredChanged() {
+            page.refresh(true)
+        }
+
+        function onDaemonReachableChanged() {
+            page.refresh(true)
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: page.canvasColor
     }
 
     ColumnLayout {
@@ -290,9 +402,9 @@ Kirigami.Page {
         Rectangle {
             Layout.fillWidth: true
             radius: Kirigami.Units.largeSpacing
-            color: "#f7fafc"
+            color: page.surfaceColor
             border.width: 1
-            border.color: Qt.rgba(7 / 255, 31 / 255, 52 / 255, 0.08)
+            border.color: page.lineColor
 
             ColumnLayout {
                 anchors.fill: parent
@@ -301,22 +413,22 @@ Kirigami.Page {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.mediumSpacing
+                    spacing: Kirigami.Units.largeSpacing
 
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.smallSpacing
 
                         Kirigami.Heading {
-                            text: qsTr("Browse the visible OneDrive folder")
+                            text: qsTr("Explorer")
                             level: 1
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: Kirigami.Theme.neutralTextColor
-                            text: qsTr("Search paths, open files on demand, and switch selected items between offline and online-only without typing commands.")
+                            color: page.textMutedColor
+                            text: qsTr("Browse daemon-backed path state, separate online-only items from local ones, and run residency actions without dropping into the CLI.")
                         }
                     }
 
@@ -326,16 +438,37 @@ Kirigami.Page {
                         enabled: shellBackend.remoteConfigured
                         onClicked: page.requestRefresh(false)
                     }
+
+                    Button {
+                        text: qsTr("Start Filesystem")
+                        icon.name: "folder-cloud"
+                        visible: shellBackend.canMount
+                        onClicked: shellBackend.mountRemote()
+                    }
                 }
 
                 Kirigami.InlineMessage {
                     Layout.fillWidth: true
-                    visible: !shellBackend.remoteConfigured || !shellBackend.daemonReachable
-                    type: !shellBackend.remoteConfigured ? Kirigami.MessageType.Information : Kirigami.MessageType.Warning
+                    visible: page.loadState === "unconfigured"
+                    type: Kirigami.MessageType.Information
                     showCloseButton: false
-                    text: !shellBackend.remoteConfigured
-                          ? qsTr("Connect OneDrive and choose a visible folder before browsing files here.")
-                          : qsTr("The background service is offline. Explorer will refresh again when file-state updates come back.")
+                    text: page.loadMessage
+                }
+
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    visible: page.loadState === "unavailable" || page.loadState === "error"
+                    type: page.loadState === "unavailable" ? Kirigami.MessageType.Warning : Kirigami.MessageType.Error
+                    showCloseButton: false
+                    text: page.loadMessage
+                }
+
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    visible: page.queryReady && !page.canOpenMountedPaths
+                    type: Kirigami.MessageType.Information
+                    showCloseButton: false
+                    text: qsTr("Explorer can still inspect daemon state and queue residency changes, but the visible folder is not mounted yet. Start the filesystem to open items from the file manager.")
                 }
 
                 RowLayout {
@@ -372,7 +505,7 @@ Kirigami.Page {
                     Button {
                         text: qsTr("Open Folder")
                         icon.name: "document-open-folder"
-                        enabled: shellBackend.effectiveMountPath.length > 0
+                        enabled: page.canOpenMountedPaths
                         onClicked: page.openCurrentFolder()
                     }
                 }
@@ -418,25 +551,113 @@ Kirigami.Page {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
 
+                    Rectangle {
+                        radius: Kirigami.Units.largeSpacing
+                        color: page.mutedSurfaceColor
+                        border.width: 1
+                        border.color: page.lineColor
+                        Layout.fillWidth: true
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: Kirigami.Units.smallSpacing
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Button {
+                                text: qsTr("All · %1").arg(page.countForFilter(0))
+                                checkable: true
+                                checked: page.residencyFilter === 0
+                                onClicked: {
+                                    page.residencyFilter = 0
+                                    page.rebuildFilteredEntries()
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Online-only · %1").arg(page.countForFilter(1))
+                                checkable: true
+                                checked: page.residencyFilter === 1
+                                onClicked: {
+                                    page.residencyFilter = 1
+                                    page.rebuildFilteredEntries()
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Local · %1").arg(page.countForFilter(2))
+                                checkable: true
+                                checked: page.residencyFilter === 2
+                                onClicked: {
+                                    page.residencyFilter = 2
+                                    page.rebuildFilteredEntries()
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Attention · %1").arg(page.countForFilter(3))
+                                checkable: true
+                                checked: page.residencyFilter === 3
+                                onClicked: {
+                                    page.residencyFilter = 3
+                                    page.rebuildFilteredEntries()
+                                }
+                            }
+                        }
+                    }
+
+                    Flow {
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Repeater {
+                            model: [
+                                { "label": qsTr("Online-only"), "color": "#7a8796" },
+                                { "label": qsTr("Available offline"), "color": "#215f9b" },
+                                { "label": qsTr("Kept on device"), "color": "#147a51" },
+                                { "label": qsTr("Attention"), "color": "#b53b2d" }
+                            ]
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                radius: 999
+                                color: Qt.lighter(modelData.color, 1.8)
+                                implicitWidth: legendLabel.implicitWidth + Kirigami.Units.mediumSpacing * 2
+                                implicitHeight: legendLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
+
+                                Label {
+                                    id: legendLabel
+                                    anchors.centerIn: parent
+                                    color: modelData.color
+                                    text: modelData.label
+                                    font.bold: true
+                                }
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
                     Button {
                         text: qsTr("Keep on device")
                         icon.name: "emblem-favorite"
                         highlighted: true
-                        enabled: page.selectedCount() > 0 && page.readyForBrowsing
+                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
                         onClicked: page.runSelectionAction(shellBackend.keepLocalPaths)
                     }
 
                     Button {
                         text: qsTr("Make online-only")
                         icon.name: "folder-download"
-                        enabled: page.selectedCount() > 0 && page.readyForBrowsing
+                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
                         onClicked: page.runSelectionAction(shellBackend.makeOnlineOnlyPaths)
                     }
 
                     Button {
                         text: qsTr("Retry transfer")
                         icon.name: "view-refresh"
-                        enabled: page.selectedCount() > 0 && page.readyForBrowsing
+                        enabled: page.selectedCount() > 0 && page.canManageResidencyActions
                         onClicked: page.runSelectionAction(shellBackend.retryTransferPaths)
                     }
 
@@ -454,47 +675,167 @@ Kirigami.Page {
                         text: page.selectedCount() > 0
                               ? qsTr("%1 selected").arg(page.selectedCount())
                               : page.listCountLabel()
-                        color: Kirigami.Theme.neutralTextColor
+                        color: page.textMutedColor
                     }
                 }
             }
         }
 
-        Label {
-            Layout.fillWidth: true
-            visible: page.readyForBrowsing && page.entries.length === 0
-            wrapMode: Text.WordWrap
-            color: Kirigami.Theme.neutralTextColor
-            text: page.searchActive
-                  ? qsTr("No files or folders match the current search.")
-                  : qsTr("This folder is empty.")
-        }
-
-        ListView {
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            radius: Kirigami.Units.largeSpacing
+            color: page.surfaceColor
+            border.width: 1
+            border.color: page.lineColor
+
+            Loader {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.largeSpacing
+                active: true
+                sourceComponent: {
+                    if (page.loadState === "loading") {
+                        return loadingState
+                    }
+                    if (page.loadState === "unconfigured" || page.loadState === "unavailable" || page.loadState === "error") {
+                        return messageState
+                    }
+                    if (page.loadState === "empty") {
+                        return emptyState
+                    }
+                    return listState
+                }
+            }
+        }
+    }
+
+    Component {
+        id: loadingState
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.mediumSpacing
+
+            BusyIndicator {
+                Layout.alignment: Qt.AlignHCenter
+                running: true
+            }
+
+            Label {
+                text: qsTr("Refreshing Explorer…")
+                font.bold: true
+            }
+        }
+    }
+
+    Component {
+        id: messageState
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width, 560)
+            spacing: Kirigami.Units.mediumSpacing
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignHCenter
+                source: page.loadState === "error" ? "dialog-error" : "network-disconnect"
+                implicitWidth: Kirigami.Units.iconSizes.huge
+                implicitHeight: Kirigami.Units.iconSizes.huge
+            }
+
+            Kirigami.Heading {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                level: 2
+                text: page.loadState === "unconfigured"
+                      ? qsTr("Connect OneDrive first")
+                      : page.loadState === "unavailable"
+                        ? qsTr("Explorer is waiting for the daemon")
+                        : qsTr("Explorer data could not be loaded")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                color: page.textMutedColor
+                text: page.loadMessage
+            }
+        }
+    }
+
+    Component {
+        id: emptyState
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width, 520)
+            spacing: Kirigami.Units.mediumSpacing
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignHCenter
+                source: page.searchActive ? "edit-find" : "folder"
+                implicitWidth: Kirigami.Units.iconSizes.huge
+                implicitHeight: Kirigami.Units.iconSizes.huge
+            }
+
+            Kirigami.Heading {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                level: 2
+                text: page.searchActive
+                      ? qsTr("No files match this search")
+                      : qsTr("No items are visible here yet")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                color: page.textMutedColor
+                text: page.searchActive
+                      ? qsTr("Try a broader search term or switch the residency filter back to All.")
+                      : qsTr("If you expected online-only files here, run a refresh or review the daemon status above instead of assuming the folder is really empty.")
+            }
+        }
+    }
+
+    Component {
+        id: listState
+
+        ListView {
             clip: true
             spacing: Kirigami.Units.smallSpacing
-            model: page.entries
+            model: page.filteredEntries
 
             delegate: Rectangle {
                 required property var modelData
                 readonly property var entry: modelData
+                readonly property string entryName: String(entry.path || "").split("/").slice(-1)[0]
 
                 width: ListView.view.width
                 radius: Kirigami.Units.largeSpacing
-                color: page.isSelected(entry.path) ? "#e9f0fb" : "#ffffff"
+                color: page.isSelected(entry.path) ? "#ecf3ff" : "#ffffff"
                 border.width: 1
-                border.color: page.isSelected(entry.path)
-                              ? "#b9cee8"
-                              : Qt.rgba(7 / 255, 31 / 255, 52 / 255, 0.08)
-
+                border.color: page.isSelected(entry.path) ? "#b6cae5" : page.lineColor
                 implicitHeight: rowLayout.implicitHeight + Kirigami.Units.largeSpacing
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 6
+                    radius: Kirigami.Units.largeSpacing
+                    color: page.stateColor(entry)
+                }
 
                 RowLayout {
                     id: rowLayout
                     anchors.fill: parent
-                    anchors.margins: Kirigami.Units.mediumSpacing
+                    anchors.leftMargin: Kirigami.Units.largeSpacing
+                    anchors.rightMargin: Kirigami.Units.mediumSpacing
+                    anchors.topMargin: Kirigami.Units.mediumSpacing
+                    anchors.bottomMargin: Kirigami.Units.mediumSpacing
                     spacing: Kirigami.Units.mediumSpacing
 
                     CheckBox {
@@ -514,16 +855,25 @@ Kirigami.Page {
 
                         Button {
                             Layout.alignment: Qt.AlignLeft
-                            text: String(entry.path || "").split("/").slice(-1)[0]
                             flat: true
+                            text: entryName
                             font.bold: true
+                            enabled: page.canOpenEntry(entry)
                             onClicked: page.showEntry(entry)
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: Kirigami.Theme.neutralTextColor
+                            text: page.stateHint(entry)
+                            color: page.stateColor(entry)
+                            font.bold: true
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: page.textMutedColor
                             text: page.detailText(entry)
                         }
 
@@ -554,13 +904,14 @@ Kirigami.Page {
                     Button {
                         text: page.quickActionText(entry)
                         icon.name: page.quickActionIcon(entry)
-                        enabled: page.readyForBrowsing
+                        enabled: page.canManageResidencyActions
                         onClicked: page.runQuickAction(entry)
                     }
 
                     Button {
                         text: entry.is_dir ? qsTr("Browse") : qsTr("Open")
                         icon.name: entry.is_dir ? "go-next" : "document-open"
+                        enabled: page.canOpenEntry(entry)
                         onClicked: page.showEntry(entry)
                     }
                 }

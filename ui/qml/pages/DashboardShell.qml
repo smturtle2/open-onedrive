@@ -8,6 +8,11 @@ Kirigami.Page {
     title: qsTr("open-onedrive")
 
     property int currentIndex: 0
+    property int lastRecommendedIndex: 0
+    readonly property color canvasColor: "#eef3fa"
+    readonly property color surfaceColor: "#ffffff"
+    readonly property color mutedSurfaceColor: "#edf2f8"
+    readonly property color lineColor: Qt.rgba(10 / 255, 28 / 255, 49 / 255, 0.08)
 
     function stateAccent() {
         if (shellBackend.appState === "running") {
@@ -91,6 +96,15 @@ Kirigami.Page {
 
     function setPage(index) {
         page.currentIndex = index
+    }
+
+    function syncRecommendedPage(force) {
+        const nextIndex = page.recommendedIndex()
+        const shouldFollow = force || page.currentIndex === 0 || page.currentIndex === page.lastRecommendedIndex
+        page.lastRecommendedIndex = nextIndex
+        if (shouldFollow && page.currentIndex !== nextIndex) {
+            page.currentIndex = nextIndex
+        }
     }
 
     function primaryActionText() {
@@ -205,14 +219,20 @@ Kirigami.Page {
         }
     }
 
+    Component.onCompleted: page.syncRecommendedPage(true)
+
+    Connections {
+        target: shellBackend
+
+        function onAppStateChanged() {
+            page.syncRecommendedPage(false)
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         z: -1
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#061019" }
-            GradientStop { position: 0.55; color: "#0b1723" }
-            GradientStop { position: 1.0; color: "#101b25" }
-        }
+        color: page.canvasColor
     }
 
     RowLayout {
@@ -224,9 +244,9 @@ Kirigami.Page {
             Layout.fillHeight: true
             Layout.preferredWidth: Math.max(276, Math.min(320, page.width * 0.28))
             radius: Kirigami.Units.largeSpacing * 1.2
-            color: "#0d1824"
+            color: page.surfaceColor
             border.width: 1
-            border.color: Qt.rgba(1, 1, 1, 0.08)
+            border.color: page.lineColor
 
             ColumnLayout {
                 anchors.fill: parent
@@ -239,7 +259,7 @@ Kirigami.Page {
 
                     Label {
                         text: qsTr("open-onedrive")
-                        color: "#dbe7f5"
+                        color: "#335b84"
                         font.capitalization: Font.AllUppercase
                         font.letterSpacing: 1.4
                         font.bold: true
@@ -249,14 +269,14 @@ Kirigami.Page {
                         Layout.fillWidth: true
                         level: 1
                         wrapMode: Text.WordWrap
-                        color: "white"
+                        color: "#11283f"
                         text: page.stateLabel()
                     }
 
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#aebfd1"
+                        color: "#5e6f82"
                         text: page.stateSummary()
                     }
                 }
@@ -264,9 +284,9 @@ Kirigami.Page {
                 Rectangle {
                     Layout.fillWidth: true
                     radius: Kirigami.Units.largeSpacing
-                    color: Qt.rgba(1, 1, 1, 0.04)
+                    color: page.mutedSurfaceColor
                     border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.07)
+                    border.color: page.lineColor
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -297,14 +317,14 @@ Kirigami.Page {
 
                             Label {
                                 text: qsTr("Recommended: %1").arg(page.pageLabel(page.recommendedIndex()))
-                                color: "#93aac6"
+                                color: "#527295"
                             }
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: "#d1ddec"
+                            color: "#3d5671"
                             text: shellBackend.statusMessage
                         }
                     }
@@ -347,9 +367,9 @@ Kirigami.Page {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     radius: Kirigami.Units.largeSpacing
-                    color: Qt.rgba(1, 1, 1, 0.03)
+                    color: page.mutedSurfaceColor
                     border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.06)
+                    border.color: page.lineColor
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -358,7 +378,7 @@ Kirigami.Page {
 
                         Label {
                             text: qsTr("Workspace")
-                            color: "#95aac2"
+                            color: "#62778f"
                             font.bold: true
                         }
 
@@ -401,7 +421,9 @@ Kirigami.Page {
                         Rectangle {
                             Layout.fillWidth: true
                             radius: Kirigami.Units.mediumSpacing
-                            color: "#112131"
+                            color: "#ffffff"
+                            border.width: 1
+                            border.color: page.lineColor
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -410,13 +432,13 @@ Kirigami.Page {
 
                                 Label {
                                     text: qsTr("Visible folder")
-                                    color: "#95aac2"
+                                    color: "#62778f"
                                 }
 
                                 Label {
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
-                                    color: "#eef4fb"
+                                    color: "#15314f"
                                     text: shellBackend.effectiveMountPath.length > 0
                                           ? shellBackend.effectiveMountPath
                                           : qsTr("Choose a root folder in Setup.")
@@ -426,7 +448,7 @@ Kirigami.Page {
                                     Layout.fillWidth: true
                                     text: qsTr("Open Folder")
                                     icon.name: "document-open-folder"
-                                    enabled: shellBackend.effectiveMountPath.length > 0
+                                    enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
                                     onClicked: shellBackend.openMountLocation()
                                 }
                             }
@@ -437,7 +459,7 @@ Kirigami.Page {
                 Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    color: "#8ea5bf"
+                    color: "#5e6f82"
                     text: qsTr("Closing the window keeps open-onedrive in the system tray so recovery, sync, and file actions stay available.")
                 }
 
@@ -455,9 +477,9 @@ Kirigami.Page {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: Kirigami.Units.largeSpacing * 1.2
-            color: "#f4f7fb"
+            color: page.surfaceColor
             border.width: 1
-            border.color: Qt.rgba(4 / 255, 25 / 255, 44 / 255, 0.08)
+            border.color: page.lineColor
 
             ColumnLayout {
                 anchors.fill: parent
@@ -481,7 +503,7 @@ Kirigami.Page {
                         text: qsTr("Open Folder")
                         icon.name: "document-open-folder"
                         visible: shellBackend.remoteConfigured
-                        enabled: shellBackend.effectiveMountPath.length > 0
+                        enabled: shellBackend.mountState === "Running" && shellBackend.effectiveMountPath.length > 0
                         onClicked: shellBackend.openMountLocation()
                     }
 
